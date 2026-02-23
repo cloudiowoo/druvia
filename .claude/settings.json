@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(pnpm *)",
+      "Bash(docker *)",
+      "Bash(curl *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(mkdir *)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)"
+    ]
+  }
+}
