@@ -127,6 +127,17 @@ CREATE TABLE IF NOT EXISTS druvia_tenant_storage_config (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- 用户第三方账号绑定表
+CREATE TABLE IF NOT EXISTS druvia_user_providers (
+  id SERIAL PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL REFERENCES druvia_users(user_id) ON DELETE CASCADE,
+  provider VARCHAR(32) NOT NULL,
+  provider_id VARCHAR(255) NOT NULL,
+  provider_data JSONB DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(provider, provider_id)
+);
+
 -- ============================================
 -- Indexes
 -- ============================================
@@ -149,6 +160,9 @@ CREATE INDEX IF NOT EXISTS idx_druvia_backups_status ON druvia_backups(status);
 
 CREATE INDEX IF NOT EXISTS idx_druvia_files_tenant ON druvia_files(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_druvia_files_bucket ON druvia_files(bucket);
+
+CREATE INDEX IF NOT EXISTS idx_druvia_user_providers_user ON druvia_user_providers(user_id);
+CREATE INDEX IF NOT EXISTS idx_druvia_user_providers_provider ON druvia_user_providers(provider, provider_id);
 
 -- ============================================
 -- Triggers

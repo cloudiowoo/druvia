@@ -1,0 +1,37 @@
+table:
+  name: druvia_users
+  schema: public
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - user_id
+        - email
+        - username
+        - avatar_url
+        - status
+        - created_at
+        - updated_at
+      filter:
+        user_id:
+          _eq: X-Hasura-User-Id
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - username
+        - avatar_url
+      filter:
+        user_id:
+          _eq: X-Hasura-User-Id
+      check: null
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+      check: null

@@ -1,0 +1,44 @@
+table:
+  name: druvia_files
+  schema: public
+object_relationships:
+  - name: tenant
+    using:
+      foreign_key_constraint_on: tenant_id
+  - name: project
+    using:
+      foreign_key_constraint_on: project_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - file_id
+        - tenant_id
+        - project_id
+        - bucket
+        - path
+        - filename
+        - content_type
+        - size_bytes
+        - metadata
+        - created_at
+        - updated_at
+      filter:
+        tenant:
+          owner_uid:
+            _eq: X-Hasura-User-Uid
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+delete_permissions:
+  - role: user
+    permission:
+      filter:
+        tenant:
+          owner_uid:
+            _eq: X-Hasura-User-Uid
+  - role: admin
+    permission:
+      filter: {}

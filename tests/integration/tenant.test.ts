@@ -17,10 +17,9 @@ describe('TenantService Integration', () => {
   });
 
   afterAll(async () => {
-    // 清理测试数据
+    // 清理测试数据 (不关闭 pool)
     await pool.query('DELETE FROM druvia_tenants WHERE alias LIKE $1', ['test_%']);
     await pool.query('DELETE FROM druvia_users WHERE user_id = $1', ['user_test_tenant']);
-    await pool.end();
   });
 
   beforeEach(async () => {

@@ -1,9 +1,12 @@
 import Fastify from 'fastify';
+import multipart from '@fastify/multipart';
 import { config } from './config/index.js';
 import authPlugin from './middleware/auth.js';
 import { tenantRoutes } from './modules/tenant/tenant.routes.js';
 import { userRoutes } from './modules/user/user.routes.js';
 import { projectRoutes } from './modules/project/project.routes.js';
+import { fileRoutes } from './modules/file/file.routes.js';
+import { oauthRoutes } from './modules/oauth/oauth.routes.js';
 
 const app = Fastify({
   logger: true,
@@ -11,6 +14,11 @@ const app = Fastify({
 
 // Register plugins
 app.register(authPlugin);
+app.register(multipart, {
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB
+  },
+});
 
 // Health check
 app.get('/health', async () => {
@@ -21,6 +29,8 @@ app.get('/health', async () => {
 app.register(userRoutes, { prefix: '/api/v1' });
 app.register(tenantRoutes, { prefix: '/api/v1' });
 app.register(projectRoutes, { prefix: '/api/v1' });
+app.register(fileRoutes, { prefix: '/api/v1' });
+app.register(oauthRoutes, { prefix: '/api/v1' });
 
 async function start() {
   try {

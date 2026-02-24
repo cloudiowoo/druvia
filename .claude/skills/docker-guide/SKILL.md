@@ -82,7 +82,20 @@ docker exec -it postgres pg_isready -U druvia
 
 ## Environment Variables
 
-关键环境变量（在 `.env` 中配置）：
+关键环境变量配置：
+
+### .env 文件位置
+
+```
+druvia/
+├── .env              # Node.js 应用使用 (API, Admin)
+└── docker/
+    └── .env          # docker-compose 使用
+```
+
+**重要**: 两个 .env 文件需要保持同步，或使用符号链接。
+
+### 必需变量
 
 ```bash
 # Database

@@ -1,0 +1,70 @@
+table:
+  name: druvia_projects
+  schema: public
+object_relationships:
+  - name: tenant
+    using:
+      foreign_key_constraint_on: tenant_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - project_id
+        - tenant_id
+        - alias
+        - name
+        - schema_name
+        - status
+        - created_at
+        - updated_at
+      filter:
+        tenant:
+          owner_uid:
+            _eq: X-Hasura-User-Uid
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+insert_permissions:
+  - role: user
+    permission:
+      columns:
+        - tenant_id
+        - alias
+        - name
+      check:
+        tenant:
+          owner_uid:
+            _eq: X-Hasura-User-Uid
+  - role: admin
+    permission:
+      columns: "*"
+      check: {}
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - name
+        - settings
+        - status
+      filter:
+        tenant:
+          owner_uid:
+            _eq: X-Hasura-User-Uid
+      check: null
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+      check: null
+delete_permissions:
+  - role: user
+    permission:
+      filter:
+        tenant:
+          owner_uid:
+            _eq: X-Hasura-User-Uid
+  - role: admin
+    permission:
+      filter: {}

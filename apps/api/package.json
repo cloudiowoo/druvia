@@ -9,7 +9,10 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.996.0",
+    "@aws-sdk/s3-request-presigner": "^3.996.0",
     "@druvia/shared": "workspace:*",
+    "@fastify/multipart": "^9.4.0",
     "bcrypt": "^6.0.0",
     "dotenv": "^16.4.0",
     "fastify": "^4.26.0",

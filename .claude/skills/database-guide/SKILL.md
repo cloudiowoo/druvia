@@ -169,6 +169,34 @@ export async function query<T>(text: string, params?: unknown[]): Promise<T[]> {
 }
 ```
 
+## 重要规则
+
+### JSONB 字段处理
+
+```typescript
+// ✅ 正确: 直接传递对象，pg 驱动自动转换
+await query('INSERT INTO table (settings) VALUES ($1)', [{ key: 'value' }]);
+
+// ❌ 错误: 不要用 JSON.stringify，会导致双重编码
+await query('INSERT INTO table (settings) VALUES ($1)', [JSON.stringify({ key: 'value' })]);
+```
+
+### 外键级联删除
+
+租户相关表必须使用 `ON DELETE CASCADE`：
+
+```sql
+-- ✅ 正确
+CREATE TABLE druvia_projects (
+  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE
+);
+
+-- ❌ 错误: 删除租户时会因外键约束失败
+CREATE TABLE druvia_projects (
+  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id)
+);
+```
+
 ## 迁移文件
 
 迁移文件位于 `migrations/` 目录：

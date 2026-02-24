@@ -1,0 +1,64 @@
+table:
+  name: druvia_tenants
+  schema: public
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - tenant_id
+        - alias
+        - name
+        - owner_uid
+        - plan
+        - status
+        - created_at
+        - updated_at
+      filter:
+        owner_uid:
+          _eq: X-Hasura-User-Uid
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+insert_permissions:
+  - role: user
+    permission:
+      columns:
+        - alias
+        - name
+        - plan
+      check:
+        owner_uid:
+          _eq: X-Hasura-User-Uid
+      set:
+        owner_uid: X-Hasura-User-Uid
+  - role: admin
+    permission:
+      columns: "*"
+      check: {}
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - name
+        - plan
+        - settings
+      filter:
+        owner_uid:
+          _eq: X-Hasura-User-Uid
+      check: null
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+      check: null
+delete_permissions:
+  - role: user
+    permission:
+      filter:
+        owner_uid:
+          _eq: X-Hasura-User-Uid
+  - role: admin
+    permission:
+      filter: {}

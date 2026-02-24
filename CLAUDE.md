@@ -17,6 +17,9 @@
 - **构建顺序**：`pnpm --filter @druvia/shared build` 必须先于 API
 - **类型检查**：修改 shared 后需重新构建才能被 API 引用
 
+### 数据库规则
+- **详见**: `database-guide` skill (JSONB 处理、外键级联等)
+
 ### 命名规则
 - **数据库表**：`druvia_` 前缀 (`druvia_tenants`, `druvia_users`)
 - **数据库字段**：snake_case (`tenant_id`, `owner_uid`)
@@ -29,13 +32,12 @@
 - **设计文档**：存放在 `docs/plans/`，按日期命名
 
 ### 测试规则
-- **位置**：所有测试存放在 `tests/` 目录
-- **结构**：
-  - `tests/unit/` - 单元测试
-  - `tests/integration/` - 集成测试
-  - `tests/e2e/` - 端到端测试
-  - `tests/fixtures/` - 测试数据
+- **位置**：`tests/` 目录 (unit/, integration/, e2e/)
 - **命名**：`<module>.test.ts`
+- **详见**: `testing-guide` skill (连接池、数据隔离、环境变量等)
+
+### Docker 规则
+- **详见**: `docker-guide` skill (.env 位置、服务配置等)
 
 ---
 
@@ -195,9 +197,12 @@ druvia/
 |-------|--------|------|
 | docker-guide | docker, 容器, compose | Docker 环境配置 |
 | api-guide | API, 响应格式, 限流 | API 开发模式 |
-| database-guide | Schema, 租户表, 迁移 | 数据库设计 |
+| database-guide | Schema, 租户表, 迁移, JSONB | 数据库设计 |
 | adapters-guide | Storage, Auth, R2, 微信 | 适配器开发 |
 | hasura-guide | GraphQL, Subscriptions, Actions | Hasura 配置 |
+| testing-guide | 测试, vitest, TDD, 集成测试 | 测试开发指南 |
+| doc-creation-guide | 创建文档, 新建文档 | 文档创建规范 |
+| documentation-guide | 文档, 设计文档, 计划 | 文档编写指南 |
 
 ---
 
