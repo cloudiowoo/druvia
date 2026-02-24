@@ -7,6 +7,38 @@
 
 ---
 
+## 项目规则 (Project Rules)
+
+### Git 规则
+- **禁止自动提交**：不要主动执行 `git commit`，所有提交由用户手动完成
+- **提交前审查**：使用 `/commit` 命令生成提交信息供用户参考
+
+### 构建规则
+- **构建顺序**：`pnpm --filter @druvia/shared build` 必须先于 API
+- **类型检查**：修改 shared 后需重新构建才能被 API 引用
+
+### 命名规则
+- **数据库表**：`druvia_` 前缀 (`druvia_tenants`, `druvia_users`)
+- **数据库字段**：snake_case (`tenant_id`, `owner_uid`)
+- **TypeScript 接口**：camelCase (`tenantId`, `ownerUid`)
+- **类型转换**：Service 层负责 snake_case → camelCase 转换
+
+### 文档规则
+- **位置**：所有文档存放在 `docs/` 目录
+- **命名**：使用编号前缀排序 (`001-xxx.md`, `002-xxx.md`)
+- **设计文档**：存放在 `docs/plans/`，按日期命名
+
+### 测试规则
+- **位置**：所有测试存放在 `tests/` 目录
+- **结构**：
+  - `tests/unit/` - 单元测试
+  - `tests/integration/` - 集成测试
+  - `tests/e2e/` - 端到端测试
+  - `tests/fixtures/` - 测试数据
+- **命名**：`<module>.test.ts`
+
+---
+
 ## Quick Start
 
 ```bash
@@ -139,7 +171,8 @@ druvia/
 ├── docker/
 │   └── docker-compose.yml
 ├── migrations/       # 数据库迁移
-└── docs/plans/       # 设计文档
+├── tests/            # 测试目录
+└── docs/             # 文档目录
 ```
 
 ---

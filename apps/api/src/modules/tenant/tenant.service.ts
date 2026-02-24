@@ -1,57 +1,88 @@
-import { query } from '../../db/index.js';
+import { query, queryOne } from '../../db/index.js';
 import { generateTenantId } from '@druvia/shared';
-import type { Tenant, TenantConfig } from '@druvia/shared';
+import type { Tenant, CreateTenantInput, UpdateTenantInput } from '@druvia/shared';
 
-export interface CreateTenantInput {
+// Database row type (snake_case)
+interface TenantRow {
+  id: number;
+  tenant_id: string;
+  alias: string;
   name: string;
-  slug: string;
+  owner_uid: number;
+  plan: string;
+  settings: Record<string, unknown>;
+  status: string;
+  created_at: Date;
+  updated_at: Date;
 }
 
-export interface UpdateTenantInput {
-  name?: string;
-  slug?: string;
+// Convert database row to Tenant interface
+function toTenant(row: TenantRow): Tenant {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    alias: row.alias,
+    name: row.name,
+    ownerUid: row.owner_uid,
+    plan: row.plan as Tenant['plan'],
+    settings: row.settings,
+    status: row.status as Tenant['status'],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 export async function createTenant(input: CreateTenantInput): Promise<Tenant> {
-  const id = generateTenantId();
-  const rows = await query<Tenant>(
-    `INSERT INTO tenants (id, name, slug) VALUES ($1, $2, $3) RETURNING *`,
-    [id, input.name, input.slug]
+  const tenantId = generateTenantId();
+  const row = await queryOne<TenantRow>(
+    `INSERT INTO druvia_tenants (tenant_id, alias, name, owner_uid, plan)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+    [tenantId, input.alias, input.name, input.ownerUid, input.plan || 'free']
   );
 
-  // Create default config
-  await query(
-    `INSERT INTO tenant_configs (tenant_id) VALUES ($1)`,
-    [id]
-  );
+  if (!row) {
+    throw new Error('Failed to create tenant');
+  }
 
-  return rows[0];
+  return toTenant(row);
 }
 
-export async function getTenantById(id: string): Promise<Tenant | null> {
-  const rows = await query<Tenant>(
-    `SELECT * FROM tenants WHERE id = $1`,
-    [id]
+export async function getTenantById(tenantId: string): Promise<Tenant | null> {
+  const row = await queryOne<TenantRow>(
+    'SELECT * FROM druvia_tenants WHERE tenant_id = $1',
+    [tenantId]
   );
-  return rows[0] || null;
+  return row ? toTenant(row) : null;
 }
 
-export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
-  const rows = await query<Tenant>(
-    `SELECT * FROM tenants WHERE slug = $1`,
-    [slug]
+export async function getTenantByAlias(alias: string): Promise<Tenant | null> {
+  const row = await queryOne<TenantRow>(
+    'SELECT * FROM druvia_tenants WHERE alias = $1',
+    [alias]
   );
-  return rows[0] || null;
+  return row ? toTenant(row) : null;
 }
 
-export async function listTenants(limit = 50, offset = 0): Promise<Tenant[]> {
-  return query<Tenant>(
-    `SELECT * FROM tenants ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-    [limit, offset]
-  );
+export async function listTenants(ownerUid?: number, limit = 50, offset = 0): Promise<Tenant[]> {
+  let rows: TenantRow[];
+
+  if (ownerUid !== undefined) {
+    rows = await query<TenantRow>(
+      'SELECT * FROM druvia_tenants WHERE owner_uid = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+      [ownerUid, limit, offset]
+    );
+  } else {
+    rows = await query<TenantRow>(
+      'SELECT * FROM druvia_tenants ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      [limit, offset]
+    );
+  }
+
+  return rows.map(toTenant);
 }
 
-export async function updateTenant(id: string, input: UpdateTenantInput): Promise<Tenant | null> {
+export async function updateTenant(tenantId: string, input: UpdateTenantInput): Promise<Tenant | null> {
   const updates: string[] = [];
   const values: unknown[] = [];
   let paramIndex = 1;
@@ -60,61 +91,36 @@ export async function updateTenant(id: string, input: UpdateTenantInput): Promis
     updates.push(`name = $${paramIndex++}`);
     values.push(input.name);
   }
-  if (input.slug !== undefined) {
-    updates.push(`slug = $${paramIndex++}`);
-    values.push(input.slug);
+  if (input.plan !== undefined) {
+    updates.push(`plan = $${paramIndex++}`);
+    values.push(input.plan);
+  }
+  if (input.settings !== undefined) {
+    updates.push(`settings = $${paramIndex++}`);
+    values.push(JSON.stringify(input.settings));
+  }
+  if (input.status !== undefined) {
+    updates.push(`status = $${paramIndex++}`);
+    values.push(input.status);
   }
 
   if (updates.length === 0) {
-    return getTenantById(id);
+    return getTenantById(tenantId);
   }
 
-  values.push(id);
-  const rows = await query<Tenant>(
-    `UPDATE tenants SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+  values.push(tenantId);
+  const row = await queryOne<TenantRow>(
+    `UPDATE druvia_tenants SET ${updates.join(', ')} WHERE tenant_id = $${paramIndex} RETURNING *`,
     values
   );
-  return rows[0] || null;
+
+  return row ? toTenant(row) : null;
 }
 
-export async function deleteTenant(id: string): Promise<boolean> {
-  const rows = await query<{ id: string }>(
-    `DELETE FROM tenants WHERE id = $1 RETURNING id`,
-    [id]
-  );
-  return rows.length > 0;
-}
-
-export async function getTenantConfig(tenantId: string): Promise<TenantConfig | null> {
-  const rows = await query<{
-    tenant_id: string;
-    feature_storage: boolean;
-    feature_auth: boolean;
-    feature_realtime: boolean;
-    feature_functions: boolean;
-    limit_storage_bytes: number;
-    limit_database_rows: number;
-    limit_api_requests_per_day: number;
-  }>(
-    `SELECT * FROM tenant_configs WHERE tenant_id = $1`,
+export async function deleteTenant(tenantId: string): Promise<boolean> {
+  const rows = await query<{ tenant_id: string }>(
+    'DELETE FROM druvia_tenants WHERE tenant_id = $1 RETURNING tenant_id',
     [tenantId]
   );
-
-  if (!rows[0]) return null;
-
-  const row = rows[0];
-  return {
-    tenantId: row.tenant_id,
-    features: {
-      storage: row.feature_storage,
-      auth: row.feature_auth,
-      realtime: row.feature_realtime,
-      functions: row.feature_functions,
-    },
-    limits: {
-      maxStorageBytes: row.limit_storage_bytes,
-      maxDatabaseRows: row.limit_database_rows,
-      maxApiRequestsPerDay: row.limit_api_requests_per_day,
-    },
-  };
+  return rows.length > 0;
 }

@@ -33,7 +33,9 @@ druvia/
     │   ├── api-guide/         # API 开发模式
     │   ├── database-guide/    # 数据库设计
     │   ├── adapters-guide/    # 适配器开发
-    │   └── hasura-guide/      # Hasura 配置
+    │   ├── hasura-guide/      # Hasura 配置
+    │   ├── doc-creation-guide/    # 文档创建规范
+    │   └── documentation-guide/   # 文档研究指南
     │
     ├── commands/          # 斜杠命令（用户调用）
     │   └── commit.md
@@ -56,11 +58,15 @@ druvia/
 | **database-guide** | Schema, 租户表, 迁移, druvia_tenants | 数据库设计 |
 | **adapters-guide** | Storage, Auth, R2, 微信, 钉钉, OIDC | 适配器开发 |
 | **hasura-guide** | GraphQL, Subscriptions, Actions, 权限 | Hasura 配置 |
+| **doc-creation-guide** | 创建文档, 写文档, 文档规范, docs目录 | 文档创建规范 |
+| **documentation-guide** | Context7, 官方文档, resolve-library-id | 文档研究指南 |
 
 **触发示例**：
 - "docker-compose 怎么配置" → 加载 docker-guide
 - "Storage 适配器怎么写" → 加载 adapters-guide
 - "Hasura 权限怎么设置" → 加载 hasura-guide
+- "创建一个技术文档" → 加载 doc-creation-guide
+- "查一下 Fastify 官方文档" → 加载 documentation-guide
 
 ---
 
