@@ -10,11 +10,16 @@
   },
   "dependencies": {
     "@druvia/shared": "workspace:*",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^16.4.0",
     "fastify": "^4.26.0",
-    "pg": "^8.11.0",
-    "dotenv": "^16.4.0"
+    "fastify-plugin": "^5.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.11.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.11.0",
     "tsx": "^4.7.0",

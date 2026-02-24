@@ -13,6 +13,18 @@ export function generateUserId(): string {
   return generateId('user');
 }
 
+export function generateProjectId(): string {
+  return generateId('proj');
+}
+
+export function generateBackupId(): string {
+  return generateId('backup');
+}
+
+export function generateFileId(): string {
+  return generateId('file');
+}
+
 export function generateApiKeyId(): string {
   return generateId('key');
 }

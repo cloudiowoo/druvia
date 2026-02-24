@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: druvia
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_data:/var/lib/postgresql/data
       - ../migrations:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
@@ -27,7 +27,7 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - ./redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

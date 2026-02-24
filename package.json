@@ -6,11 +6,17 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "turbo run lint"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@vitest/coverage-v8": "^4.0.18",
+    "jsonwebtoken": "^9.0.3",
     "turbo": "^2.0.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.0.18"
   }
 }
