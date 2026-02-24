@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS druvia_tenants (
 CREATE TABLE IF NOT EXISTS druvia_projects (
   id SERIAL PRIMARY KEY,
   project_id VARCHAR(64) UNIQUE NOT NULL,
-  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id),
+  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE,
   alias VARCHAR(64) NOT NULL,
   name VARCHAR(255) NOT NULL,
   schema_name VARCHAR(128),
@@ -54,8 +54,8 @@ CREATE TABLE IF NOT EXISTS druvia_projects (
 CREATE TABLE IF NOT EXISTS druvia_schema_registry (
   id SERIAL PRIMARY KEY,
   schema_name VARCHAR(128) UNIQUE NOT NULL,
-  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id),
-  project_id VARCHAR(64) REFERENCES druvia_projects(project_id),
+  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE,
+  project_id VARCHAR(64) REFERENCES druvia_projects(project_id) ON DELETE CASCADE,
   schema_type VARCHAR(20) NOT NULL,
   table_count INT DEFAULT 0,
   function_count INT DEFAULT 0,
@@ -70,8 +70,8 @@ CREATE TABLE IF NOT EXISTS druvia_schema_registry (
 CREATE TABLE IF NOT EXISTS druvia_backups (
   id SERIAL PRIMARY KEY,
   backup_id VARCHAR(64) UNIQUE NOT NULL,
-  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id),
-  project_id VARCHAR(64) REFERENCES druvia_projects(project_id),
+  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE,
+  project_id VARCHAR(64) REFERENCES druvia_projects(project_id) ON DELETE CASCADE,
   schema_name VARCHAR(128) NOT NULL,
   storage_key VARCHAR(512) NOT NULL,
   size_bytes BIGINT DEFAULT 0,
@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS druvia_backups (
   tables_list JSONB DEFAULT '[]',
   status VARCHAR(20) DEFAULT 'pending',
   error_message TEXT,
-  created_by INT REFERENCES druvia_users(id),
+  created_by INT REFERENCES druvia_users(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   completed_at TIMESTAMP WITH TIME ZONE
 );
@@ -88,8 +88,8 @@ CREATE TABLE IF NOT EXISTS druvia_backups (
 CREATE TABLE IF NOT EXISTS druvia_files (
   id SERIAL PRIMARY KEY,
   file_id VARCHAR(64) UNIQUE NOT NULL,
-  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id),
-  project_id VARCHAR(64) REFERENCES druvia_projects(project_id),
+  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE,
+  project_id VARCHAR(64) REFERENCES druvia_projects(project_id) ON DELETE CASCADE,
   bucket VARCHAR(128) NOT NULL,
   path VARCHAR(1024) NOT NULL,
   filename VARCHAR(255) NOT NULL,
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS druvia_files (
   storage_provider VARCHAR(20) DEFAULT 'local',
   storage_key VARCHAR(512),
   metadata JSONB DEFAULT '{}',
-  created_by INT REFERENCES druvia_users(id),
+  created_by INT REFERENCES druvia_users(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS druvia_files (
 -- 租户认证配置表
 CREATE TABLE IF NOT EXISTS druvia_tenant_auth_providers (
   id SERIAL PRIMARY KEY,
-  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id),
+  tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE,
   provider VARCHAR(32) NOT NULL,
   enabled BOOLEAN DEFAULT true,
   config JSONB NOT NULL DEFAULT '{}',
@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS druvia_tenant_auth_providers (
 -- 租户存储配置表
 CREATE TABLE IF NOT EXISTS druvia_tenant_storage_config (
   id SERIAL PRIMARY KEY,
-  tenant_id VARCHAR(64) UNIQUE NOT NULL REFERENCES druvia_tenants(tenant_id),
+  tenant_id VARCHAR(64) UNIQUE NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE,
   provider VARCHAR(20) DEFAULT 'local',
   config JSONB NOT NULL DEFAULT '{}',
   max_file_size_bytes BIGINT DEFAULT 52428800,

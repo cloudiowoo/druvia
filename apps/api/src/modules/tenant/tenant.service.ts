@@ -97,7 +97,7 @@ export async function updateTenant(tenantId: string, input: UpdateTenantInput): 
   }
   if (input.settings !== undefined) {
     updates.push(`settings = $${paramIndex++}`);
-    values.push(JSON.stringify(input.settings));
+    values.push(input.settings);
   }
   if (input.status !== undefined) {
     updates.push(`status = $${paramIndex++}`);
