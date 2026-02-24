@@ -1,0 +1,19 @@
+import 'dotenv/config';
+
+export const config = {
+  port: parseInt(process.env.PORT || '3000', 10),
+  host: process.env.HOST || '0.0.0.0',
+  database: {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5432', 10),
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.POSTGRES_PASSWORD || '',
+    database: process.env.DB_NAME || 'druvia',
+  },
+  jwt: {
+    secret: process.env.JWT_SECRET || '',
+  },
+  redis: {
+    url: process.env.REDIS_URL || 'redis://localhost:6379',
+  },
+};
