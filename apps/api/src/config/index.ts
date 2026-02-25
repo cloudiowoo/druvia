@@ -16,4 +16,8 @@ export const config = {
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
+  hasura: {
+    adminSecret: process.env.HASURA_ADMIN_SECRET || '',
+    endpoint: process.env.HASURA_ENDPOINT || 'http://localhost:8080',
+  },
 };

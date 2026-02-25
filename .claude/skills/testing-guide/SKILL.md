@@ -125,3 +125,30 @@ export default defineConfig({
   },
 });
 ```
+
+## Hasura Actions 测试
+
+禁用 webhook 验证：
+
+```typescript
+// tests/setup.ts
+process.env.HASURA_ADMIN_SECRET = ''; // 空字符串禁用验证
+```
+
+## Redis 测试
+
+测试前清理 keys，使用唯一前缀：
+
+```typescript
+beforeEach(async () => {
+  const keys = await redis.keys('test:*');
+  if (keys.length > 0) {
+    await redis.del(...keys);
+  }
+});
+
+// 使用唯一前缀
+const limiter = createRateLimiter({
+  keyPrefix: 'test:ratelimit',  // 测试专用前缀
+});
+```

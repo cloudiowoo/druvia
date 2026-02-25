@@ -7,6 +7,9 @@ import { userRoutes } from './modules/user/user.routes.js';
 import { projectRoutes } from './modules/project/project.routes.js';
 import { fileRoutes } from './modules/file/file.routes.js';
 import { oauthRoutes } from './modules/oauth/oauth.routes.js';
+import { tableRoutes } from './modules/table/table.routes.js';
+import { backupRoutes } from './modules/backup/backup.routes.js';
+import { actionsRoutes } from './modules/actions/actions.routes.js';
 
 const app = Fastify({
   logger: true,
@@ -31,6 +34,9 @@ app.register(tenantRoutes, { prefix: '/api/v1' });
 app.register(projectRoutes, { prefix: '/api/v1' });
 app.register(fileRoutes, { prefix: '/api/v1' });
 app.register(oauthRoutes, { prefix: '/api/v1' });
+app.register(tableRoutes, { prefix: '/api/v1' });
+app.register(backupRoutes, { prefix: '/api/v1' });
+app.register(actionsRoutes, { prefix: '/api/v1' });
 
 async function start() {
   try {

@@ -1,1 +1,59 @@
-actions: []
+actions:
+  - name: register
+    definition:
+      kind: synchronous
+      handler: "{{ACTION_BASE_URL}}/api/v1/actions/register"
+      forward_client_headers: true
+    permissions:
+      - role: anonymous
+    comment: Register a new user
+    arguments:
+      - name: email
+        type: String!
+      - name: password
+        type: String!
+      - name: username
+        type: String
+    output_type: AuthResponse
+
+  - name: login
+    definition:
+      kind: synchronous
+      handler: "{{ACTION_BASE_URL}}/api/v1/actions/login"
+      forward_client_headers: true
+    permissions:
+      - role: anonymous
+    comment: Login with email and password
+    arguments:
+      - name: email
+        type: String!
+      - name: password
+        type: String!
+    output_type: AuthResponse
+
+  - name: me
+    definition:
+      kind: synchronous
+      handler: "{{ACTION_BASE_URL}}/api/v1/actions/me"
+      forward_client_headers: true
+    permissions:
+      - role: user
+    comment: Get current user info
+    output_type: UserResponse
+
+  - name: createTenant
+    definition:
+      kind: synchronous
+      handler: "{{ACTION_BASE_URL}}/api/v1/actions/create-tenant"
+      forward_client_headers: true
+    permissions:
+      - role: user
+    comment: Create a new tenant
+    arguments:
+      - name: alias
+        type: String!
+      - name: name
+        type: String!
+      - name: plan
+        type: String
+    output_type: TenantResponse

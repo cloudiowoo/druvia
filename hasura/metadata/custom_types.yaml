@@ -1,5 +1,67 @@
 custom_types:
   enums: []
-  input_objects: []
-  objects: []
+  input_objects:
+    - name: RegisterInput
+      fields:
+        - name: email
+          type: String!
+        - name: password
+          type: String!
+        - name: username
+          type: String
+
+    - name: LoginInput
+      fields:
+        - name: email
+          type: String!
+        - name: password
+          type: String!
+
+    - name: CreateTenantInput
+      fields:
+        - name: alias
+          type: String!
+        - name: name
+          type: String!
+        - name: plan
+          type: String
+
+  objects:
+    - name: AuthResponse
+      fields:
+        - name: user_id
+          type: String!
+        - name: email
+          type: String!
+        - name: username
+          type: String
+        - name: token
+          type: String!
+
+    - name: UserResponse
+      fields:
+        - name: user_id
+          type: String!
+        - name: email
+          type: String!
+        - name: username
+          type: String
+        - name: avatar_url
+          type: String
+        - name: status
+          type: String!
+
+    - name: TenantResponse
+      fields:
+        - name: tenant_id
+          type: String!
+        - name: alias
+          type: String!
+        - name: name
+          type: String!
+        - name: plan
+          type: String!
+        - name: status
+          type: String!
+
   scalars: []

@@ -100,6 +100,39 @@ client.subscribe(
 
 ## Actions (自定义业务逻辑)
 
+### 安全验证
+
+Actions 端点必须验证请求来自 Hasura：
+
+```typescript
+// middleware/hasura.ts
+export async function verifyHasuraWebhook(request, reply) {
+  const secret = request.headers['x-hasura-admin-secret'];
+  if (config.hasura.adminSecret && secret !== config.hasura.adminSecret) {
+    return reply.status(401).send({ message: 'Unauthorized' });
+  }
+}
+```
+
+### actions.yaml 必需字段
+
+```yaml
+actions:
+  - name: register
+    definition:
+      kind: synchronous
+      handler: "{{ACTION_BASE_URL}}/api/v1/actions/register"
+    permissions:
+      - role: anonymous
+    # 必需字段：
+    arguments:           # 输入参数类型
+      - name: email
+        type: String!
+      - name: password
+        type: String!
+    output_type: AuthResponse  # 返回类型 (对应 custom_types.yaml)
+```
+
 ### 定义 Action
 
 ```yaml

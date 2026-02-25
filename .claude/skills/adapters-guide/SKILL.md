@@ -176,3 +176,18 @@ for (const config of authConfigs) {
   }
 }
 ```
+
+## Redis (ioredis)
+
+ESM 导入需要特殊处理：
+
+```typescript
+// ✅ 正确: 兼容 ESM 和 CJS
+import RedisClient from 'ioredis';
+const Redis = RedisClient.default || RedisClient;
+export const redis = new Redis(config.redis.url);
+
+// ❌ 错误: ESM 下会报错
+import Redis from 'ioredis';
+const redis = new Redis(url);  // This expression is not constructable
+```
