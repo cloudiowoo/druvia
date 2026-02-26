@@ -4,6 +4,6 @@ process.env.DB_HOST = 'localhost';
 process.env.DB_PORT = '5432';
 process.env.DB_USER = 'postgres';
 process.env.DB_NAME = 'druvia';
-process.env.POSTGRES_PASSWORD = 'druvia_dev_password';
+process.env.POSTGRES_PASSWORD = 'p@sscode1234!';
 process.env.HASURA_ADMIN_SECRET = ''; // Disable Hasura webhook verification in tests
 process.env.REDIS_URL = 'redis://localhost:6379';

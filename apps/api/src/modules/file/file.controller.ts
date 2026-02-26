@@ -22,8 +22,12 @@ interface ListFilesQuery {
   offset?: string;
 }
 
+interface MultipartRequest extends FastifyRequest<{ Params: UploadParams; Querystring: UploadQuery }> {
+  file(): Promise<MultipartFile | undefined>;
+}
+
 export async function uploadFile(
-  request: FastifyRequest<{ Params: UploadParams; Querystring: UploadQuery }>,
+  request: MultipartRequest,
   reply: FastifyReply
 ) {
   const data = await request.file();

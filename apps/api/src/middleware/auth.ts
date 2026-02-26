@@ -84,7 +84,7 @@ export async function optionalAuth(
 
 // Fastify 插件 - 注册装饰器
 async function authPlugin(app: FastifyInstance): Promise<void> {
-  app.decorateRequest('user', null);
+  app.decorateRequest('user', undefined);
 }
 
 export default fp(authPlugin, {

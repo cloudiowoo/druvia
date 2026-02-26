@@ -1,0 +1,6 @@
+# Data directories
+postgres_data/
+redis_data/
+
+# Environment files
+.env
