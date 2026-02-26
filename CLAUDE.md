@@ -2,7 +2,7 @@
 
 自托管 Backend-as-a-Service 平台，类 Supabase 架构。
 
-**Stack**: Node.js 22 LTS + Fastify 5 + PostgreSQL 17 + Hasura CE 2.40 + Redis 7
+**Stack**: Node.js 22 LTS + Fastify 5 + PostgreSQL 17 + Hasura CE 2.48 + Redis 7
 **Architecture**: Schema-per-Tenant 多租户隔离
 
 ---
