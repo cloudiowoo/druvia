@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAppStore } from '@/store';
+import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 
 export default function TenantLayout({
@@ -12,10 +13,20 @@ export default function TenantLayout({
 }) {
   const params = useParams();
   const router = useRouter();
+  const { token, isHydrated } = useAuth();
   const tenantId = params.tenantId as string;
   const { currentTenant, setCurrentTenant } = useAppStore();
 
   useEffect(() => {
+    // Wait for auth hydration before checking token
+    if (!isHydrated) return;
+
+    // Redirect to login if not authenticated
+    if (!token) {
+      router.push('/login');
+      return;
+    }
+
     // Skip if already loaded this tenant
     if (currentTenant?.tenantId === tenantId) return;
 
@@ -34,7 +45,16 @@ export default function TenantLayout({
       }
     }
     loadTenant();
-  }, [tenantId, currentTenant?.tenantId, setCurrentTenant, router]);
+  }, [tenantId, currentTenant?.tenantId, setCurrentTenant, router, token, isHydrated]);
+
+  // Show loading during hydration or initial load
+  if (!isHydrated || (currentTenant?.tenantId !== tenantId && token)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-gray-500">加载中...</div>
+      </div>
+    );
+  }
 
   return <>{children}</>;
 }

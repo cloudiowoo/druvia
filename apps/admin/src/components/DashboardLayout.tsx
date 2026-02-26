@@ -7,15 +7,26 @@ import { useAuth } from '@/lib/auth';
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { token, fetchUser } = useAuth();
+  const { token, isHydrated, fetchUser } = useAuth();
 
   useEffect(() => {
+    // Wait for hydration to complete before checking auth
+    if (!isHydrated) return;
+
     if (!token) {
       router.push('/login');
     } else {
       fetchUser();
     }
-  }, [token, router, fetchUser]);
+  }, [token, isHydrated, router, fetchUser]);
+
+  if (!isHydrated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-gray-500">加载中...</div>
+      </div>
+    );
+  }
 
   if (!token) {
     return null;

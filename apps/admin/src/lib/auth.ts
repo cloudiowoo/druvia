@@ -13,9 +13,11 @@ interface AuthState {
   user: User | null;
   token: string | null;
   isLoading: boolean;
+  isHydrated: boolean;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   fetchUser: () => Promise<void>;
+  setIsHydrated: (hydrated: boolean) => void;
 }
 
 export const useAuth = create<AuthState>()(
@@ -24,6 +26,9 @@ export const useAuth = create<AuthState>()(
       user: null,
       token: null,
       isLoading: false,
+      isHydrated: false,
+
+      setIsHydrated: (hydrated: boolean) => set({ isHydrated: hydrated }),
 
       login: async (email: string, password: string) => {
         set({ isLoading: true });
@@ -62,11 +67,13 @@ export const useAuth = create<AuthState>()(
     {
       name: 'druvia-auth',
       partialize: (state) => ({ token: state.token }),
-      onRehydrateStorage: () => (state) => {
+      onRehydrateStorage: () => (state, _error) => {
         // Initialize token on api client after rehydration from localStorage
         if (state?.token) {
           api.setToken(state.token);
         }
+        // Mark hydration as complete
+        state?.setIsHydrated(true);
       },
     }
   )
