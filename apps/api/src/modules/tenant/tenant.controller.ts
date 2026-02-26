@@ -17,7 +17,10 @@ export async function createTenant(
   reply: FastifyReply
 ) {
   try {
-    const tenant = await tenantService.createTenant(request.body);
+    const tenant = await tenantService.createTenant({
+      ...request.body,
+      ownerUid: request.user!.uid,
+    });
     return reply.status(201).send({ success: true, data: tenant });
   } catch (error: unknown) {
     const err = error as { code?: string; message?: string };

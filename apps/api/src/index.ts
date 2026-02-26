@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { config } from './config/index.js';
 import authPlugin from './middleware/auth.js';
@@ -16,6 +17,10 @@ const app = Fastify({
 });
 
 // Register plugins
+app.register(cors, {
+  origin: true, // Allow all origins in development
+  credentials: true,
+});
 app.register(authPlugin);
 app.register(multipart, {
   limits: {

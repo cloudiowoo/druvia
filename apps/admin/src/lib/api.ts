@@ -63,7 +63,7 @@ class ApiClient {
   async login(email: string, password: string) {
     return this.request<{ user_id: string; email: string; token: string }>(
       'POST',
-      '/api/v1/users/login',
+      '/api/v1/auth/login',
       { email, password }
     );
   }
@@ -71,7 +71,7 @@ class ApiClient {
   async register(email: string, password: string, username?: string) {
     return this.request<{ user_id: string; email: string; token: string }>(
       'POST',
-      '/api/v1/users/register',
+      '/api/v1/auth/register',
       { email, password, username }
     );
   }

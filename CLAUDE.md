@@ -112,11 +112,11 @@ const result = await auth.exchangeCode(code);
 
 | 服务 | 容器 | 端口 |
 |------|------|------|
-| API | `druvia-api` | 3001 |
-| Admin | `druvia-admin` | 3000 |
 | Hasura | `hasura` | 8080 |
 | Database | `postgres` | 5432 |
 | Cache | `redis` | 6379 |
+
+> API/Admin 使用 pm2 部署，不通过 Docker
 
 ### 数据库访问
 
@@ -210,6 +210,8 @@ druvia/
 
 | 命令 | 用途 |
 |------|------|
+| `make dev-up` | 启动开发环境 (PostgreSQL/Redis/Hasura) |
+| `make dev-down` | 停止开发环境 |
 | `pnpm dev` | 启动开发服务 |
 | `pnpm build` | 构建项目 |
 | `pnpm test` | 运行测试 |
@@ -218,6 +220,10 @@ druvia/
 ---
 
 ## 紧急调试
+
+### 密码特殊字符
+密码含 `@`, `!` 等字符时，Hasura 数据库 URL 需要 URL 编码：
+- `docker/.env` 中设置 `POSTGRES_PASSWORD_ENCODED` (@ → %40, ! → %21)
 
 ```bash
 # 检查服务
@@ -233,5 +239,5 @@ docker-compose down -v && docker-compose up -d
 
 ---
 
-**Last Updated**: 2026-02-24
+**Last Updated**: 2026-02-26
 **Architecture**: 三级渐进式披露（元数据 → CLAUDE.md → Skills）
