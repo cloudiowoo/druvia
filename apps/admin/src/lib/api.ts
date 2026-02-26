@@ -153,9 +153,134 @@ class ApiClient {
       type: string;
       nullable?: boolean;
       primaryKey?: boolean;
+      defaultValue?: string;
     }>;
   }) {
     return this.request<unknown>('POST', `/api/v1/schemas/${schemaName}/tables`, table);
+  }
+
+  async getTableStructure(schemaName: string, tableName: string) {
+    return this.request<{
+      tableName: string;
+      columns: Array<{
+        name: string;
+        type: string;
+        nullable: boolean;
+        primaryKey: boolean;
+        defaultValue: string | null;
+      }>;
+    }>('GET', `/api/v1/schemas/${schemaName}/tables/${tableName}`);
+  }
+
+  async updateTableStructure(schemaName: string, tableName: string, changes: {
+    addColumns?: Array<{
+      name: string;
+      type: string;
+      nullable?: boolean;
+      defaultValue?: string;
+    }>;
+    dropColumns?: string[];
+    alterColumns?: Array<{
+      name: string;
+      type?: string;
+      nullable?: boolean;
+      defaultValue?: string | null;
+    }>;
+  }) {
+    return this.request<unknown>('PATCH', `/api/v1/schemas/${schemaName}/tables/${tableName}`, changes);
+  }
+
+  async dropTable(schemaName: string, tableName: string) {
+    return this.request<void>('DELETE', `/api/v1/schemas/${schemaName}/tables/${tableName}`);
+  }
+
+  // Table Rows (Data CRUD)
+  async listRows(schemaName: string, tableName: string, options?: {
+    limit?: number;
+    offset?: number;
+    orderBy?: string;
+    orderDir?: 'asc' | 'desc';
+    filters?: Array<{
+      column: string;
+      operator: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'like' | 'ilike' | 'is_null' | 'is_not_null';
+      value?: string | number | boolean | null;
+    }>;
+  }) {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    if (options?.orderBy) params.set('order_by', options.orderBy);
+    if (options?.orderDir) params.set('order_dir', options.orderDir);
+    if (options?.filters) params.set('filters', JSON.stringify(options.filters));
+    const query = params.toString();
+    return this.request<{
+      rows: Array<Record<string, unknown>>;
+      total: number;
+      columns: Array<{ name: string; type: string }>;
+    }>('GET', `/api/v1/schemas/${schemaName}/tables/${tableName}/rows${query ? `?${query}` : ''}`);
+  }
+
+  async createRow(schemaName: string, tableName: string, data: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      'POST',
+      `/api/v1/schemas/${schemaName}/tables/${tableName}/rows`,
+      data
+    );
+  }
+
+  async updateRow(schemaName: string, tableName: string, primaryKey: Record<string, unknown>, data: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      'PATCH',
+      `/api/v1/schemas/${schemaName}/tables/${tableName}/rows`,
+      { primaryKey, data }
+    );
+  }
+
+  async deleteRow(schemaName: string, tableName: string, primaryKey: Record<string, unknown>) {
+    return this.request<void>(
+      'DELETE',
+      `/api/v1/schemas/${schemaName}/tables/${tableName}/rows`,
+      { primaryKey }
+    );
+  }
+
+  async deleteRows(schemaName: string, tableName: string, primaryKeys: Array<Record<string, unknown>>) {
+    return this.request<{ deleted: number }>(
+      'DELETE',
+      `/api/v1/schemas/${schemaName}/tables/${tableName}/rows/batch`,
+      { primaryKeys }
+    );
+  }
+
+  // Data Export
+  async exportData(schemaName: string, tableName: string, format: 'csv' | 'json', options?: {
+    filters?: Array<{
+      column: string;
+      operator: string;
+      value?: unknown;
+    }>;
+  }): Promise<Blob> {
+    const params = new URLSearchParams();
+    params.set('format', format);
+    if (options?.filters) {
+      params.set('filters', JSON.stringify(options.filters));
+    }
+
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(
+      `${API_URL}/api/v1/schemas/${schemaName}/tables/${tableName}/export?${params}`,
+      { headers }
+    );
+
+    if (!response.ok) {
+      throw new Error('Export failed');
+    }
+
+    return response.blob();
   }
 
   // Backups

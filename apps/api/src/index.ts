@@ -11,6 +11,7 @@ import { oauthRoutes } from './modules/oauth/oauth.routes.js';
 import { tableRoutes } from './modules/table/table.routes.js';
 import { backupRoutes } from './modules/backup/backup.routes.js';
 import { actionsRoutes } from './modules/actions/actions.routes.js';
+import { dataRoutes } from './modules/data/data.routes.js';
 
 const app = Fastify({
   logger: true,
@@ -42,6 +43,7 @@ app.register(oauthRoutes, { prefix: '/api/v1' });
 app.register(tableRoutes, { prefix: '/api/v1' });
 app.register(backupRoutes, { prefix: '/api/v1' });
 app.register(actionsRoutes, { prefix: '/api/v1' });
+app.register(dataRoutes, { prefix: '/api/v1' });
 
 async function start() {
   try {
