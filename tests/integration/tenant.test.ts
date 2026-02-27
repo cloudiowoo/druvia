@@ -18,26 +18,26 @@ describe('TenantService Integration', () => {
 
   afterAll(async () => {
     // 清理测试数据 (不关闭 pool)
-    await pool.query('DELETE FROM druvia_tenants WHERE alias LIKE $1', ['test_%']);
+    await pool.query('DELETE FROM druvia_tenants WHERE alias LIKE $1', ['test%']);
     await pool.query('DELETE FROM druvia_users WHERE user_id = $1', ['user_test_tenant']);
   });
 
   beforeEach(async () => {
     // 每个测试前清理租户数据
-    await pool.query('DELETE FROM druvia_tenants WHERE alias LIKE $1', ['test_%']);
+    await pool.query('DELETE FROM druvia_tenants WHERE alias LIKE $1', ['test%']);
   });
 
   describe('createTenant', () => {
     it('should create a tenant with valid input', async () => {
       const tenant = await tenantService.createTenant({
-        alias: 'test_acme',
+        alias: 'testacme',
         name: 'ACME Corp',
         ownerUid: testUserId,
       });
 
       expect(tenant).toBeDefined();
       expect(tenant.tenantId).toMatch(/^tenant_/);
-      expect(tenant.alias).toBe('test_acme');
+      expect(tenant.alias).toBe('testacme');
       expect(tenant.name).toBe('ACME Corp');
       expect(tenant.ownerUid).toBe(testUserId);
       expect(tenant.plan).toBe('free');
@@ -46,14 +46,14 @@ describe('TenantService Integration', () => {
 
     it('should throw error for duplicate alias', async () => {
       await tenantService.createTenant({
-        alias: 'test_duplicate',
+        alias: 'testdup',
         name: 'First Tenant',
         ownerUid: testUserId,
       });
 
       await expect(
         tenantService.createTenant({
-          alias: 'test_duplicate',
+          alias: 'testdup',
           name: 'Second Tenant',
           ownerUid: testUserId,
         })
@@ -64,7 +64,7 @@ describe('TenantService Integration', () => {
   describe('getTenantById', () => {
     it('should return tenant by ID', async () => {
       const created = await tenantService.createTenant({
-        alias: 'test_getbyid',
+        alias: 'testgetid',
         name: 'Get By ID Test',
         ownerUid: testUserId,
       });
@@ -73,7 +73,7 @@ describe('TenantService Integration', () => {
 
       expect(tenant).toBeDefined();
       expect(tenant?.tenantId).toBe(created.tenantId);
-      expect(tenant?.alias).toBe('test_getbyid');
+      expect(tenant?.alias).toBe('testgetid');
     });
 
     it('should return null for non-existent ID', async () => {
@@ -85,27 +85,27 @@ describe('TenantService Integration', () => {
   describe('getTenantByAlias', () => {
     it('should return tenant by alias', async () => {
       await tenantService.createTenant({
-        alias: 'test_byalias',
+        alias: 'testbyalias',
         name: 'By Alias Test',
         ownerUid: testUserId,
       });
 
-      const tenant = await tenantService.getTenantByAlias('test_byalias');
+      const tenant = await tenantService.getTenantByAlias('testbyalias');
 
       expect(tenant).toBeDefined();
-      expect(tenant?.alias).toBe('test_byalias');
+      expect(tenant?.alias).toBe('testbyalias');
     });
   });
 
   describe('listTenants', () => {
     it('should list all tenants', async () => {
       await tenantService.createTenant({
-        alias: 'test_list1',
+        alias: 'testlist1',
         name: 'List Test 1',
         ownerUid: testUserId,
       });
       await tenantService.createTenant({
-        alias: 'test_list2',
+        alias: 'testlist2',
         name: 'List Test 2',
         ownerUid: testUserId,
       });
@@ -119,7 +119,7 @@ describe('TenantService Integration', () => {
   describe('updateTenant', () => {
     it('should update tenant name', async () => {
       const created = await tenantService.createTenant({
-        alias: 'test_update',
+        alias: 'testupdate',
         name: 'Original Name',
         ownerUid: testUserId,
       });
@@ -133,7 +133,7 @@ describe('TenantService Integration', () => {
 
     it('should update tenant plan', async () => {
       const created = await tenantService.createTenant({
-        alias: 'test_plan',
+        alias: 'testplan',
         name: 'Plan Test',
         ownerUid: testUserId,
       });
@@ -149,7 +149,7 @@ describe('TenantService Integration', () => {
   describe('deleteTenant', () => {
     it('should delete tenant', async () => {
       const created = await tenantService.createTenant({
-        alias: 'test_delete',
+        alias: 'testdelete',
         name: 'Delete Test',
         ownerUid: testUserId,
       });

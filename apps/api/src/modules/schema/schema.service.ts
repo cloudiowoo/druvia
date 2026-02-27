@@ -1,12 +1,13 @@
 import { pool, query, queryOne, execute } from '../../db/index.js';
+import { generateSchemaName } from '../../lib/validation.js';
 
-// Schema 命名规范: tenant_{alias} 或 proj_{project_alias}
+// Schema 命名规范: tenant_{alias} 或 t_{tenant}_{project}
 export function getTenantSchemaName(tenantAlias: string): string {
   return `tenant_${tenantAlias.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`;
 }
 
 export function getProjectSchemaName(tenantAlias: string, projectAlias: string): string {
-  return `${getTenantSchemaName(tenantAlias)}_${projectAlias.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`;
+  return generateSchemaName(tenantAlias, projectAlias);
 }
 
 // 创建租户 Schema

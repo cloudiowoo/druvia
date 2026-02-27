@@ -1,6 +1,7 @@
 import { query, queryOne } from '../../db/index.js';
 import { generateTenantId } from '@druvia/shared';
 import type { Tenant, CreateTenantInput, UpdateTenantInput } from '@druvia/shared';
+import { validateAlias } from '../../lib/validation.js';
 
 // Database row type (snake_case)
 interface TenantRow {
@@ -33,6 +34,7 @@ function toTenant(row: TenantRow): Tenant {
 }
 
 export async function createTenant(input: CreateTenantInput): Promise<Tenant> {
+  validateAlias(input.alias, '租户别名');
   const tenantId = generateTenantId();
   const row = await queryOne<TenantRow>(
     `INSERT INTO druvia_tenants (tenant_id, alias, name, owner_uid, plan)

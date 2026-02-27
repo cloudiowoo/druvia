@@ -11,7 +11,7 @@ describe('BackupService Integration', () => {
   beforeAll(async () => {
     // Clean up any existing test data
     await pool.query(`DROP SCHEMA IF EXISTS "${testSchemaName}" CASCADE`);
-    await pool.query('DELETE FROM druvia_tenants WHERE alias = $1', ['backup_test_tenant']);
+    await pool.query('DELETE FROM druvia_tenants WHERE alias = $1', ['bkptest']);
     await pool.query('DELETE FROM druvia_users WHERE user_id = $1', ['user_backup_test']);
 
     // Create test user
@@ -24,7 +24,7 @@ describe('BackupService Integration', () => {
 
     // Create test tenant
     const tenant = await tenantService.createTenant({
-      alias: 'backup_test_tenant',
+      alias: 'bkptest',
       name: 'Backup Test Tenant',
       ownerUid: testUserId,
     });

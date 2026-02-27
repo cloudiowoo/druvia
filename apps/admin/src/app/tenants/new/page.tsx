@@ -67,14 +67,16 @@ export default function NewTenantPage() {
                 className="input"
                 value={form.alias}
                 onChange={(e) =>
-                  setForm({ ...form, alias: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') })
+                  setForm({ ...form, alias: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '') })
                 }
-                placeholder="my_company"
-                pattern="[a-z0-9_]+"
+                placeholder="acme"
+                pattern="[a-z0-9]{3,16}"
+                minLength={3}
+                maxLength={16}
                 required
               />
               <p className="text-xs text-gray-500 mt-1">
-                只能包含小写字母、数字和下划线
+                3-16 个字符，仅限小写字母和数字
               </p>
             </div>
 

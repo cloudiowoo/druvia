@@ -9,7 +9,7 @@ describe('ProjectService Integration', () => {
 
   beforeAll(async () => {
     // 清理可能残留的测试数据
-    await pool.query('DELETE FROM druvia_tenants WHERE alias = $1', ['proj_test_tenant']);
+    await pool.query('DELETE FROM druvia_tenants WHERE alias = $1', ['projtenant']);
     await pool.query('DELETE FROM druvia_users WHERE user_id = $1', ['user_proj_test']);
 
     // 创建测试用户
@@ -20,9 +20,9 @@ describe('ProjectService Integration', () => {
     );
     testUserId = userResult.rows[0].id;
 
-    // 创建测试租户 (使用 proj_ 前缀避免与 tenant 测试冲突)
+    // 创建测试租户 (使用 proj 前缀避免与 tenant 测试冲突)
     const tenant = await tenantService.createTenant({
-      alias: 'proj_test_tenant',
+      alias: 'projtenant',
       name: 'Project Test Tenant',
       ownerUid: testUserId,
     });
@@ -46,29 +46,29 @@ describe('ProjectService Integration', () => {
     it('should create a project with schema', async () => {
       const project = await projectService.createProject({
         tenantId: testTenantId,
-        alias: 'test_app',
+        alias: 'testapp',
         name: 'Test Application',
       });
 
       expect(project).toBeDefined();
       expect(project.projectId).toMatch(/^proj_/);
-      expect(project.alias).toBe('test_app');
+      expect(project.alias).toBe('testapp');
       expect(project.name).toBe('Test Application');
-      expect(project.schemaName).toContain('tenant_proj_test_tenant');
+      expect(project.schemaName).toBe('dru_projtenant_testapp');
       expect(project.status).toBe('active');
     });
 
     it('should throw error for duplicate alias in same tenant', async () => {
       await projectService.createProject({
         tenantId: testTenantId,
-        alias: 'test_dup',
+        alias: 'testdup',
         name: 'First Project',
       });
 
       await expect(
         projectService.createProject({
           tenantId: testTenantId,
-          alias: 'test_dup',
+          alias: 'testdup',
           name: 'Second Project',
         })
       ).rejects.toThrow();
@@ -79,7 +79,7 @@ describe('ProjectService Integration', () => {
     it('should return project by ID', async () => {
       const created = await projectService.createProject({
         tenantId: testTenantId,
-        alias: 'test_getbyid',
+        alias: 'getbyid',
         name: 'Get By ID Test',
       });
 
@@ -94,12 +94,12 @@ describe('ProjectService Integration', () => {
     it('should list projects for tenant', async () => {
       await projectService.createProject({
         tenantId: testTenantId,
-        alias: 'test_list1',
+        alias: 'list1',
         name: 'List Test 1',
       });
       await projectService.createProject({
         tenantId: testTenantId,
-        alias: 'test_list2',
+        alias: 'list2',
         name: 'List Test 2',
       });
 
@@ -113,7 +113,7 @@ describe('ProjectService Integration', () => {
     it('should update project name', async () => {
       const created = await projectService.createProject({
         tenantId: testTenantId,
-        alias: 'test_update',
+        alias: 'update1',
         name: 'Original Name',
       });
 
@@ -129,7 +129,7 @@ describe('ProjectService Integration', () => {
     it('should delete project and schema', async () => {
       const created = await projectService.createProject({
         tenantId: testTenantId,
-        alias: 'test_delete',
+        alias: 'delete1',
         name: 'Delete Test',
       });
 

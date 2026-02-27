@@ -89,15 +89,17 @@ export default function NewProjectPage() {
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    alias: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''),
+                    alias: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, ''),
                   })
                 }
-                placeholder="my_project"
-                pattern="[a-z0-9_]+"
+                placeholder="main"
+                pattern="[a-z0-9]{3,16}"
+                minLength={3}
+                maxLength={16}
                 required
               />
               <p className="text-xs text-muted-foreground">
-                只能包含小写字母、数字和下划线
+                3-16 个字符，仅限小写字母和数字
               </p>
             </div>
 

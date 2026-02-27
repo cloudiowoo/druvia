@@ -3,6 +3,7 @@ import { generateProjectId } from '@druvia/shared';
 import type { Project, CreateProjectInput, UpdateProjectInput } from '@druvia/shared';
 import * as schemaService from '../schema/schema.service.js';
 import * as tenantService from '../tenant/tenant.service.js';
+import { validateAlias } from '../../lib/validation.js';
 
 // Database row type (snake_case)
 interface ProjectRow {
@@ -35,6 +36,9 @@ function toProject(row: ProjectRow): Project {
 }
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {
+  // 验证项目别名
+  validateAlias(input.alias, '项目别名');
+
   const projectId = generateProjectId();
 
   // 获取租户信息

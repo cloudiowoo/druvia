@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS druvia_users (
 CREATE TABLE IF NOT EXISTS druvia_tenants (
   id SERIAL PRIMARY KEY,
   tenant_id VARCHAR(64) UNIQUE NOT NULL,
-  alias VARCHAR(64) UNIQUE NOT NULL,
+  alias VARCHAR(16) UNIQUE NOT NULL CHECK (alias ~ '^[a-z0-9]{3,16}$'),
   name VARCHAR(255) NOT NULL,
   owner_uid INT NOT NULL REFERENCES druvia_users(id),
   plan VARCHAR(20) DEFAULT 'free',
@@ -40,9 +40,9 @@ CREATE TABLE IF NOT EXISTS druvia_projects (
   id SERIAL PRIMARY KEY,
   project_id VARCHAR(64) UNIQUE NOT NULL,
   tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE,
-  alias VARCHAR(64) NOT NULL,
+  alias VARCHAR(16) NOT NULL CHECK (alias ~ '^[a-z0-9]{3,16}$'),
   name VARCHAR(255) NOT NULL,
-  schema_name VARCHAR(128),
+  schema_name VARCHAR(35),
   settings JSONB DEFAULT '{}',
   status VARCHAR(20) DEFAULT 'active',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS druvia_projects (
 -- Schema 注册表
 CREATE TABLE IF NOT EXISTS druvia_schema_registry (
   id SERIAL PRIMARY KEY,
-  schema_name VARCHAR(128) UNIQUE NOT NULL,
+  schema_name VARCHAR(35) UNIQUE NOT NULL,
   tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE,
   project_id VARCHAR(64) REFERENCES druvia_projects(project_id) ON DELETE CASCADE,
   schema_type VARCHAR(20) NOT NULL,
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS druvia_backups (
   backup_id VARCHAR(64) UNIQUE NOT NULL,
   tenant_id VARCHAR(64) NOT NULL REFERENCES druvia_tenants(tenant_id) ON DELETE CASCADE,
   project_id VARCHAR(64) REFERENCES druvia_projects(project_id) ON DELETE CASCADE,
-  schema_name VARCHAR(128) NOT NULL,
+  schema_name VARCHAR(35) NOT NULL,
   storage_key VARCHAR(512) NOT NULL,
   size_bytes BIGINT DEFAULT 0,
   tables_count INT DEFAULT 0,

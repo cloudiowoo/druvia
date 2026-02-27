@@ -241,7 +241,7 @@ describe('Actions Integration', () => {
         payload: {
           action: { name: 'createTenant' },
           input: {
-            alias: 'action_test_tenant',
+            alias: 'actiontest',
             name: 'Action Test Tenant',
           },
           session_variables: {
@@ -254,7 +254,7 @@ describe('Actions Integration', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
       expect(body.tenant_id).toMatch(/^tenant_/);
-      expect(body.alias).toBe('action_test_tenant');
+      expect(body.alias).toBe('actiontest');
       expect(body.status).toBe('active');
     });
 

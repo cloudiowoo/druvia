@@ -93,8 +93,8 @@ export default function BackupsPage() {
 
     setCreating(true);
     try {
-      // Use correct schema name: tenant_{tenant_alias}_{project_alias}
-      const schemaName = `tenant_${tenant.alias}_${project.alias}`;
+      // Use correct schema name: dru_{tenant_alias}_{project_alias}
+      const schemaName = `dru_${tenant.alias}_${project.alias}`;
       const res = await api.createBackup(selectedTenant, schemaName);
       if (res.success && res.data) {
         // Refresh backups list
