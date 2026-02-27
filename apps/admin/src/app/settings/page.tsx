@@ -3,6 +3,9 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/lib/auth';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const HASURA_URL = process.env.NEXT_PUBLIC_HASURA_URL || 'http://localhost:8080';
+
 export default function SettingsPage() {
   const { user } = useAuth();
 
@@ -48,11 +51,11 @@ export default function SettingsPage() {
             <div className="space-y-3">
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-500">API 地址</span>
-                <span className="font-mono text-sm">{process.env.API_URL}</span>
+                <span className="font-mono text-sm">{API_URL}</span>
               </div>
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-500">Hasura 地址</span>
-                <span className="font-mono text-sm">{process.env.HASURA_URL}</span>
+                <span className="font-mono text-sm">{HASURA_URL}</span>
               </div>
               <div className="flex justify-between py-2">
                 <span className="text-gray-500">版本</span>

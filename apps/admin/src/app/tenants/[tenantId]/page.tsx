@@ -114,7 +114,7 @@ export default function TenantDetailPage() {
         <div className="card-header flex items-center justify-between">
           <h2 className="font-semibold">项目列表</h2>
           <Link
-            href={`/tenants/${tenantId}/projects/new`}
+            href={`/t/${tenantId}/projects/new`}
             className="btn btn-primary text-sm"
           >
             创建项目
@@ -152,7 +152,7 @@ export default function TenantDetailPage() {
                   </td>
                   <td>
                     <Link
-                      href={`/tenants/${tenantId}/projects/${project.projectId}`}
+                      href={`/t/${tenantId}/p/${project.projectId}`}
                       className="text-sm text-primary-600 hover:underline"
                     >
                       管理

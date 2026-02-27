@@ -141,3 +141,44 @@ export async function changePassword(userId: string, newPassword: string): Promi
   );
   return rows.length > 0;
 }
+
+export async function listUsers(
+  limit = 50,
+  offset = 0
+): Promise<{ users: User[]; total: number }> {
+  const rows = await query<UserRow>(
+    `SELECT * FROM druvia_users
+     ORDER BY created_at DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+
+  const countResult = await queryOne<{ count: string }>(
+    'SELECT COUNT(*) as count FROM druvia_users'
+  );
+  const total = parseInt(countResult?.count || '0', 10);
+
+  return {
+    users: rows.map(toUser),
+    total,
+  };
+}
+
+export async function deleteUser(userId: string): Promise<boolean> {
+  const rows = await query<{ user_id: string }>(
+    'DELETE FROM druvia_users WHERE user_id = $1 RETURNING user_id',
+    [userId]
+  );
+  return rows.length > 0;
+}
+
+export async function updateUserStatus(
+  userId: string,
+  status: 'active' | 'inactive' | 'suspended'
+): Promise<User | null> {
+  const row = await queryOne<UserRow>(
+    'UPDATE druvia_users SET status = $1 WHERE user_id = $2 RETURNING *',
+    [status, userId]
+  );
+  return row ? toUser(row) : null;
+}

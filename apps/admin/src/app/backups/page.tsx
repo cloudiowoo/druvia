@@ -9,7 +9,7 @@ interface Backup {
   tenantId: string;
   schemaName: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
-  sizeBytes: number;
+  sizeBytes: number | string;
   tablesCount: number;
   createdAt: string;
   completedAt: string | null;
@@ -21,9 +21,18 @@ interface Tenant {
   name: string;
 }
 
+interface Project {
+  projectId: string;
+  alias: string;
+  name: string;
+  schemaName?: string;
+}
+
 export default function BackupsPage() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [selectedTenant, setSelectedTenant] = useState<string>('');
+  const [selectedProject, setSelectedProject] = useState<string>('');
   const [backups, setBackups] = useState<Backup[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -44,6 +53,23 @@ export default function BackupsPage() {
   useEffect(() => {
     if (!selectedTenant) return;
 
+    async function fetchProjects() {
+      const res = await api.listProjects(selectedTenant);
+      if (res.success && res.data) {
+        setProjects(res.data);
+        if (res.data.length > 0) {
+          setSelectedProject(res.data[0].projectId);
+        } else {
+          setSelectedProject('');
+        }
+      }
+    }
+    fetchProjects();
+  }, [selectedTenant]);
+
+  useEffect(() => {
+    if (!selectedTenant) return;
+
     async function fetchBackups() {
       setLoading(true);
       try {
@@ -59,14 +85,16 @@ export default function BackupsPage() {
   }, [selectedTenant]);
 
   const handleCreateBackup = async () => {
-    if (!selectedTenant) return;
+    if (!selectedTenant || !selectedProject) return;
 
     const tenant = tenants.find((t) => t.tenantId === selectedTenant);
-    if (!tenant) return;
+    const project = projects.find((p) => p.projectId === selectedProject);
+    if (!tenant || !project) return;
 
     setCreating(true);
     try {
-      const schemaName = `tenant_${tenant.alias}`;
+      // Use correct schema name: tenant_{tenant_alias}_{project_alias}
+      const schemaName = `tenant_${tenant.alias}_${project.alias}`;
       const res = await api.createBackup(selectedTenant, schemaName);
       if (res.success && res.data) {
         // Refresh backups list
@@ -80,12 +108,13 @@ export default function BackupsPage() {
     }
   };
 
-  const formatSize = (bytes: number) => {
-    if (bytes === 0) return '0 B';
+  const formatSize = (bytes: number | string | null | undefined) => {
+    const num = Number(bytes);
+    if (bytes === null || bytes === undefined || isNaN(num) || num === 0) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    const i = Math.floor(Math.log(num) / Math.log(k));
+    return parseFloat((num / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   const formatDate = (dateStr: string) => {
@@ -122,26 +151,47 @@ export default function BackupsPage() {
         <button
           onClick={handleCreateBackup}
           className="btn btn-primary"
-          disabled={!selectedTenant || creating}
+          disabled={!selectedTenant || !selectedProject || creating}
         >
           {creating ? '创建中...' : '创建备份'}
         </button>
       </div>
 
       <div className="card mb-6">
-        <div className="card-body">
-          <label className="label">选择租户</label>
-          <select
-            className="input max-w-xs"
-            value={selectedTenant}
-            onChange={(e) => setSelectedTenant(e.target.value)}
-          >
-            {tenants.map((tenant) => (
-              <option key={tenant.tenantId} value={tenant.tenantId}>
-                {tenant.name} ({tenant.alias})
-              </option>
-            ))}
-          </select>
+        <div className="card-body flex gap-4">
+          <div>
+            <label className="label">选择租户</label>
+            <select
+              className="input"
+              value={selectedTenant}
+              onChange={(e) => setSelectedTenant(e.target.value)}
+            >
+              {tenants.map((tenant) => (
+                <option key={tenant.tenantId} value={tenant.tenantId}>
+                  {tenant.name} ({tenant.alias})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">选择项目</label>
+            <select
+              className="input"
+              value={selectedProject}
+              onChange={(e) => setSelectedProject(e.target.value)}
+              disabled={projects.length === 0}
+            >
+              {projects.length === 0 ? (
+                <option value="">暂无项目</option>
+              ) : (
+                projects.map((project) => (
+                  <option key={project.projectId} value={project.projectId}>
+                    {project.name} ({project.alias})
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
         </div>
       </div>
 

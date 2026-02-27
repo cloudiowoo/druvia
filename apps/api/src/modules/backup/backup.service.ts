@@ -58,26 +58,23 @@ function toBackup(row: BackupRow): Backup {
   };
 }
 
-// Run pg_dump command
+// Run pg_dump command via Docker
 async function runPgDump(schemaName: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
 
-    const pgDump = spawn('pg_dump', [
-      '-h', config.database.host,
-      '-p', String(config.database.port),
+    // Use docker exec to run pg_dump inside the postgres container
+    const pgDump = spawn('docker', [
+      'exec',
+      'druvia-postgres',
+      'pg_dump',
       '-U', config.database.user,
       '-d', config.database.database,
       '-n', schemaName,
       '-F', 'c',  // Custom format (compressed)
       '--no-owner',
       '--no-acl',
-    ], {
-      env: {
-        ...process.env,
-        PGPASSWORD: config.database.password,
-      },
-    });
+    ]);
 
     pgDump.stdout.on('data', (chunk) => chunks.push(chunk));
     pgDump.stderr.on('data', (data) => console.error(`pg_dump stderr: ${data}`));
@@ -94,25 +91,23 @@ async function runPgDump(schemaName: string): Promise<Buffer> {
   });
 }
 
-// Run pg_restore command
+// Run pg_restore command via Docker
 async function runPgRestore(schemaName: string, data: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {
-    const pgRestore = spawn('pg_restore', [
-      '-h', config.database.host,
-      '-p', String(config.database.port),
+    // Use docker exec to run pg_restore inside the postgres container
+    const pgRestore = spawn('docker', [
+      'exec',
+      '-i',  // Interactive mode to accept stdin
+      'druvia-postgres',
+      'pg_restore',
       '-U', config.database.user,
       '-d', config.database.database,
-      '-n', schemaName,  // Restore only to specified schema
+      '-n', schemaName,
       '--no-owner',
       '--no-acl',
       '--clean',
       '--if-exists',
-    ], {
-      env: {
-        ...process.env,
-        PGPASSWORD: config.database.password,
-      },
-    });
+    ]);
 
     pgRestore.stdin.write(data);
     pgRestore.stdin.end();
@@ -188,7 +183,7 @@ export async function createBackup(
         `UPDATE druvia_backups
          SET status = 'completed', size_bytes = $1, tables_count = $2, tables_list = $3, completed_at = NOW()
          WHERE backup_id = $4`,
-        [dumpData.length, tablesList.length, tablesList, backupId]
+        [dumpData.length, tablesList.length, JSON.stringify(tablesList), backupId]
       );
     } catch (error) {
       const err = error as Error;

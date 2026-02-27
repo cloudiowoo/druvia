@@ -300,6 +300,43 @@ class ApiClient {
       status: string;
     }>('POST', `/api/v1/tenants/${tenantId}/backups`, { schemaName });
   }
+
+  // Users (Admin)
+  async listUsers(options?: { limit?: number; offset?: number }) {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    const query = params.toString();
+    return this.request<Array<{
+      userId: string;
+      email: string | null;
+      username: string | null;
+      status: string;
+      createdAt: string;
+    }>>('GET', `/api/v1/users${query ? `?${query}` : ''}`);
+  }
+
+  async getUser(userId: string) {
+    return this.request<{
+      userId: string;
+      email: string | null;
+      username: string | null;
+      avatarUrl: string | null;
+      status: string;
+      createdAt: string;
+    }>('GET', `/api/v1/users/${userId}`);
+  }
+
+  async deleteUser(userId: string) {
+    return this.request<void>('DELETE', `/api/v1/users/${userId}`);
+  }
+
+  async updateUserStatus(userId: string, status: string) {
+    return this.request<{
+      userId: string;
+      status: string;
+    }>('PATCH', `/api/v1/users/${userId}/status`, { status });
+  }
 }
 
 export const api = new ApiClient();

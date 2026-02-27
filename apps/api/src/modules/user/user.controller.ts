@@ -184,3 +184,91 @@ export async function changePassword(
 
   return reply.send({ success: true, message: 'Password changed successfully' });
 }
+
+// List all users (admin)
+export async function listUsers(
+  request: FastifyRequest<{ Querystring: { limit?: string; offset?: string } }>,
+  reply: FastifyReply
+) {
+  const limit = parseInt(request.query.limit || '50', 10);
+  const offset = parseInt(request.query.offset || '0', 10);
+
+  const { users, total } = await userService.listUsers(limit, offset);
+
+  return reply.send({
+    success: true,
+    data: users,
+    pagination: { limit, offset, total },
+  });
+}
+
+// Get user by ID (admin)
+export async function getUser(
+  request: FastifyRequest<{ Params: { userId: string } }>,
+  reply: FastifyReply
+) {
+  const user = await userService.getUserById(request.params.userId);
+
+  if (!user) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'User not found' },
+    });
+  }
+
+  return reply.send({ success: true, data: user });
+}
+
+// Delete user (admin)
+export async function deleteUser(
+  request: FastifyRequest<{ Params: { userId: string } }>,
+  reply: FastifyReply
+) {
+  // Prevent self-deletion
+  if (request.user?.userId === request.params.userId) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_OPERATION', message: 'Cannot delete your own account' },
+    });
+  }
+
+  const deleted = await userService.deleteUser(request.params.userId);
+
+  if (!deleted) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'User not found' },
+    });
+  }
+
+  return reply.status(204).send();
+}
+
+// Update user status (admin)
+export async function updateUserStatus(
+  request: FastifyRequest<{ Params: { userId: string }; Body: { status: string } }>,
+  reply: FastifyReply
+) {
+  const { status } = request.body;
+
+  if (!['active', 'inactive', 'suspended'].includes(status)) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_INPUT', message: 'Invalid status value' },
+    });
+  }
+
+  const user = await userService.updateUserStatus(
+    request.params.userId,
+    status as 'active' | 'inactive' | 'suspended'
+  );
+
+  if (!user) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'User not found' },
+    });
+  }
+
+  return reply.send({ success: true, data: user });
+}
