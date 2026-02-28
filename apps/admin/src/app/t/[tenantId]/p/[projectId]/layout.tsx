@@ -32,21 +32,19 @@ export default function ProjectLayout({
     if (currentProject?.projectId === projectId) return;
 
     async function loadProject() {
-      const res = await api.listProjects(tenantId);
+      const res = await api.getProject(projectId);
       if (res.success && res.data) {
-        const project = res.data.find((p) => p.projectId === projectId);
-        if (project) {
-          setCurrentProject({
-            projectId: project.projectId,
-            tenantId,
-            alias: project.alias,
-            name: project.name,
-            schemaName: `tenant_${currentTenant?.alias || tenantId}`,
-            status: project.status as 'active' | 'suspended' | 'deleted',
-          });
-        } else {
-          router.push(`/t/${tenantId}`);
-        }
+        const project = res.data;
+        setCurrentProject({
+          projectId: project.projectId,
+          tenantId,
+          alias: project.alias,
+          name: project.name,
+          schemaName: project.schemaName || '',
+          status: project.status as 'active' | 'suspended' | 'deleted',
+        });
+      } else {
+        router.push(`/t/${tenantId}`);
       }
     }
     loadProject();

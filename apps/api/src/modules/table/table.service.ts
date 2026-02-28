@@ -255,8 +255,8 @@ export async function listTables(schemaName: string): Promise<Array<{
        COALESCE(c.reltuples::bigint, 0) as row_count,
        COALESCE(pg_total_relation_size(quote_ident($1) || '.' || quote_ident(t.table_name)), 0) as size_bytes
      FROM information_schema.tables t
-     LEFT JOIN pg_class c ON c.relname = t.table_name
-     LEFT JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = $1
+     LEFT JOIN pg_namespace n ON n.nspname = t.table_schema
+     LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = t.table_name
      WHERE t.table_schema = $1
        AND t.table_type = 'BASE TABLE'
        AND t.table_name NOT LIKE '\\_%'

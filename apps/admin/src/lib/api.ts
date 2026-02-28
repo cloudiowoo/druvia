@@ -125,6 +125,7 @@ class ApiClient {
       projectId: string;
       alias: string;
       name: string;
+      schemaName: string;
       status: string;
     }>>('GET', `/api/v1/tenants/${tenantId}/projects`);
   }
@@ -135,6 +136,17 @@ class ApiClient {
       alias: string;
       name: string;
     }>('POST', `/api/v1/tenants/${tenantId}/projects`, data);
+  }
+
+  async getProject(projectId: string) {
+    return this.request<{
+      projectId: string;
+      tenantId: string;
+      alias: string;
+      name: string;
+      schemaName: string;
+      status: string;
+    }>('GET', `/api/v1/projects/${projectId}`);
   }
 
   // Tables
