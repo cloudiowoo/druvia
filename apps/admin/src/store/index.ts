@@ -24,6 +24,7 @@ export interface UserContext {
   email: string | null;
   username: string | null;
   avatarUrl: string | null;
+  role?: 'super_admin' | 'admin';
 }
 
 interface AppState {

@@ -13,6 +13,10 @@ interface TenantRow {
   plan: string;
   settings: Record<string, unknown>;
   status: string;
+  description: string | null;
+  storage_limit: number;
+  project_limit: number;
+  user_limit: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -28,6 +32,10 @@ function toTenant(row: TenantRow): Tenant {
     plan: row.plan as Tenant['plan'],
     settings: row.settings,
     status: row.status as Tenant['status'],
+    description: row.description,
+    storageLimit: row.storage_limit,
+    projectLimit: row.project_limit,
+    userLimit: row.user_limit,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -93,6 +101,10 @@ export async function updateTenant(tenantId: string, input: UpdateTenantInput): 
     updates.push(`name = $${paramIndex++}`);
     values.push(input.name);
   }
+  if (input.description !== undefined) {
+    updates.push(`description = $${paramIndex++}`);
+    values.push(input.description);
+  }
   if (input.plan !== undefined) {
     updates.push(`plan = $${paramIndex++}`);
     values.push(input.plan);
@@ -104,6 +116,18 @@ export async function updateTenant(tenantId: string, input: UpdateTenantInput): 
   if (input.status !== undefined) {
     updates.push(`status = $${paramIndex++}`);
     values.push(input.status);
+  }
+  if (input.storageLimit !== undefined) {
+    updates.push(`storage_limit = $${paramIndex++}`);
+    values.push(input.storageLimit);
+  }
+  if (input.projectLimit !== undefined) {
+    updates.push(`project_limit = $${paramIndex++}`);
+    values.push(input.projectLimit);
+  }
+  if (input.userLimit !== undefined) {
+    updates.push(`user_limit = $${paramIndex++}`);
+    values.push(input.userLimit);
   }
 
   if (updates.length === 0) {

@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as userService from './user.service.js';
 import { signToken } from '../../middleware/auth.js';
+import type { UserRole } from '@druvia/shared';
 
 interface RegisterBody {
   email: string;
@@ -219,20 +220,30 @@ export async function getUser(
   return reply.send({ success: true, data: user });
 }
 
-// Delete user (admin)
+// Delete user (super_admin only)
 export async function deleteUser(
   request: FastifyRequest<{ Params: { userId: string } }>,
   reply: FastifyReply
 ) {
-  // Prevent self-deletion
-  if (request.user?.userId === request.params.userId) {
-    return reply.status(400).send({
+  const currentUser = request.user;
+  if (!currentUser || currentUser.role !== 'super_admin') {
+    return reply.status(403).send({
       success: false,
-      error: { code: 'INVALID_OPERATION', message: 'Cannot delete your own account' },
+      error: { code: 'FORBIDDEN', message: 'Only super_admin can delete users' },
     });
   }
 
-  const deleted = await userService.deleteUser(request.params.userId);
+  const { userId } = request.params;
+
+  // Cannot delete self
+  if (userId === currentUser.userId) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'BAD_REQUEST', message: 'Cannot delete yourself' },
+    });
+  }
+
+  const deleted = await userService.deleteUser(userId);
 
   if (!deleted) {
     return reply.status(404).send({
@@ -241,7 +252,7 @@ export async function deleteUser(
     });
   }
 
-  return reply.status(204).send();
+  return reply.send({ success: true, data: { deleted: true } });
 }
 
 // Update user status (admin)
@@ -271,4 +282,97 @@ export async function updateUserStatus(
   }
 
   return reply.send({ success: true, data: user });
+}
+
+// Create user (super_admin only)
+export async function createUser(
+  request: FastifyRequest<{
+    Body: { email: string; username: string; password: string; role: UserRole };
+  }>,
+  reply: FastifyReply
+) {
+  const currentUser = request.user;
+  if (!currentUser || currentUser.role !== 'super_admin') {
+    return reply.status(403).send({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Only super_admin can create users' },
+    });
+  }
+
+  const { email, username, password, role } = request.body;
+
+  if (!email || !username || !password || !role) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_INPUT', message: 'Email, username, password and role are required' },
+    });
+  }
+
+  // Check email uniqueness
+  const existing = await userService.getUserByEmail(email);
+  if (existing) {
+    return reply.status(409).send({
+      success: false,
+      error: { code: 'CONFLICT', message: 'Email already exists' },
+    });
+  }
+
+  const user = await userService.createUser({ email, username, password, role });
+  return reply.status(201).send({ success: true, data: user });
+}
+
+// Update user (super_admin only)
+export async function updateUser(
+  request: FastifyRequest<{
+    Params: { userId: string };
+    Body: { username?: string; email?: string; role?: UserRole };
+  }>,
+  reply: FastifyReply
+) {
+  const currentUser = request.user;
+  if (!currentUser || currentUser.role !== 'super_admin') {
+    return reply.status(403).send({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Only super_admin can update users' },
+    });
+  }
+
+  const { userId } = request.params;
+  const user = await userService.updateUserFull(userId, request.body);
+
+  if (!user) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'User not found' },
+    });
+  }
+
+  return reply.send({ success: true, data: user });
+}
+
+// Reset password (super_admin only)
+export async function resetPassword(
+  request: FastifyRequest<{ Params: { userId: string } }>,
+  reply: FastifyReply
+) {
+  const currentUser = request.user;
+  if (!currentUser || currentUser.role !== 'super_admin') {
+    return reply.status(403).send({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Only super_admin can reset passwords' },
+    });
+  }
+
+  const { userId } = request.params;
+
+  // Cannot reset own password via this endpoint
+  if (userId === currentUser.userId) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'BAD_REQUEST', message: 'Use /users/me/password to change your own password' },
+    });
+  }
+
+  const tempPassword = await userService.resetPassword(userId);
+  return reply.send({ success: true, data: { tempPassword } });
 }

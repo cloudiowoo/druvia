@@ -280,3 +280,47 @@ export async function getBackupDownloadUrl(backupId: string): Promise<string | n
   const storage = getDefaultStorageAdapter();
   return storage.getSignedUrl(backup.storageKey, 3600);
 }
+
+// List all backups (admin) with optional filters
+export async function listAllBackups(
+  tenantId?: string,
+  projectId?: string,
+  limit = 50,
+  offset = 0
+): Promise<{ backups: Backup[]; total: number }> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let paramIndex = 1;
+
+  if (tenantId) {
+    conditions.push(`tenant_id = $${paramIndex++}`);
+    params.push(tenantId);
+  }
+  if (projectId) {
+    conditions.push(`project_id = $${paramIndex++}`);
+    params.push(projectId);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  params.push(limit, offset);
+
+  const rows = await query<BackupRow>(
+    `SELECT * FROM druvia_backups
+     ${whereClause}
+     ORDER BY created_at DESC
+     LIMIT $${paramIndex++} OFFSET $${paramIndex}`,
+    params
+  );
+
+  const countParams = params.slice(0, -2);
+  const countResult = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM druvia_backups ${whereClause}`,
+    countParams
+  );
+
+  return {
+    backups: rows.map(toBackup),
+    total: parseInt(countResult?.count || '0', 10),
+  };
+}

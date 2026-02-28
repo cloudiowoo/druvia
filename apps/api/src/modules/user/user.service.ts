@@ -1,7 +1,8 @@
 import { query, queryOne } from '../../db/index.js';
 import { generateUserId } from '@druvia/shared';
-import type { User } from '@druvia/shared';
+import type { User, UserRole } from '@druvia/shared';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 
 const SALT_ROUNDS = 12;
 
@@ -14,6 +15,7 @@ interface UserRow {
   password_hash: string | null;
   avatar_url: string | null;
   status: string;
+  role: string;
   created_at: Date;
   updated_at: Date;
 }
@@ -27,6 +29,7 @@ function toUser(row: UserRow): User {
     username: row.username,
     avatarUrl: row.avatar_url,
     status: row.status as User['status'],
+    role: row.role as UserRole,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -181,4 +184,84 @@ export async function updateUserStatus(
     [status, userId]
   );
   return row ? toUser(row) : null;
+}
+
+// Admin user management functions
+
+export interface CreateUserInput {
+  email: string;
+  username: string;
+  password: string;
+  role: UserRole;
+}
+
+export async function createUser(input: CreateUserInput): Promise<User> {
+  const userId = generateUserId();
+  const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
+
+  const row = await queryOne<UserRow>(
+    `INSERT INTO druvia_users (user_id, email, username, password_hash, role)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+    [userId, input.email, input.username, passwordHash, input.role]
+  );
+
+  if (!row) {
+    throw new Error('Failed to create user');
+  }
+
+  return toUser(row);
+}
+
+export interface UpdateUserFullInput {
+  username?: string;
+  email?: string;
+  role?: UserRole;
+}
+
+export async function updateUserFull(
+  userId: string,
+  input: UpdateUserFullInput
+): Promise<User | null> {
+  const updates: string[] = [];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  if (input.username !== undefined) {
+    updates.push(`username = $${paramIndex++}`);
+    values.push(input.username);
+  }
+  if (input.email !== undefined) {
+    updates.push(`email = $${paramIndex++}`);
+    values.push(input.email);
+  }
+  if (input.role !== undefined) {
+    updates.push(`role = $${paramIndex++}`);
+    values.push(input.role);
+  }
+
+  if (updates.length === 0) {
+    return getUserById(userId);
+  }
+
+  values.push(userId);
+  const row = await queryOne<UserRow>(
+    `UPDATE druvia_users SET ${updates.join(', ')} WHERE user_id = $${paramIndex} RETURNING *`,
+    values
+  );
+
+  return row ? toUser(row) : null;
+}
+
+export async function resetPassword(userId: string): Promise<string> {
+  // Generate random 12-char password
+  const tempPassword = crypto.randomBytes(9).toString('base64').slice(0, 12);
+  const passwordHash = await bcrypt.hash(tempPassword, SALT_ROUNDS);
+
+  await query(
+    'UPDATE druvia_users SET password_hash = $1 WHERE user_id = $2',
+    [passwordHash, userId]
+  );
+
+  return tempPassword;
 }

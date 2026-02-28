@@ -6,6 +6,9 @@ export async function backupRoutes(app: FastifyInstance) {
   // All backup routes require authentication
   app.addHook('preHandler', authenticate);
 
+  // Global backup routes (admin)
+  app.get('/backups', controller.listAllBackups as never);
+
   // Create backup
   app.post('/tenants/:tenantId/backups', controller.createBackup as never);
 

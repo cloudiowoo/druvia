@@ -13,8 +13,11 @@ export async function userRoutes(app: FastifyInstance) {
   app.post('/users/me/password', { preHandler: authenticate }, controller.changePassword as never);
 
   // Admin routes (user management)
-  app.get('/users', { preHandler: authenticate }, controller.listUsers);
+  app.post('/users', { preHandler: authenticate }, controller.createUser as never);
+  app.get('/users', { preHandler: authenticate }, controller.listUsers as never);
   app.get('/users/:userId', { preHandler: authenticate }, controller.getUser as never);
+  app.patch('/users/:userId', { preHandler: authenticate }, controller.updateUser as never);
   app.delete('/users/:userId', { preHandler: authenticate }, controller.deleteUser as never);
   app.patch('/users/:userId/status', { preHandler: authenticate }, controller.updateUserStatus as never);
+  app.post('/users/:userId/reset-password', { preHandler: authenticate }, controller.resetPassword as never);
 }

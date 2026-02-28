@@ -7,12 +7,11 @@ import { api } from '@/lib/api';
 interface Backup {
   backupId: string;
   tenantId: string;
+  projectId: string | null;
   schemaName: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
   sizeBytes: number | string;
-  tablesCount: number;
   createdAt: string;
-  completedAt: string | null;
 }
 
 interface Tenant {
@@ -34,55 +33,58 @@ export default function BackupsPage() {
   const [selectedTenant, setSelectedTenant] = useState<string>('');
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [backups, setBackups] = useState<Backup[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [restoring, setRestoring] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ backupId: string; input: string } | null>(null);
 
   useEffect(() => {
     async function fetchTenants() {
       const res = await api.listTenants();
       if (res.success && res.data) {
         setTenants(res.data);
-        if (res.data.length > 0) {
-          setSelectedTenant(res.data[0].tenantId);
-        }
       }
     }
     fetchTenants();
+    fetchBackups();
   }, []);
 
   useEffect(() => {
-    if (!selectedTenant) return;
+    if (!selectedTenant) {
+      setProjects([]);
+      setSelectedProject('');
+      return;
+    }
 
     async function fetchProjects() {
       const res = await api.listProjects(selectedTenant);
       if (res.success && res.data) {
         setProjects(res.data);
-        if (res.data.length > 0) {
-          setSelectedProject(res.data[0].projectId);
-        } else {
-          setSelectedProject('');
-        }
       }
     }
     fetchProjects();
   }, [selectedTenant]);
 
-  useEffect(() => {
-    if (!selectedTenant) return;
-
-    async function fetchBackups() {
-      setLoading(true);
-      try {
-        const res = await api.listBackups(selectedTenant);
-        if (res.success && res.data) {
-          setBackups(res.data as Backup[]);
-        }
-      } finally {
-        setLoading(false);
+  async function fetchBackups() {
+    setLoading(true);
+    try {
+      const res = await api.listAllBackups({
+        tenantId: selectedTenant || undefined,
+        projectId: selectedProject || undefined,
+      });
+      if (res.success && res.data) {
+        setBackups(res.data.backups as Backup[]);
+        setTotal(res.data.total);
       }
+    } finally {
+      setLoading(false);
     }
+  }
+
+  useEffect(() => {
     fetchBackups();
-  }, [selectedTenant]);
+  }, [selectedTenant, selectedProject]);
 
   const handleCreateBackup = async () => {
     if (!selectedTenant || !selectedProject) return;
@@ -93,18 +95,46 @@ export default function BackupsPage() {
 
     setCreating(true);
     try {
-      // Use correct schema name: dru_{tenant_alias}_{project_alias}
       const schemaName = `dru_${tenant.alias}_${project.alias}`;
       const res = await api.createBackup(selectedTenant, schemaName);
-      if (res.success && res.data) {
-        // Refresh backups list
-        const backupsRes = await api.listBackups(selectedTenant);
-        if (backupsRes.success && backupsRes.data) {
-          setBackups(backupsRes.data as Backup[]);
-        }
+      if (res.success) {
+        fetchBackups();
       }
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDownload = async (backupId: string) => {
+    const res = await api.downloadBackup(backupId);
+    if (res.success && res.data?.url) {
+      window.open(res.data.url, '_blank');
+    }
+  };
+
+  const handleRestore = async (backupId: string) => {
+    if (!confirm('确定要恢复此备份吗？这将覆盖当前数据。')) return;
+    setRestoring(backupId);
+    try {
+      const res = await api.restoreBackup(backupId);
+      if (res.success) {
+        alert('备份恢复成功');
+      }
+    } finally {
+      setRestoring(null);
+    }
+  };
+
+  const openDeleteConfirm = (backupId: string) => {
+    setDeleteConfirm({ backupId, input: '' });
+  };
+
+  const handleDelete = async () => {
+    if (!deleteConfirm) return;
+    const res = await api.deleteBackup(deleteConfirm.backupId);
+    if (res.success) {
+      setBackups(backups.filter(b => b.backupId !== deleteConfirm.backupId));
+      setDeleteConfirm(null);
     }
   };
 
@@ -143,10 +173,47 @@ export default function BackupsPage() {
 
   return (
     <DashboardLayout>
+      {/* Delete Confirmation Dialog */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4 text-red-600">确认删除备份</h3>
+            <p className="text-gray-600 mb-4">
+              此操作不可恢复。请输入备份 ID 以确认删除：
+            </p>
+            <p className="font-mono text-sm bg-gray-100 p-2 rounded mb-4">
+              {deleteConfirm.backupId}
+            </p>
+            <input
+              type="text"
+              className="input w-full mb-4"
+              placeholder="输入备份 ID"
+              value={deleteConfirm.input}
+              onChange={(e) => setDeleteConfirm({ ...deleteConfirm, input: e.target.value })}
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="btn flex-1"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleteConfirm.input !== deleteConfirm.backupId}
+                className="btn bg-red-600 text-white hover:bg-red-700 flex-1 disabled:opacity-50"
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold">备份管理</h1>
-          <p className="text-gray-500">管理租户数据备份</p>
+          <p className="text-gray-500">管理租户数据备份 (共 {total} 条)</p>
         </div>
         <button
           onClick={handleCreateBackup}
@@ -160,12 +227,13 @@ export default function BackupsPage() {
       <div className="card mb-6">
         <div className="card-body flex gap-4">
           <div>
-            <label className="label">选择租户</label>
+            <label className="label">筛选租户</label>
             <select
               className="input"
               value={selectedTenant}
               onChange={(e) => setSelectedTenant(e.target.value)}
             >
+              <option value="">全部租户</option>
               {tenants.map((tenant) => (
                 <option key={tenant.tenantId} value={tenant.tenantId}>
                   {tenant.name} ({tenant.alias})
@@ -174,22 +242,19 @@ export default function BackupsPage() {
             </select>
           </div>
           <div>
-            <label className="label">选择项目</label>
+            <label className="label">筛选项目</label>
             <select
               className="input"
               value={selectedProject}
               onChange={(e) => setSelectedProject(e.target.value)}
-              disabled={projects.length === 0}
+              disabled={!selectedTenant}
             >
-              {projects.length === 0 ? (
-                <option value="">暂无项目</option>
-              ) : (
-                projects.map((project) => (
-                  <option key={project.projectId} value={project.projectId}>
-                    {project.name} ({project.alias})
-                  </option>
-                ))
-              )}
+              <option value="">全部项目</option>
+              {projects.map((project) => (
+                <option key={project.projectId} value={project.projectId}>
+                  {project.name} ({project.alias})
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -210,7 +275,6 @@ export default function BackupsPage() {
                 <th>Schema</th>
                 <th>状态</th>
                 <th>大小</th>
-                <th>表数量</th>
                 <th>创建时间</th>
                 <th>操作</th>
               </tr>
@@ -222,21 +286,30 @@ export default function BackupsPage() {
                   <td className="text-gray-500">{backup.schemaName}</td>
                   <td>{getStatusBadge(backup.status)}</td>
                   <td>{formatSize(backup.sizeBytes)}</td>
-                  <td>{backup.tablesCount || '-'}</td>
                   <td className="text-gray-500">{formatDate(backup.createdAt)}</td>
                   <td>
                     <div className="flex gap-2">
                       {backup.status === 'completed' && (
                         <>
-                          <button className="text-sm text-primary-600 hover:underline">
+                          <button
+                            onClick={() => handleDownload(backup.backupId)}
+                            className="text-sm text-primary-600 hover:underline"
+                          >
                             下载
                           </button>
-                          <button className="text-sm text-orange-600 hover:underline">
-                            恢复
+                          <button
+                            onClick={() => handleRestore(backup.backupId)}
+                            disabled={restoring === backup.backupId}
+                            className="text-sm text-orange-600 hover:underline disabled:opacity-50"
+                          >
+                            {restoring === backup.backupId ? '恢复中...' : '恢复'}
                           </button>
                         </>
                       )}
-                      <button className="text-sm text-red-600 hover:underline">
+                      <button
+                        onClick={() => openDeleteConfirm(backup.backupId)}
+                        className="text-sm text-red-600 hover:underline"
+                      >
                         删除
                       </button>
                     </div>

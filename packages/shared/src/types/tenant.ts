@@ -8,6 +8,10 @@ export interface Tenant {
   plan: 'free' | 'pro' | 'enterprise';
   settings: Record<string, unknown>;
   status: 'active' | 'suspended' | 'deleted';
+  description: string | null;
+  storageLimit: number;
+  projectLimit: number;
+  userLimit: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -21,12 +25,18 @@ export interface CreateTenantInput {
 
 export interface UpdateTenantInput {
   name?: string;
+  description?: string;
   plan?: 'free' | 'pro' | 'enterprise';
   settings?: Record<string, unknown>;
   status?: 'active' | 'suspended';
+  storageLimit?: number;
+  projectLimit?: number;
+  userLimit?: number;
 }
 
 // User types
+export type UserRole = 'super_admin' | 'admin';
+
 export interface User {
   id: number;
   userId: string;
@@ -34,6 +44,7 @@ export interface User {
   username: string | null;
   avatarUrl: string | null;
   status: 'active' | 'suspended' | 'deleted';
+  role: UserRole;
   createdAt: Date;
   updatedAt: Date;
 }

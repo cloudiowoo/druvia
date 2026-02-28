@@ -130,3 +130,21 @@ export async function getDownloadUrl(
 
   return reply.send({ success: true, data: { url } });
 }
+
+// List all backups (admin)
+export async function listAllBackups(
+  request: FastifyRequest<{
+    Querystring: { tenantId?: string; projectId?: string; limit?: string; offset?: string };
+  }>,
+  reply: FastifyReply
+) {
+  const { tenantId, projectId, limit, offset } = request.query;
+  const result = await backupService.listAllBackups(
+    tenantId || undefined,
+    projectId || undefined,
+    parseInt(limit || '50', 10),
+    parseInt(offset || '0', 10)
+  );
+
+  return reply.send({ success: true, data: result });
+}

@@ -349,6 +349,169 @@ class ApiClient {
       status: string;
     }>('PATCH', `/api/v1/users/${userId}/status`, { status });
   }
+
+  // User management (super_admin)
+  async createUser(data: { email: string; username: string; password: string; role: string }) {
+    return this.request<{
+      userId: string;
+      email: string;
+      username: string;
+      role: string;
+    }>('POST', '/api/v1/users', data);
+  }
+
+  async updateUser(userId: string, data: { username?: string; email?: string; role?: string }) {
+    return this.request<{
+      userId: string;
+      email: string | null;
+      username: string | null;
+      role: string;
+    }>('PATCH', `/api/v1/users/${userId}`, data);
+  }
+
+  async resetUserPassword(userId: string) {
+    return this.request<{ tempPassword: string }>('POST', `/api/v1/users/${userId}/reset-password`);
+  }
+
+  // Settings
+  async getSettings() {
+    return this.request<{
+      defaultPlan: string;
+      defaultStorageLimit: number;
+      defaultProjectLimit: number;
+      defaultUserLimit: number;
+      backupRetentionDays: number;
+      backupMaxCount: number;
+    }>('GET', '/api/v1/settings');
+  }
+
+  async updateSettings(data: {
+    defaultPlan?: string;
+    defaultStorageLimit?: number;
+    defaultProjectLimit?: number;
+    defaultUserLimit?: number;
+    backupRetentionDays?: number;
+    backupMaxCount?: number;
+  }) {
+    return this.request<{
+      defaultPlan: string;
+      defaultStorageLimit: number;
+      defaultProjectLimit: number;
+      defaultUserLimit: number;
+      backupRetentionDays: number;
+      backupMaxCount: number;
+    }>('PATCH', '/api/v1/settings', data);
+  }
+
+  // Profile
+  async updateProfile(data: { username?: string; email?: string }) {
+    return this.request<{
+      userId: string;
+      email: string | null;
+      username: string | null;
+    }>('PATCH', '/api/v1/users/me', data);
+  }
+
+  async changePassword(data: { currentPassword: string; newPassword: string }) {
+    return this.request<{ success: boolean }>('POST', '/api/v1/users/me/password', data);
+  }
+
+  // Dashboard
+  async getDashboardStats() {
+    return this.request<{
+      tenants: { total: number; weekNew: number };
+      users: { total: number; weekNew: number };
+      backups: { total: number; weekNew: number };
+      storage: { used: number; total: number };
+    }>('GET', '/api/v1/dashboard/stats');
+  }
+
+  async getDashboardTrends(days = 7) {
+    return this.request<Array<{
+      date: string;
+      tenants: number;
+      users: number;
+      backups: number;
+    }>>('GET', `/api/v1/dashboard/trends?days=${days}`);
+  }
+
+  async getDashboardActivities(limit = 20, offset = 0) {
+    return this.request<{
+      activities: Array<{
+        id: string;
+        userId: string | null;
+        action: string;
+        targetType: string | null;
+        targetId: string | null;
+        details: Record<string, unknown> | null;
+        createdAt: string;
+      }>;
+      total: number;
+    }>('GET', `/api/v1/dashboard/activities?limit=${limit}&offset=${offset}`);
+  }
+
+  async getDashboardResources() {
+    return this.request<{
+      topTenants: Array<{ name: string; size: number }>;
+      storageByTenant: Array<{ name: string; size: number }>;
+    }>('GET', '/api/v1/dashboard/resources');
+  }
+
+  // Backups (global)
+  async listAllBackups(options?: { tenantId?: string; projectId?: string; limit?: number; offset?: number }) {
+    const params = new URLSearchParams();
+    if (options?.tenantId) params.set('tenantId', options.tenantId);
+    if (options?.projectId) params.set('projectId', options.projectId);
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    const query = params.toString();
+    return this.request<{
+      backups: Array<{
+        backupId: string;
+        tenantId: string;
+        projectId: string | null;
+        schemaName: string;
+        status: string;
+        sizeBytes: number;
+        createdAt: string;
+      }>;
+      total: number;
+    }>('GET', `/api/v1/backups${query ? `?${query}` : ''}`);
+  }
+
+  async downloadBackup(backupId: string) {
+    return this.request<{ url: string }>('GET', `/api/v1/backups/${backupId}/download`);
+  }
+
+  async restoreBackup(backupId: string) {
+    return this.request<{ success: boolean }>('POST', `/api/v1/backups/${backupId}/restore`);
+  }
+
+  async deleteBackup(backupId: string) {
+    return this.request<void>('DELETE', `/api/v1/backups/${backupId}`);
+  }
+
+  // Tenant update
+  async updateTenant(tenantId: string, data: {
+    name?: string;
+    description?: string;
+    plan?: string;
+    status?: string;
+    storageLimit?: number;
+    projectLimit?: number;
+    userLimit?: number;
+  }) {
+    return this.request<{
+      tenantId: string;
+      name: string;
+      description: string | null;
+      plan: string;
+      status: string;
+      storageLimit: number;
+      projectLimit: number;
+      userLimit: number;
+    }>('PATCH', `/api/v1/tenants/${tenantId}`, data);
+  }
 }
 
 export const api = new ApiClient();
