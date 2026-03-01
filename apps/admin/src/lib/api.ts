@@ -82,6 +82,7 @@ class ApiClient {
       email: string;
       username: string | null;
       avatarUrl: string | null;
+      role: 'super_admin' | 'admin';
     }>('GET', '/api/v1/users/me');
   }
 
@@ -370,7 +371,7 @@ class ApiClient {
   }
 
   async resetUserPassword(userId: string) {
-    return this.request<{ tempPassword: string }>('POST', `/api/v1/users/${userId}/reset-password`);
+    return this.request<{ tempPassword: string }>('POST', `/api/v1/users/${userId}/reset-password`, {});
   }
 
   // Settings

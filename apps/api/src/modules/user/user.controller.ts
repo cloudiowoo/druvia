@@ -42,7 +42,7 @@ export async function register(
 
   try {
     const user = await userService.register({ email, password, username });
-    const token = signToken({ userId: user.userId, uid: user.id });
+    const token = signToken({ userId: user.userId, uid: user.id, role: user.role });
 
     return reply.status(201).send({
       success: true,
@@ -82,7 +82,7 @@ export async function login(
     });
   }
 
-  const token = signToken({ userId: user.userId, uid: user.id });
+  const token = signToken({ userId: user.userId, uid: user.id, role: user.role });
 
   return reply.send({
     success: true,

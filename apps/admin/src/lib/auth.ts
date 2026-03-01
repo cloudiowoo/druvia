@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from './api';
+import { useAppStore } from '@/store';
 
 interface User {
   userId: string;
   email: string;
   username: string | null;
   avatarUrl: string | null;
+  role?: 'super_admin' | 'admin';
 }
 
 interface AuthState {
@@ -49,6 +51,7 @@ export const useAuth = create<AuthState>()(
       logout: () => {
         api.setToken(null);
         set({ user: null, token: null });
+        useAppStore.getState().setCurrentUser(null);
       },
 
       fetchUser: async () => {
@@ -59,6 +62,8 @@ export const useAuth = create<AuthState>()(
         const res = await api.getMe();
         if (res.success && res.data) {
           set({ user: res.data });
+          // Sync to app store for role-based UI
+          useAppStore.getState().setCurrentUser(res.data);
         } else {
           get().logout();
         }

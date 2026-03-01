@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
-import { useAppStore } from '@/store';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const HASURA_URL = process.env.NEXT_PUBLIC_HASURA_URL || 'http://localhost:8080';
@@ -20,8 +19,7 @@ interface PlatformSettings {
 
 export default function SettingsPage() {
   const { user } = useAuth();
-  const currentUser = useAppStore((state) => state.currentUser);
-  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const isSuperAdmin = user?.role === 'super_admin';
 
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [loading, setLoading] = useState(true);

@@ -19,10 +19,17 @@ const app = Fastify({
   logger: true,
 });
 
-// Register plugins
+// Register CORS
 app.register(cors, {
-  origin: true, // Allow all origins in development
+  origin:
+    config.nodeEnv === 'development'
+      ? true // 开发环境允许所有来源
+      : config.corsOrigins.length > 0
+        ? config.corsOrigins
+        : false,
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 });
 app.register(authPlugin);
 app.register(multipart, {
