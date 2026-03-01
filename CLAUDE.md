@@ -12,10 +12,20 @@
 ### Git 规则
 - **禁止自动提交**：不要主动执行 `git commit`，所有提交由用户手动完成
 - **提交前审查**：使用 `/commit` 命令生成提交信息供用户参考
+- **Worktree 目录**：使用 `.worktrees/` 目录存放 git worktrees
+- **合并后依赖**：worktree 合并到 main 后，需在 main 运行 `pnpm install` 安装新增依赖
 
 ### 构建规则
 - **构建顺序**：`pnpm --filter @druvia/shared build` 必须先于 API
 - **类型检查**：修改 shared 后需重新构建才能被 API 引用
+
+### API 规则
+- **Fastify POST 空 body**：POST 请求必须发送 `{}` 而非空 body，否则返回 `FST_ERR_CTP_EMPTY_JSON_BODY`
+- **API 类型定义**：确保前端 API 类型与后端返回字段一致（如 `role` 字段）
+
+### 前端规则
+- **状态同步**：登录/登出时需同步 `useAuth.user` 到 `useAppStore.currentUser`（用于角色判断）
+- **权限检查**：前后端都需检查权限（普通管理员不能操作超级管理员）
 
 ### 数据库规则
 - **详见**: `database-guide` skill (JSONB 处理、外键级联等)
@@ -112,9 +122,9 @@ const result = await auth.exchangeCode(code);
 
 | 服务 | 容器 | 端口 |
 |------|------|------|
-| Hasura | `hasura` | 8080 |
-| Database | `postgres` | 5432 |
-| Cache | `redis` | 6379 |
+| Hasura | `druvia-hasura` | 8080 |
+| Database | `druvia-postgres` | 5432 |
+| Cache | `druvia-redis` | 6379 |
 
 > API/Admin 使用 pm2 部署，不通过 Docker
 
@@ -122,10 +132,13 @@ const result = await auth.exchangeCode(code);
 
 ```bash
 # 直接访问
-docker exec -it postgres psql -U druvia -d druvia
+docker exec -it druvia-postgres psql -U postgres -d druvia
 
 # 查看租户 Schema
 \dn tenant_*
+
+# 执行迁移
+docker exec -i druvia-postgres psql -U postgres -d druvia < migrations/xxx.sql
 ```
 
 ---
@@ -239,5 +252,5 @@ docker-compose down -v && docker-compose up -d
 
 ---
 
-**Last Updated**: 2026-02-26
+**Last Updated**: 2026-03-01
 **Architecture**: 三级渐进式披露（元数据 → CLAUDE.md → Skills）

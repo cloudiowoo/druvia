@@ -174,6 +174,15 @@ export default function UsersPage() {
 
   const isSelf = (userId: string) => currentUser?.userId === userId;
 
+  // 检查是否可以操作目标用户（禁用/删除）
+  const canOperateUser = (targetUser: User) => {
+    // 不能操作自己
+    if (isSelf(targetUser.userId)) return false;
+    // 普通管理员不能操作超级管理员
+    if (!isSuperAdmin && targetUser.role === 'super_admin') return false;
+    return true;
+  };
+
   return (
     <DashboardLayout>
       <div className="flex items-center justify-between mb-8">
@@ -389,7 +398,7 @@ export default function UsersPage() {
                           </button>
                         </>
                       )}
-                      {!isSelf(user.userId) && (
+                      {canOperateUser(user) && (
                         <>
                           {user.status === 'active' ? (
                             <button

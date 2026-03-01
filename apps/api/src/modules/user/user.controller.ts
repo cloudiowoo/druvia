@@ -260,7 +260,26 @@ export async function updateUserStatus(
   request: FastifyRequest<{ Params: { userId: string }; Body: { status: string } }>,
   reply: FastifyReply
 ) {
+  const currentUser = request.user;
+  const { userId } = request.params;
   const { status } = request.body;
+
+  // Cannot modify own status
+  if (currentUser && userId === currentUser.userId) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'BAD_REQUEST', message: 'Cannot modify your own status' },
+    });
+  }
+
+  // Check if target user is super_admin (only super_admin can modify super_admin)
+  const targetUser = await userService.getUserById(userId);
+  if (targetUser && targetUser.role === 'super_admin' && currentUser?.role !== 'super_admin') {
+    return reply.status(403).send({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Only super_admin can modify super_admin users' },
+    });
+  }
 
   if (!['active', 'inactive', 'suspended'].includes(status)) {
     return reply.status(400).send({
