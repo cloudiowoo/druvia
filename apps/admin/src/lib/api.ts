@@ -25,9 +25,12 @@ class ApiClient {
     path: string,
     body?: unknown
   ): Promise<ApiResponse<T>> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
+    const headers: Record<string, string> = {};
+
+    // Only set Content-Type when there's a body to send
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
 
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
@@ -37,8 +40,13 @@ class ApiClient {
       const response = await fetch(`${API_URL}${path}`, {
         method,
         headers,
-        body: body ? JSON.stringify(body) : undefined,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
       });
+
+      // Handle 204 No Content (successful DELETE)
+      if (response.status === 204) {
+        return { success: true };
+      }
 
       // Handle non-JSON responses
       const contentType = response.headers.get('content-type');
@@ -148,6 +156,26 @@ class ApiClient {
       schemaName: string;
       status: string;
     }>('GET', `/api/v1/projects/${projectId}`);
+  }
+
+  async updateProject(projectId: string, data: { name?: string; status?: string }) {
+    return this.request<{
+      projectId: string;
+      name: string;
+      status: string;
+    }>('PATCH', `/api/v1/projects/${projectId}`, data);
+  }
+
+  async deleteProject(projectId: string) {
+    return this.request<void>('DELETE', `/api/v1/projects/${projectId}`);
+  }
+
+  async executeQuery(projectId: string, sql: string) {
+    return this.request<{
+      rows: Array<Record<string, unknown>>;
+      columns: Array<{ name: string; type: string }>;
+      rowCount: number;
+    }>('POST', `/api/v1/projects/${projectId}/query`, { sql });
   }
 
   // Tables
@@ -307,11 +335,11 @@ class ApiClient {
     }>>('GET', `/api/v1/tenants/${tenantId}/backups`);
   }
 
-  async createBackup(tenantId: string, schemaName: string) {
+  async createBackup(tenantId: string, schemaName: string, projectId?: string) {
     return this.request<{
       backupId: string;
       status: string;
-    }>('POST', `/api/v1/tenants/${tenantId}/backups`, { schemaName });
+    }>('POST', `/api/v1/tenants/${tenantId}/backups`, { schemaName, projectId });
   }
 
   // Users (Admin)
@@ -512,6 +540,14 @@ class ApiClient {
       projectLimit: number;
       userLimit: number;
     }>('PATCH', `/api/v1/tenants/${tenantId}`, data);
+  }
+
+  async getTenantUsage(tenantId: string) {
+    return this.request<{
+      storage: { used: number; limit: number };
+      projects: { used: number; limit: number };
+      users: { used: number; limit: number };
+    }>('GET', `/api/v1/tenants/${tenantId}/usage`);
   }
 }
 

@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
 
 interface Backup {
@@ -14,12 +17,6 @@ interface Backup {
   createdAt: string;
 }
 
-interface Tenant {
-  tenantId: string;
-  alias: string;
-  name: string;
-}
-
 interface Project {
   projectId: string;
   alias: string;
@@ -27,10 +24,12 @@ interface Project {
   schemaName?: string;
 }
 
-export default function BackupsPage() {
-  const [tenants, setTenants] = useState<Tenant[]>([]);
+export default function TenantBackupsPage() {
+  const params = useParams();
+  const tenantId = params.tenantId as string;
+  const { currentTenant } = useAppStore();
+
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedTenant, setSelectedTenant] = useState<string>('');
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [backups, setBackups] = useState<Backup[]>([]);
   const [total, setTotal] = useState(0);
@@ -40,37 +39,33 @@ export default function BackupsPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ backupId: string; input: string } | null>(null);
 
   useEffect(() => {
-    async function fetchTenants() {
-      const res = await api.listTenants();
-      if (res.success && res.data) {
-        setTenants(res.data);
-      }
-    }
-    fetchTenants();
-    fetchBackups();
-  }, []);
-
-  useEffect(() => {
-    if (!selectedTenant) {
-      setProjects([]);
-      setSelectedProject('');
-      return;
-    }
-
     async function fetchProjects() {
-      const res = await api.listProjects(selectedTenant);
+      const res = await api.listProjects(tenantId);
       if (res.success && res.data) {
         setProjects(res.data);
       }
     }
+    async function fetchBackupsInitial() {
+      setLoading(true);
+      try {
+        const res = await api.listAllBackups({ tenantId });
+        if (res.success && res.data) {
+          setBackups(res.data.backups as Backup[]);
+          setTotal(res.data.total);
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
     fetchProjects();
-  }, [selectedTenant]);
+    fetchBackupsInitial();
+  }, [tenantId]);
 
-  async function fetchBackups() {
+  const fetchBackups = async () => {
     setLoading(true);
     try {
       const res = await api.listAllBackups({
-        tenantId: selectedTenant || undefined,
+        tenantId,
         projectId: selectedProject || undefined,
       });
       if (res.success && res.data) {
@@ -80,23 +75,23 @@ export default function BackupsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    fetchBackups();
-  }, [selectedTenant, selectedProject]);
+    if (selectedProject !== '') {
+      fetchBackups();
+    }
+  }, [selectedProject]);
 
   const handleCreateBackup = async () => {
-    if (!selectedTenant || !selectedProject) return;
-
-    const tenant = tenants.find((t) => t.tenantId === selectedTenant);
+    if (!selectedProject) return;
     const project = projects.find((p) => p.projectId === selectedProject);
-    if (!tenant || !project) return;
+    if (!project || !currentTenant) return;
 
     setCreating(true);
     try {
-      const schemaName = `dru_${tenant.alias}_${project.alias}`;
-      const res = await api.createBackup(selectedTenant, schemaName, selectedProject);
+      const schemaName = `dru_${currentTenant.alias}_${project.alias}`;
+      const res = await api.createBackup(tenantId, schemaName, selectedProject);
       if (res.success) {
         fetchBackups();
       }
@@ -123,10 +118,6 @@ export default function BackupsPage() {
     } finally {
       setRestoring(null);
     }
-  };
-
-  const openDeleteConfirm = (backupId: string) => {
-    setDeleteConfirm({ backupId, input: '' });
   };
 
   const handleDelete = async () => {
@@ -192,10 +183,7 @@ export default function BackupsPage() {
               onChange={(e) => setDeleteConfirm({ ...deleteConfirm, input: e.target.value })}
             />
             <div className="flex gap-3">
-              <button
-                onClick={() => setDeleteConfirm(null)}
-                className="btn flex-1"
-              >
+              <button onClick={() => setDeleteConfirm(null)} className="btn flex-1">
                 取消
               </button>
               <button
@@ -210,15 +198,22 @@ export default function BackupsPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
+            <Link href={`/t/${tenantId}`} className="hover:text-foreground">
+              {currentTenant?.name}
+            </Link>
+            <span>/</span>
+            <span>备份</span>
+          </div>
           <h1 className="text-2xl font-bold">备份管理</h1>
-          <p className="text-gray-500">管理租户数据备份 (共 {total} 条)</p>
+          <p className="text-gray-500">共 {total} 条备份记录</p>
         </div>
         <button
           onClick={handleCreateBackup}
           className="btn btn-primary"
-          disabled={!selectedTenant || !selectedProject || creating}
+          disabled={!selectedProject || creating}
         >
           {creating ? '创建中...' : '创建备份'}
         </button>
@@ -227,27 +222,11 @@ export default function BackupsPage() {
       <div className="card mb-6">
         <div className="card-body flex gap-4">
           <div>
-            <label className="label">筛选租户</label>
-            <select
-              className="input"
-              value={selectedTenant}
-              onChange={(e) => setSelectedTenant(e.target.value)}
-            >
-              <option value="">全部租户</option>
-              {tenants.map((tenant) => (
-                <option key={tenant.tenantId} value={tenant.tenantId}>
-                  {tenant.name} ({tenant.alias})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label">筛选项目</label>
+            <label className="label">选择项目</label>
             <select
               className="input"
               value={selectedProject}
               onChange={(e) => setSelectedProject(e.target.value)}
-              disabled={!selectedTenant}
             >
               <option value="">全部项目</option>
               {projects.map((project) => (
@@ -264,9 +243,7 @@ export default function BackupsPage() {
         {loading ? (
           <div className="p-8 text-center text-gray-500">加载中...</div>
         ) : backups.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
-            暂无备份记录
-          </div>
+          <div className="p-8 text-center text-gray-500">暂无备份记录</div>
         ) : (
           <table className="table">
             <thead>
@@ -307,7 +284,7 @@ export default function BackupsPage() {
                         </>
                       )}
                       <button
-                        onClick={() => openDeleteConfirm(backup.backupId)}
+                        onClick={() => setDeleteConfirm({ backupId: backup.backupId, input: '' })}
                         className="text-sm text-red-600 hover:underline"
                       >
                         删除

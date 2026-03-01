@@ -23,4 +23,7 @@ export async function projectRoutes(app: FastifyInstance) {
 
   // Delete project
   app.delete('/projects/:projectId', controller.deleteProject);
+
+  // Execute SQL query
+  app.post('/projects/:projectId/query', controller.executeQuery as never);
 }

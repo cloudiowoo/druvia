@@ -26,8 +26,12 @@
 ### 前端规则
 - **状态同步**：登录/登出时需同步 `useAuth.user` 到 `useAppStore.currentUser`（用于角色判断）
 - **权限检查**：前后端都需检查权限（普通管理员不能操作超级管理员）
+- **路由路径一致性**：确保页面路径与导航链接一致（如 `/tenants/[tenantId]/` vs `/t/[tenantId]/`）
+- **useEffect 依赖**：在 useEffect 内部定义函数，避免依赖警告
+- **避免 alert/confirm**：使用自定义 Modal 组件替代浏览器原生对话框
 
 ### 数据库规则
+- **BigInt 类型转换**：PostgreSQL bigint 字段返回字符串，需用 `Number()` 或 `parseInt()` 转换
 - **详见**: `database-guide` skill (JSONB 处理、外键级联等)
 
 ### 命名规则
@@ -44,6 +48,8 @@
 ### 测试规则
 - **位置**：`tests/` 目录 (unit/, integration/, e2e/)
 - **命名**：`<module>.test.ts`
+- **数据隔离**：使用 `beforeEach` 清理并重置测试数据，避免测试间干扰
+- **E2E 测试**：HTTP API 测试放 `tests/e2e/`，Playwright 浏览器测试单独配置
 - **详见**: `testing-guide` skill (连接池、数据隔离、环境变量等)
 
 ### Docker 规则

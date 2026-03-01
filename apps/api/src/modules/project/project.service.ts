@@ -149,3 +149,68 @@ export async function deleteProject(projectId: string): Promise<boolean> {
 
   return rows.length > 0;
 }
+
+export interface QueryResult {
+  rows: Array<Record<string, unknown>>;
+  columns: Array<{ name: string; type: string }>;
+  rowCount: number;
+}
+
+// 允许的只读 SQL 命令
+const ALLOWED_COMMANDS = ['SELECT', 'WITH'];
+
+export async function executeQuery(projectId: string, sql: string): Promise<QueryResult> {
+  // 获取项目信息
+  const project = await getProjectById(projectId);
+  if (!project || !project.schemaName) {
+    throw new Error('Project not found');
+  }
+
+  // 安全检查：只允许 SELECT 查询
+  const trimmedSql = sql.trim().toUpperCase();
+  const firstWord = trimmedSql.split(/\s+/)[0];
+  if (!ALLOWED_COMMANDS.includes(firstWord)) {
+    throw new Error('Only SELECT queries are allowed');
+  }
+
+  // 设置 search_path 到项目 schema
+  const client = await import('../../db/index.js').then(m => m.pool.connect());
+  try {
+    await client.query(`SET search_path TO ${project.schemaName}, public`);
+    const result = await client.query(sql);
+
+    // 获取列信息
+    const columns = result.fields.map(field => ({
+      name: field.name,
+      type: getTypeName(field.dataTypeID),
+    }));
+
+    return {
+      rows: result.rows,
+      columns,
+      rowCount: result.rowCount || 0,
+    };
+  } finally {
+    client.release();
+  }
+}
+
+// PostgreSQL OID 到类型名称的映射
+function getTypeName(oid: number): string {
+  const typeMap: Record<number, string> = {
+    16: 'boolean',
+    20: 'bigint',
+    21: 'smallint',
+    23: 'integer',
+    25: 'text',
+    700: 'real',
+    701: 'double precision',
+    1043: 'varchar',
+    1082: 'date',
+    1114: 'timestamp',
+    1184: 'timestamptz',
+    2950: 'uuid',
+    3802: 'jsonb',
+  };
+  return typeMap[oid] || 'unknown';
+}

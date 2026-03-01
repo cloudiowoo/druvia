@@ -123,3 +123,17 @@ export async function deleteTenant(
   }
   return reply.status(204).send();
 }
+
+export async function getTenantUsage(
+  request: FastifyRequest<{ Params: TenantParams }>,
+  reply: FastifyReply
+) {
+  const usage = await tenantService.getTenantUsage(request.params.tenantId);
+  if (!usage) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'Tenant not found' },
+    });
+  }
+  return reply.send({ success: true, data: usage });
+}

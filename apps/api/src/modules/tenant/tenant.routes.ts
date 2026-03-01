@@ -15,6 +15,9 @@ export async function tenantRoutes(app: FastifyInstance) {
   // Get tenant by alias (requires auth)
   app.get('/tenants/alias/:alias', { preHandler: authenticate }, controller.getTenantByAlias as never);
 
+  // Get tenant usage (requires auth)
+  app.get('/tenants/:tenantId/usage', { preHandler: authenticate }, controller.getTenantUsage as never);
+
   // Update tenant (requires auth)
   app.patch('/tenants/:tenantId', { preHandler: authenticate }, controller.updateTenant as never);
 

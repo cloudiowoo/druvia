@@ -119,3 +119,35 @@ export async function deleteProject(
   }
   return reply.status(204).send();
 }
+
+export async function executeQuery(
+  request: FastifyRequest<{ Params: ProjectParams; Body: { sql: string } }>,
+  reply: FastifyReply
+) {
+  try {
+    const result = await projectService.executeQuery(
+      request.params.projectId,
+      request.body.sql
+    );
+    return reply.send({ success: true, data: result });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    if (err.message === 'Project not found') {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Project not found' },
+      });
+    }
+    if (err.message === 'Only SELECT queries are allowed') {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_QUERY', message: '只允许执行 SELECT 查询' },
+      });
+    }
+    // SQL 语法错误等
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'QUERY_ERROR', message: err.message || '查询执行失败' },
+    });
+  }
+}

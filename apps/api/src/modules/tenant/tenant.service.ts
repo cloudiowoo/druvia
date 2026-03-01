@@ -150,3 +150,51 @@ export async function deleteTenant(tenantId: string): Promise<boolean> {
   );
   return rows.length > 0;
 }
+
+export interface TenantUsage {
+  storage: { used: number; limit: number };
+  projects: { used: number; limit: number };
+  users: { used: number; limit: number };
+}
+
+export async function getTenantUsage(tenantId: string): Promise<TenantUsage | null> {
+  // 获取租户信息
+  const tenant = await getTenantById(tenantId);
+  if (!tenant) return null;
+
+  // 获取项目数量
+  const projectCount = await queryOne<{ count: string }>(
+    'SELECT COUNT(*) as count FROM druvia_projects WHERE tenant_id = $1',
+    [tenantId]
+  );
+
+  // 获取存储使用量 (从 druvia_files 表统计)
+  const storageUsed = await queryOne<{ total: string }>(
+    `SELECT COALESCE(SUM(size_bytes), 0) as total
+     FROM druvia_files f
+     JOIN druvia_projects p ON f.project_id = p.project_id
+     WHERE p.tenant_id = $1`,
+    [tenantId]
+  );
+
+  // 获取用户数量 (租户关联的用户)
+  const userCount = await queryOne<{ count: string }>(
+    `SELECT COUNT(DISTINCT owner_uid) as count FROM druvia_tenants WHERE tenant_id = $1`,
+    [tenantId]
+  );
+
+  return {
+    storage: {
+      used: parseInt(storageUsed?.total || '0', 10),
+      limit: Number(tenant.storageLimit),
+    },
+    projects: {
+      used: parseInt(projectCount?.count || '0', 10),
+      limit: Number(tenant.projectLimit),
+    },
+    users: {
+      used: parseInt(userCount?.count || '0', 10),
+      limit: Number(tenant.userLimit),
+    },
+  };
+}
