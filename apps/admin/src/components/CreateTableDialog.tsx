@@ -19,8 +19,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, FileText, LayoutTemplate } from 'lucide-react';
 import { api } from '@/lib/api';
+import { TABLE_TEMPLATES } from '@/lib/table-templates';
 
 interface Column {
   name: string;
@@ -59,11 +60,24 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
   const [columns, setColumns] = useState<Column[]>([...DEFAULT_COLUMNS]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createMode, setCreateMode] = useState<'blank' | 'template'>('blank');
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
 
   const resetForm = () => {
     setTableName('');
     setColumns([...DEFAULT_COLUMNS]);
     setError(null);
+    setCreateMode('blank');
+    setSelectedTemplate(null);
+  };
+
+  const applyTemplate = (templateId: string) => {
+    const template = TABLE_TEMPLATES.find(t => t.id === templateId);
+    if (template) {
+      setTableName(template.tableName);
+      setColumns(template.columns.map(c => ({ ...c })));
+      setSelectedTemplate(templateId);
+    }
   };
 
   const addColumn = () => {
@@ -138,11 +152,59 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
         <DialogHeader>
           <DialogTitle>新建数据表</DialogTitle>
           <DialogDescription>
-            创建新的数据表，默认包含 id、created_at、updated_at 字段
+            选择从模板创建或手动定义表结构
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          {/* 创建模式选择 */}
+          <div className="flex gap-2">
+            <Button
+              variant={createMode === 'blank' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => {
+                setCreateMode('blank');
+                setSelectedTemplate(null);
+                setTableName('');
+                setColumns([...DEFAULT_COLUMNS]);
+              }}
+            >
+              <FileText className="h-4 w-4 mr-2" />
+              空白表
+            </Button>
+            <Button
+              variant={createMode === 'template' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setCreateMode('template')}
+            >
+              <LayoutTemplate className="h-4 w-4 mr-2" />
+              从模板创建
+            </Button>
+          </div>
+
+          {/* 模板选择 */}
+          {createMode === 'template' && (
+            <div className="grid grid-cols-2 gap-2">
+              {TABLE_TEMPLATES.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  onClick={() => applyTemplate(template.id)}
+                  className={`p-3 text-left border rounded-lg transition-colors ${
+                    selectedTemplate === template.id
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-primary/50'
+                  }`}
+                >
+                  <div className="font-medium text-sm">{template.name}</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {template.description}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div>
             <label className="text-sm font-medium mb-2 block">表名</label>
             <Input
