@@ -191,6 +191,8 @@ export async function executeQuery(projectId: string, sql: string): Promise<Quer
       rowCount: result.rowCount || 0,
     };
   } finally {
+    // 重置 search_path，避免污染连接池中的其他连接
+    await client.query('RESET search_path').catch(() => {});
     client.release();
   }
 }
@@ -213,4 +215,137 @@ function getTypeName(oid: number): string {
     3802: 'jsonb',
   };
   return typeMap[oid] || 'unknown';
+}
+
+// 允许的 DDL/DML 命令
+const DDL_COMMANDS = [
+  'CREATE', 'ALTER', 'DROP', 'TRUNCATE',
+  'INSERT', 'UPDATE', 'DELETE',
+  'SELECT', 'WITH',
+  'COMMENT',
+];
+
+// 危险命令黑名单
+const DANGEROUS_PATTERNS = [
+  // Schema/Database 操作
+  /DROP\s+SCHEMA/i,
+  /CREATE\s+SCHEMA/i,
+  /ALTER\s+SCHEMA/i,
+  /DROP\s+DATABASE/i,
+  /ALTER\s+DATABASE/i,
+  // Role/User 操作
+  /DROP\s+(ROLE|USER)/i,
+  /CREATE\s+(ROLE|USER)/i,
+  /ALTER\s+(ROLE|USER)/i,
+  /SET\s+ROLE/i,
+  /RESET\s+ROLE/i,
+  // 权限操作
+  /GRANT\s/i,
+  /REVOKE\s/i,
+  // 函数/过程/触发器
+  /CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)/i,
+  /CREATE\s+TRIGGER/i,
+  /SECURITY\s+DEFINER/i,
+  // 扩展
+  /CREATE\s+EXTENSION/i,
+  /DROP\s+EXTENSION/i,
+  // 文件操作
+  /COPY\s+(TO|FROM)/i,
+  /pg_read_file/i,
+  /pg_ls_dir/i,
+  // 消息
+  /LISTEN\s/i,
+  /NOTIFY\s/i,
+  // 加载
+  /LOAD\s/i,
+  // search_path 操作
+  /SET\s+search_path/i,
+  /RESET\s+search_path/i,
+  // RLS 策略
+  /(CREATE|ALTER|DROP)\s+POLICY/i,
+  // 预处理语句（可绕过过滤）
+  /\bPREPARE\s/i,
+  /\bEXECUTE\s/i,
+  // 系统 schema 访问
+  /\bpublic\s*\./i,
+  /\bpg_catalog\s*\./i,
+  /\binformation_schema\s*\./i,
+  /\bdruvia_/i,
+];
+
+// 移除 SQL 注释（处理嵌套注释）
+function stripSqlComments(sql: string): string {
+  // 规范化 Unicode，移除零宽字符
+  let result = sql.normalize('NFKC');
+  result = result.replace(/[\u200B-\u200D\uFEFF]/g, '');
+
+  // 移除单行注释
+  result = result.replace(/--[^\n\r]*/g, '');
+
+  // 移除多行注释（迭代处理嵌套）
+  let prev = '';
+  while (prev !== result) {
+    prev = result;
+    result = result.replace(/\/\*[\s\S]*?\*\//g, '');
+  }
+
+  return result.trim();
+}
+
+export async function executeDdl(projectId: string, sql: string): Promise<QueryResult> {
+  const project = await getProjectById(projectId);
+  if (!project || !project.schemaName) {
+    throw new Error('Project not found');
+  }
+
+  // 先移除注释再检查
+  const cleanedSql = stripSqlComments(sql);
+  const upperSql = cleanedSql.toUpperCase();
+  const firstWord = upperSql.split(/\s+/)[0];
+
+  if (!firstWord) {
+    throw new Error('SQL 语句不能为空');
+  }
+
+  // 检查是否是允许的命令
+  if (!DDL_COMMANDS.includes(firstWord)) {
+    throw new Error(`不支持的 SQL 命令: ${firstWord}`);
+  }
+
+  // 检查危险模式（对清理后的 SQL 检查）
+  for (const pattern of DANGEROUS_PATTERNS) {
+    if (pattern.test(cleanedSql)) {
+      throw new Error('不允许执行此类操作');
+    }
+  }
+
+  const client = await import('../../db/index.js').then(m => m.pool.connect());
+  try {
+    // 设置查询超时 30 秒
+    await client.query('SET statement_timeout = 30000');
+    // 使用 format 函数安全设置 search_path
+    const setPathResult = await client.query(
+      `SELECT format('SET search_path TO %I', $1::text) as sql`,
+      [project.schemaName]
+    );
+    await client.query(setPathResult.rows[0].sql);
+
+    const result = await client.query(cleanedSql);
+
+    const columns = result.fields?.map(field => ({
+      name: field.name,
+      type: getTypeName(field.dataTypeID),
+    })) || [];
+
+    return {
+      rows: result.rows || [],
+      columns,
+      rowCount: result.rowCount || 0,
+    };
+  } finally {
+    // 重置 search_path，避免污染连接池中的其他连接
+    await client.query('RESET search_path').catch(() => {});
+    await client.query('RESET statement_timeout').catch(() => {});
+    client.release();
+  }
 }

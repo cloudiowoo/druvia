@@ -1,14 +1,34 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
-import { Copy, Check, Eye, EyeOff } from 'lucide-react';
+import { api } from '@/lib/api';
+import { Copy, Check, Eye, EyeOff, Database, RefreshCw, Trash2, Plus } from 'lucide-react';
 
 const HASURA_URL = process.env.NEXT_PUBLIC_HASURA_URL || 'http://localhost:8080';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+interface DbInfo {
+  username: string | null;
+  host: string;
+  port: number;
+  database: string;
+  schemaName: string | null;
+  hasCredentials: boolean;
+  createdAt: string | null;
+}
+
+interface DbCredentials {
+  username: string;
+  password: string;
+  host: string;
+  port: number;
+  database: string;
+  schemaName: string;
+}
 
 export default function ProjectApiPage() {
   const params = useParams();
@@ -17,17 +37,42 @@ export default function ProjectApiPage() {
   const { currentTenant, currentProject } = useAppStore();
 
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [showApiKey, setShowApiKey] = useState(false);
+  const [showDbPassword, setShowDbPassword] = useState(false);
+
+  const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
+  const [dbCredentials, setDbCredentials] = useState<DbCredentials | null>(null);
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const [deletingUser, setDeletingUser] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const graphqlEndpoint = `${HASURA_URL}/v1/graphql`;
-  const restEndpoint = `${API_URL}/api/v1/schemas/${currentProject?.schemaName}`;
-  // TODO: 从后端获取真实 API Key
-  const apiKey = currentProject ? `sk_${currentProject.projectId.slice(0, 32)}` : '';
+  const restEndpoint = currentProject?.schemaName
+    ? `${API_URL}/api/v1/schemas/${currentProject.schemaName}`
+    : `${API_URL}/api/v1/schemas/<schema>`;
+
+  useEffect(() => {
+    const loadDbInfo = async () => {
+      try {
+        const res = await api.getProjectDbInfo(projectId);
+        if (res.success && res.data) {
+          setDbInfo(res.data);
+        }
+      } catch {
+        // 静默处理初始加载错误
+      }
+    };
+    loadDbInfo();
+  }, [projectId]);
 
   const copyToClipboard = async (text: string, field: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      setError('复制失败，请手动复制');
+    }
   };
 
   const CopyButton = ({ text, field }: { text: string; field: string }) => (
@@ -44,162 +89,239 @@ export default function ProjectApiPage() {
     </button>
   );
 
+  const handleCreateDbUser = async () => {
+    setCreatingUser(true);
+    setError(null);
+    try {
+      const res = await api.createProjectDbUser(projectId);
+      if (res.success && res.data) {
+        setDbCredentials(res.data);
+        setDbInfo(prev => prev ? { ...prev, hasCredentials: true, username: res.data!.username } : null);
+        setShowDbPassword(true);
+      } else {
+        setError(res.error?.message || '创建失败');
+      }
+    } catch {
+      setError('创建数据库用户失败');
+    } finally {
+      setCreatingUser(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!confirm('确定要重置数据库密码吗？旧密码将立即失效。')) return;
+    setResettingPassword(true);
+    setError(null);
+    try {
+      const res = await api.resetProjectDbPassword(projectId);
+      if (res.success && res.data) {
+        setDbCredentials(res.data);
+        setShowDbPassword(true);
+      } else {
+        setError(res.error?.message || '重置失败');
+      }
+    } catch {
+      setError('重置密码失败');
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
+  const handleDeleteDbUser = async () => {
+    if (!confirm('确定要删除数据库用户吗？所有使用此凭证的连接将断开。')) return;
+    setDeletingUser(true);
+    setError(null);
+    try {
+      const res = await api.deleteProjectDbUser(projectId);
+      if (res.success) {
+        setDbCredentials(null);
+        setDbInfo(prev => prev ? { ...prev, hasCredentials: false, username: null } : null);
+      } else {
+        setError(res.error?.message || '删除失败');
+      }
+    } catch {
+      setError('删除数据库用户失败');
+    } finally {
+      setDeletingUser(false);
+    }
+  };
+
+  const isLoading = creatingUser || resettingPassword || deletingUser;
+
+  const connectionString = dbCredentials
+    ? `postgresql://${dbCredentials.username}:${dbCredentials.password}@${dbCredentials.host}:${dbCredentials.port}/${dbCredentials.database}?options=-c%20search_path%3D${dbCredentials.schemaName}`
+    : dbInfo?.hasCredentials && dbInfo.username
+    ? `postgresql://${dbInfo.username}:<password>@${dbInfo.host}:${dbInfo.port}/${dbInfo.database}?options=-c%20search_path%3D${dbInfo.schemaName}`
+    : null;
+
   return (
     <DashboardLayout>
-      <div className="mb-6">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-          <Link href={`/t/${tenantId}`} className="hover:text-foreground">
-            {currentTenant?.name}
-          </Link>
-          <span>/</span>
-          <Link href={`/t/${tenantId}/p/${projectId}`} className="hover:text-foreground">
-            {currentProject?.name}
-          </Link>
-          <span>/</span>
-          <span>API</span>
-        </div>
-        <h1 className="text-2xl font-bold">API 配置</h1>
-        <p className="text-gray-500">查看 API 端点和密钥</p>
-      </div>
+      {/* 面包屑 */}
+      <nav className="mb-6 text-sm text-gray-500">
+        <Link href="/t" className="hover:text-gray-700">租户</Link>
+        <span className="mx-2">/</span>
+        <Link href={`/t/${tenantId}`} className="hover:text-gray-700">{currentTenant?.name || tenantId}</Link>
+        <span className="mx-2">/</span>
+        <Link href={`/t/${tenantId}/p/${projectId}`} className="hover:text-gray-700">{currentProject?.name || projectId}</Link>
+        <span className="mx-2">/</span>
+        <span className="text-gray-900">API</span>
+      </nav>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <h1 className="text-2xl font-bold mb-6">API 配置</h1>
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+          {error}
+        </div>
+      )}
+
+      <div className="space-y-6">
         {/* GraphQL 端点 */}
-        <div className="card">
-          <div className="card-header">
-            <h2 className="font-semibold">GraphQL 端点</h2>
-          </div>
-          <div className="card-body space-y-4">
-            <div>
-              <label className="label">端点 URL</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  className="input w-full font-mono text-sm bg-gray-50"
-                  value={graphqlEndpoint}
-                  readOnly
-                />
-                <CopyButton text={graphqlEndpoint} field="graphql" />
-              </div>
-            </div>
-            <div className="text-sm text-gray-600">
-              <p className="mb-2">使用 GraphQL 查询数据：</p>
-              <pre className="bg-gray-100 p-3 rounded text-xs overflow-x-auto">
-{`query {
-  ${currentProject?.schemaName?.replace(/-/g, '_') || 'your_table'}(limit: 10) {
-    id
-    created_at
-  }
-}`}
-              </pre>
-            </div>
+        <div className="bg-white rounded-lg border p-6">
+          <h2 className="text-lg font-semibold mb-4">GraphQL 端点</h2>
+          <div className="flex items-center gap-2 bg-gray-50 p-3 rounded font-mono text-sm">
+            <span className="flex-1 truncate">{graphqlEndpoint}</span>
+            <CopyButton text={graphqlEndpoint} field="graphql" />
           </div>
         </div>
 
-        {/* REST 端点 */}
-        <div className="card">
-          <div className="card-header">
-            <h2 className="font-semibold">REST API 端点</h2>
-          </div>
-          <div className="card-body space-y-4">
-            <div>
-              <label className="label">基础 URL</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  className="input w-full font-mono text-sm bg-gray-50"
-                  value={restEndpoint}
-                  readOnly
-                />
-                <CopyButton text={restEndpoint} field="rest" />
-              </div>
-            </div>
-            <div className="text-sm text-gray-600">
-              <p className="mb-2">可用端点：</p>
-              <ul className="space-y-1 text-xs font-mono">
-                <li>GET /tables - 列出所有表</li>
-                <li>GET /tables/:name - 获取表结构</li>
-                <li>GET /tables/:name/rows - 查询数据</li>
-                <li>POST /tables/:name/rows - 插入数据</li>
-              </ul>
-            </div>
+        {/* REST API 端点 */}
+        <div className="bg-white rounded-lg border p-6">
+          <h2 className="text-lg font-semibold mb-4">REST API 端点</h2>
+          <div className="flex items-center gap-2 bg-gray-50 p-3 rounded font-mono text-sm">
+            <span className="flex-1 truncate">{restEndpoint}</span>
+            <CopyButton text={restEndpoint} field="rest" />
           </div>
         </div>
 
-        {/* API 密钥 */}
-        <div className="card lg:col-span-2">
-          <div className="card-header">
-            <h2 className="font-semibold">API 密钥</h2>
+        {/* 数据库直连 */}
+        <div className="bg-white rounded-lg border p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Database className="h-5 w-5 text-blue-600" />
+            <h2 className="text-lg font-semibold">数据库直连</h2>
           </div>
-          <div className="card-body space-y-4">
-            <div>
-              <label className="label">当前密钥</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  className="input w-full font-mono text-sm bg-gray-50"
-                  value={apiKey}
-                  readOnly
-                />
-                <button
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  className="p-2 hover:bg-gray-100 rounded transition-colors"
-                  title={showApiKey ? '隐藏' : '显示'}
-                >
-                  {showApiKey ? (
-                    <EyeOff className="h-4 w-4 text-gray-500" />
-                  ) : (
-                    <Eye className="h-4 w-4 text-gray-500" />
-                  )}
-                </button>
-                <CopyButton text={apiKey} field="apikey" />
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                请妥善保管 API 密钥，不要在客户端代码中暴露
+
+          {!dbInfo?.hasCredentials ? (
+            <div className="text-center py-8">
+              <Database className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+              <p className="text-gray-500 mb-4">尚未创建数据库用户</p>
+              <p className="text-sm text-gray-400 mb-6">
+                创建数据库用户后，可使用 DBeaver、Navicat 等工具直接连接数据库
               </p>
-            </div>
-            <div className="flex gap-3">
-              <button className="btn btn-primary" disabled>
-                生成新密钥
+              <button
+                onClick={handleCreateDbUser}
+                disabled={isLoading}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" />
+                {creatingUser ? '创建中...' : '创建数据库用户'}
               </button>
-              <button className="btn" disabled>
-                撤销密钥
-              </button>
             </div>
-            <p className="text-xs text-gray-500">
-              API 密钥管理功能即将上线
-            </p>
-          </div>
-        </div>
+          ) : (
+            <div className="space-y-4">
+              {/* 连接字符串 */}
+              {connectionString && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">连接字符串</label>
+                  <div className="flex items-center gap-2 bg-gray-50 p-3 rounded font-mono text-xs break-all">
+                    <span className="flex-1">{connectionString}</span>
+                    <CopyButton text={connectionString} field="connStr" />
+                  </div>
+                </div>
+              )}
 
-        {/* 使用说明 */}
-        <div className="card lg:col-span-2">
-          <div className="card-header">
-            <h2 className="font-semibold">使用说明</h2>
-          </div>
-          <div className="card-body">
-            <div className="prose prose-sm max-w-none">
-              <h4>认证方式</h4>
-              <p>在请求头中添加 Authorization：</p>
-              <pre className="bg-gray-100 p-3 rounded text-xs">
-{`curl -H "Authorization: Bearer YOUR_API_KEY" \\
-  ${graphqlEndpoint}`}
-              </pre>
+              {/* 连接信息 */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">主机</label>
+                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                    <span className="flex-1">{dbInfo?.host || dbCredentials?.host}</span>
+                    <CopyButton text={dbInfo?.host || dbCredentials?.host || ''} field="host" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">端口</label>
+                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                    <span className="flex-1">{dbInfo?.port || dbCredentials?.port}</span>
+                    <CopyButton text={String(dbInfo?.port || dbCredentials?.port || '')} field="port" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">数据库</label>
+                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                    <span className="flex-1">{dbInfo?.database || dbCredentials?.database}</span>
+                    <CopyButton text={dbInfo?.database || dbCredentials?.database || ''} field="database" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Schema</label>
+                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                    <span className="flex-1">{dbInfo?.schemaName || dbCredentials?.schemaName}</span>
+                    <CopyButton text={dbInfo?.schemaName || dbCredentials?.schemaName || ''} field="schema" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                    <span className="flex-1">{dbInfo?.username || dbCredentials?.username}</span>
+                    <CopyButton text={dbInfo?.username || dbCredentials?.username || ''} field="username" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                    {dbCredentials?.password ? (
+                      <>
+                        <span className="flex-1">
+                          {showDbPassword ? dbCredentials.password : '••••••••••••••••'}
+                        </span>
+                        <button
+                          onClick={() => setShowDbPassword(!showDbPassword)}
+                          className="p-1 hover:bg-gray-100 rounded"
+                        >
+                          {showDbPassword ? <EyeOff className="h-4 w-4 text-gray-500" /> : <Eye className="h-4 w-4 text-gray-500" />}
+                        </button>
+                        <CopyButton text={dbCredentials.password} field="password" />
+                      </>
+                    ) : (
+                      <span className="flex-1 text-gray-400">密码仅在创建或重置时显示一次</span>
+                    )}
+                  </div>
+                </div>
+              </div>
 
-              <h4 className="mt-4">GraphQL 示例</h4>
-              <pre className="bg-gray-100 p-3 rounded text-xs">
-{`curl -X POST ${graphqlEndpoint} \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer YOUR_API_KEY" \\
-  -d '{"query": "{ your_table(limit: 10) { id } }"}'`}
-              </pre>
+              {/* 操作按钮 */}
+              <div className="flex items-center gap-3 pt-4 border-t">
+                <button
+                  onClick={handleResetPassword}
+                  disabled={isLoading}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-4 w-4 ${resettingPassword ? 'animate-spin' : ''}`} />
+                  {resettingPassword ? '重置中...' : '重置密码'}
+                </button>
+                <button
+                  onClick={handleDeleteDbUser}
+                  disabled={isLoading}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {deletingUser ? '删除中...' : '删除用户'}
+                </button>
+              </div>
 
-              <h4 className="mt-4">REST API 示例</h4>
-              <pre className="bg-gray-100 p-3 rounded text-xs">
-{`curl ${restEndpoint}/tables/your_table/rows \\
-  -H "Authorization: Bearer YOUR_API_KEY"`}
-              </pre>
+              {/* 使用说明 */}
+              <div className="mt-4 p-4 bg-blue-50 rounded-lg text-sm">
+                <h4 className="font-medium text-blue-900 mb-2">连接说明</h4>
+                <ul className="text-blue-800 space-y-1 list-disc list-inside">
+                  <li>使用 DBeaver、Navicat、pgAdmin 等工具连接</li>
+                  <li>数据库用户仅能访问当前项目的 Schema</li>
+                  <li>支持完整的 DDL/DML 操作权限</li>
+                  <li>密码仅在创建或重置时显示一次，请妥善保存</li>
+                </ul>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </DashboardLayout>

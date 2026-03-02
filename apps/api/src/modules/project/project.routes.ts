@@ -26,4 +26,13 @@ export async function projectRoutes(app: FastifyInstance) {
 
   // Execute SQL query
   app.post('/projects/:projectId/query', controller.executeQuery as never);
+
+  // Execute DDL/DML
+  app.post('/projects/:projectId/ddl', controller.executeDdl as never);
+
+  // Database credentials management
+  app.get('/projects/:projectId/db', controller.getDbInfo);
+  app.post('/projects/:projectId/db/user', controller.createDbUser);
+  app.post('/projects/:projectId/db/reset-password', controller.resetDbPassword);
+  app.delete('/projects/:projectId/db/user', controller.deleteDbUser);
 }

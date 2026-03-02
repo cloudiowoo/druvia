@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as projectService from './project.service.js';
+import * as dbCredentialsService from './db-credentials.service.js';
 import type { CreateProjectInput, UpdateProjectInput } from '@druvia/shared';
 
 interface ProjectParams {
@@ -148,6 +149,129 @@ export async function executeQuery(
     return reply.status(400).send({
       success: false,
       error: { code: 'QUERY_ERROR', message: err.message || '查询执行失败' },
+    });
+  }
+}
+
+// 获取项目数据库连接信息
+export async function getDbInfo(
+  request: FastifyRequest<{ Params: ProjectParams }>,
+  reply: FastifyReply
+) {
+  const info = await dbCredentialsService.getProjectDbInfo(request.params.projectId);
+  if (!info) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'Project not found' },
+    });
+  }
+  return reply.send({ success: true, data: info });
+}
+
+// 创建项目数据库用户
+export async function createDbUser(
+  request: FastifyRequest<{ Params: ProjectParams }>,
+  reply: FastifyReply
+) {
+  // 获取项目信息
+  const project = await projectService.getProjectById(request.params.projectId);
+  if (!project) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'Project not found' },
+    });
+  }
+
+  if (!project.schemaName) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'NO_SCHEMA', message: 'Project has no schema' },
+    });
+  }
+
+  try {
+    const credentials = await dbCredentialsService.createProjectDbUser(
+      request.params.projectId,
+      project.schemaName
+    );
+    return reply.status(201).send({ success: true, data: credentials });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    return reply.status(500).send({
+      success: false,
+      error: { code: 'DB_ERROR', message: err.message || '创建数据库用户失败' },
+    });
+  }
+}
+
+// 重置项目数据库密码
+export async function resetDbPassword(
+  request: FastifyRequest<{ Params: ProjectParams }>,
+  reply: FastifyReply
+) {
+  try {
+    const credentials = await dbCredentialsService.resetProjectDbPassword(request.params.projectId);
+    if (!credentials) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Project or database user not found' },
+      });
+    }
+    return reply.send({ success: true, data: credentials });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    return reply.status(500).send({
+      success: false,
+      error: { code: 'DB_ERROR', message: err.message || '重置密码失败' },
+    });
+  }
+}
+
+// 删除项目数据库用户
+export async function deleteDbUser(
+  request: FastifyRequest<{ Params: ProjectParams }>,
+  reply: FastifyReply
+) {
+  try {
+    const deleted = await dbCredentialsService.dropProjectDbUser(request.params.projectId);
+    if (!deleted) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Project or database user not found' },
+      });
+    }
+    return reply.status(204).send();
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    return reply.status(500).send({
+      success: false,
+      error: { code: 'DB_ERROR', message: err.message || '删除数据库用户失败' },
+    });
+  }
+}
+
+// 执行 DDL/DML 语句
+export async function executeDdl(
+  request: FastifyRequest<{ Params: ProjectParams; Body: { sql: string } }>,
+  reply: FastifyReply
+) {
+  try {
+    const result = await projectService.executeDdl(
+      request.params.projectId,
+      request.body.sql
+    );
+    return reply.send({ success: true, data: result });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    if (err.message === 'Project not found') {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Project not found' },
+      });
+    }
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'DDL_ERROR', message: err.message || 'DDL 执行失败' },
     });
   }
 }

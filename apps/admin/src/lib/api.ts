@@ -178,6 +178,14 @@ class ApiClient {
     }>('POST', `/api/v1/projects/${projectId}/query`, { sql });
   }
 
+  async executeDdl(projectId: string, sql: string) {
+    return this.request<{
+      rows: Array<Record<string, unknown>>;
+      columns: Array<{ name: string; type: string }>;
+      rowCount: number;
+    }>('POST', `/api/v1/projects/${projectId}/ddl`, { sql });
+  }
+
   // Tables
   async listTables(schemaName: string) {
     return this.request<Array<{
@@ -548,6 +556,45 @@ class ApiClient {
       projects: { used: number; limit: number };
       users: { used: number; limit: number };
     }>('GET', `/api/v1/tenants/${tenantId}/usage`);
+  }
+
+  // Project Database Credentials
+  async getProjectDbInfo(projectId: string) {
+    return this.request<{
+      username: string | null;
+      host: string;
+      port: number;
+      database: string;
+      schemaName: string | null;
+      hasCredentials: boolean;
+      createdAt: string | null;
+    }>('GET', `/api/v1/projects/${projectId}/db`);
+  }
+
+  async createProjectDbUser(projectId: string) {
+    return this.request<{
+      username: string;
+      password: string;
+      host: string;
+      port: number;
+      database: string;
+      schemaName: string;
+    }>('POST', `/api/v1/projects/${projectId}/db/user`, {});
+  }
+
+  async resetProjectDbPassword(projectId: string) {
+    return this.request<{
+      username: string;
+      password: string;
+      host: string;
+      port: number;
+      database: string;
+      schemaName: string;
+    }>('POST', `/api/v1/projects/${projectId}/db/reset-password`, {});
+  }
+
+  async deleteProjectDbUser(projectId: string) {
+    return this.request<void>('DELETE', `/api/v1/projects/${projectId}/db/user`);
   }
 }
 

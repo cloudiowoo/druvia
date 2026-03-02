@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
-import { Play, Trash2, Clock } from 'lucide-react';
+import { Play, Trash2, Clock, Shield, AlertTriangle } from 'lucide-react';
 
 interface QueryResult {
   rows: Array<Record<string, unknown>>;
@@ -17,6 +17,7 @@ interface QueryResult {
 interface QueryHistory {
   sql: string;
   timestamp: number;
+  mode: 'query' | 'ddl';
 }
 
 const HISTORY_KEY = 'druvia_sql_history';
@@ -33,6 +34,7 @@ export default function ProjectDatabasePage() {
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<QueryHistory[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [mode, setMode] = useState<'query' | 'ddl'>('query');
 
   useEffect(() => {
     const saved = localStorage.getItem(`${HISTORY_KEY}_${projectId}`);
@@ -53,16 +55,18 @@ export default function ProjectDatabasePage() {
     setResult(null);
 
     try {
-      const res = await api.executeQuery(projectId, sql);
+      const res = mode === 'ddl'
+        ? await api.executeDdl(projectId, sql)
+        : await api.executeQuery(projectId, sql);
       if (res.success && res.data) {
         setResult(res.data);
         const newHistory = [
-          { sql: sql.trim(), timestamp: Date.now() },
+          { sql: sql.trim(), timestamp: Date.now(), mode },
           ...history.filter(h => h.sql !== sql.trim()).slice(0, 19),
         ];
         saveHistory(newHistory);
       } else {
-        setError(res.error?.message || '查询执行失败');
+        setError(res.error?.message || '执行失败');
       }
     } catch {
       setError('网络错误');
@@ -73,6 +77,7 @@ export default function ProjectDatabasePage() {
 
   const handleHistoryClick = (item: QueryHistory) => {
     setSql(item.sql);
+    setMode(item.mode || 'query');
     setShowHistory(false);
   };
 
@@ -111,6 +116,40 @@ export default function ProjectDatabasePage() {
         </p>
       </div>
 
+      {/* 模式切换 */}
+      <div className="mb-4 flex items-center gap-4">
+        <div className="flex rounded-lg border overflow-hidden">
+          <button
+            onClick={() => setMode('query')}
+            className={`px-4 py-2 text-sm flex items-center gap-2 ${
+              mode === 'query'
+                ? 'bg-blue-600 text-white'
+                : 'bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <Shield className="h-4 w-4" />
+            只读查询
+          </button>
+          <button
+            onClick={() => setMode('ddl')}
+            className={`px-4 py-2 text-sm flex items-center gap-2 ${
+              mode === 'ddl'
+                ? 'bg-orange-600 text-white'
+                : 'bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <AlertTriangle className="h-4 w-4" />
+            DDL/DML
+          </button>
+        </div>
+        {mode === 'ddl' && (
+          <span className="text-sm text-orange-600 flex items-center gap-1">
+            <AlertTriangle className="h-4 w-4" />
+            DDL 模式可执行 CREATE/ALTER/DROP/INSERT/UPDATE/DELETE
+          </span>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* SQL 编辑器 */}
         <div className="lg:col-span-3 space-y-4">
@@ -128,7 +167,9 @@ export default function ProjectDatabasePage() {
                 <button
                   onClick={handleExecute}
                   disabled={executing || !sql.trim()}
-                  className="btn btn-primary btn-sm flex items-center gap-1"
+                  className={`btn btn-sm flex items-center gap-1 ${
+                    mode === 'ddl' ? 'btn-warning' : 'btn-primary'
+                  }`}
                 >
                   <Play className="h-4 w-4" />
                   {executing ? '执行中...' : '执行'}
@@ -234,6 +275,13 @@ export default function ProjectDatabasePage() {
                       onClick={() => handleHistoryClick(item)}
                       className="w-full p-3 text-left hover:bg-gray-50 transition-colors"
                     >
+                      <div className="flex items-center gap-2 mb-1">
+                        {item.mode === 'ddl' ? (
+                          <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">DDL</span>
+                        ) : (
+                          <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">查询</span>
+                        )}
+                      </div>
                       <p className="font-mono text-xs truncate">{item.sql}</p>
                       <p className="text-xs text-gray-400 mt-1">
                         {formatDate(item.timestamp)}
