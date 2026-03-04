@@ -38,9 +38,8 @@
 
 ### 组件结构
 
-- `ERDiagram.tsx` - 主组件，负责 ReactFlow 渲染
+- `ERDiagram.tsx` - 主组件，负责 ReactFlow 渲染和 dagre 布局计算
 - `TableNode.tsx` - 自定义表节点，显示表名 + 字段列表
-- `useERData.ts` - Hook，获取表/外键数据并转换为节点/边
 
 ### 后端新增
 
@@ -72,7 +71,7 @@ interface SchemaRelationsResponse {
 ### 数据转换流程
 
 ```
-API 响应 → useERData hook → dagre 布局计算 → ReactFlow 渲染
+API 响应 → ERDiagram 组件 → dagre 布局计算 → ReactFlow 渲染
                 ↓
          tables → nodes (TableNode)
          foreignKeys → edges (带箭头连线)

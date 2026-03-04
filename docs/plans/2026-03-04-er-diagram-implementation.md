@@ -295,6 +295,7 @@ import ReactFlow, {
   useNodesState,
   useEdgesState,
   ConnectionLineType,
+  ReactFlowProvider,
 } from 'reactflow';
 import dagre from '@dagrejs/dagre';
 import 'reactflow/dist/style.css';
@@ -322,7 +323,13 @@ interface ERDiagramProps {
 const nodeTypes = { tableNode: TableNode };
 
 const NODE_WIDTH = 220;
-const NODE_HEIGHT = 150;
+const NODE_HEADER_HEIGHT = 40;
+const NODE_ROW_HEIGHT = 28;
+const NODE_PADDING = 16;
+
+function calculateNodeHeight(columnCount: number): number {
+  return NODE_HEADER_HEIGHT + Math.min(columnCount, 8) * NODE_ROW_HEIGHT + NODE_PADDING;
+}
 
 function getLayoutedElements(
   tables: TableInfo[],
@@ -332,9 +339,10 @@ function getLayoutedElements(
   dagreGraph.setDefaultEdgeLabel(() => ({}));
   dagreGraph.setGraph({ rankdir: 'LR', nodesep: 80, ranksep: 120 });
 
-  // Add nodes
+  // Add nodes with dynamic height
   tables.forEach((table) => {
-    dagreGraph.setNode(table.name, { width: NODE_WIDTH, height: NODE_HEIGHT });
+    const height = calculateNodeHeight(table.columns.length);
+    dagreGraph.setNode(table.name, { width: NODE_WIDTH, height });
   });
 
   // Add edges
@@ -348,12 +356,13 @@ function getLayoutedElements(
   // Create React Flow nodes
   const nodes: Node[] = tables.map((table) => {
     const nodeWithPosition = dagreGraph.node(table.name);
+    const height = calculateNodeHeight(table.columns.length);
     return {
       id: table.name,
       type: 'tableNode',
       position: {
         x: nodeWithPosition.x - NODE_WIDTH / 2,
-        y: nodeWithPosition.y - NODE_HEIGHT / 2,
+        y: nodeWithPosition.y - height / 2,
       },
       data: table,
     };
@@ -406,26 +415,28 @@ export function ERDiagram({ tables, foreignKeys, onTableClick }: ERDiagramProps)
 
   return (
     <div className="h-[500px] border rounded-lg">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={handleNodeClick}
-        nodeTypes={nodeTypes}
-        connectionLineType={ConnectionLineType.SmoothStep}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.1}
-        maxZoom={2}
-      >
-        <Background color="hsl(var(--muted-foreground))" gap={16} size={1} />
-        <Controls />
-        <MiniMap
-          nodeColor="hsl(var(--primary))"
-          maskColor="hsl(var(--background) / 0.8)"
-        />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={handleNodeClick}
+          nodeTypes={nodeTypes}
+          connectionLineType={ConnectionLineType.SmoothStep}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          minZoom={0.1}
+          maxZoom={2}
+        >
+          <Background color="hsl(var(--muted-foreground))" gap={16} size={1} />
+          <Controls />
+          <MiniMap
+            nodeColor="hsl(var(--primary))"
+            maskColor="hsl(var(--background) / 0.8)"
+          />
+        </ReactFlow>
+      </ReactFlowProvider>
     </div>
   );
 }
