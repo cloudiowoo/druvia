@@ -10,6 +10,9 @@ export async function storageRoutes(app: FastifyInstance) {
   // Signed URL download (signature verification instead of JWT)
   app.get('/storage/download/*', controller.downloadSignedUrl as never);
 
+  // Public bucket download (no authentication, checks bucket.public)
+  app.get('/storage/public/:projectId/:bucketName/*', controller.downloadPublic as never);
+
   // ============================================
   // Protected routes (authentication required)
   // ============================================

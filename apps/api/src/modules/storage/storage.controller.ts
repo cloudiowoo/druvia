@@ -445,9 +445,10 @@ export async function getSignedUrl(
     });
   }
 
-  const url = await storageService.getSignedUrl(object, expiresIn);
+  // 使用新方法，根据 bucket 类型返回不同 URL
+  const result = await storageService.getDownloadUrl(bucket, object, expiresIn);
 
-  return reply.send({ success: true, data: { url, expiresIn } });
+  return reply.send({ success: true, data: result });
 }
 
 // ============================================
@@ -461,6 +462,12 @@ interface SignedDownloadParams {
 interface SignedDownloadQuery {
   expires: string;
   signature: string;
+}
+
+interface PublicDownloadParams {
+  projectId: string;
+  bucketName: string;
+  '*': string; // File path
 }
 
 export async function downloadSignedUrl(
@@ -522,6 +529,72 @@ export async function downloadSignedUrl(
     return reply.status(404).send({
       success: false,
       error: { code: 'NOT_FOUND', message: 'File not found' },
+    });
+  }
+}
+
+// ============================================
+// Public bucket download (no auth required)
+// ============================================
+
+export async function downloadPublic(
+  request: FastifyRequest<{ Params: PublicDownloadParams }>,
+  reply: FastifyReply
+) {
+  const { projectId, bucketName } = request.params;
+  const filePath = request.params['*'];
+
+  // 查询 bucket
+  const bucket = await storageService.getBucketByName(projectId, bucketName);
+
+  if (!bucket) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'BUCKET_NOT_FOUND', message: 'Bucket not found' },
+    });
+  }
+
+  // 检查是否为公开 bucket
+  if (!bucket.public) {
+    return reply.status(403).send({
+      success: false,
+      error: { code: 'BUCKET_NOT_PUBLIC', message: 'This bucket is not public' },
+    });
+  }
+
+  // Sanitize path
+  const objectPath = sanitizeObjectPath(filePath);
+  if (!objectPath) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_PATH', message: 'Invalid object path' },
+    });
+  }
+
+  // 获取对象
+  const object = await storageService.getObject(bucket.bucketId, objectPath);
+
+  if (!object) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'OBJECT_NOT_FOUND', message: 'Object not found' },
+    });
+  }
+
+  // 下载文件
+  try {
+    const buffer = await storageService.downloadObject(object);
+
+    reply.header('Content-Type', object.mimeType || 'application/octet-stream');
+    reply.header('Content-Length', buffer.length);
+    reply.header('Content-Disposition', `inline; filename="${encodeURIComponent(objectPath.split('/').pop() || 'file')}"`);
+    reply.header('Cache-Control', 'public, max-age=31536000'); // 公开文件可长期缓存
+
+    return reply.send(buffer);
+  } catch (error) {
+    return reply.status(500).send({
+      success: false,
+      error: { code: 'DOWNLOAD_FAILED', message: 'Failed to download file' },
     });
   }
 }

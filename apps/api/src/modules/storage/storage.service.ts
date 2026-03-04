@@ -422,3 +422,41 @@ export async function getPublicUrl(object: StorageObject): Promise<string> {
   const storage = getStorage();
   return storage.getPublicUrl(object.storagePath);
 }
+
+// ============================================
+// Download URL (Public/Signed)
+// ============================================
+
+export interface DownloadUrlResult {
+  url: string;
+  expiresIn: number | null;
+}
+
+export async function getDownloadUrl(
+  bucket: Bucket,
+  object: StorageObject,
+  expiresIn: number = 3600
+): Promise<DownloadUrlResult> {
+  if (!object.storagePath) {
+    throw new Error('Object has no storage path');
+  }
+
+  if (bucket.public) {
+    // 公开 bucket：返回直接 URL
+    const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:3001';
+    const url = `${apiBaseUrl}/api/v1/storage/public/${bucket.projectId}/${bucket.name}/${object.name}`;
+    return { url, expiresIn: null };
+  } else {
+    // 非公开 bucket：返回签名 URL
+    const storage = getStorage();
+    const url = await storage.getSignedUrl(object.storagePath, expiresIn);
+    return { url, expiresIn };
+  }
+}
+
+export async function getBucketByProjectAndName(
+  projectId: string,
+  bucketName: string
+): Promise<Bucket | null> {
+  return getBucketByName(projectId, bucketName);
+}
