@@ -242,3 +242,22 @@ export async function getSchemaMetadata(
     });
   }
 }
+
+// Get schema relations for ER diagram
+export async function getSchemaRelations(
+  request: FastifyRequest<{ Params: { schemaName: string } }>,
+  reply: FastifyReply
+) {
+  const { schemaName } = request.params;
+
+  try {
+    const relations = await tableService.getSchemaRelations(schemaName);
+    return reply.send({ success: true, data: relations });
+  } catch (error) {
+    const err = error as Error;
+    return reply.status(500).send({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: err.message || 'Failed to get schema relations' },
+    });
+  }
+}

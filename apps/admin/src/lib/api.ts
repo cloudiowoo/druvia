@@ -308,6 +308,22 @@ class ApiClient {
     }>('GET', `/api/v1/schemas/${schemaName}/metadata`);
   }
 
+  // Schema Relations for ER diagram
+  async getSchemaRelations(schemaName: string) {
+    return this.request<{
+      tables: Array<{
+        name: string;
+        columns: Array<{ name: string; type: string; isPrimaryKey: boolean }>;
+      }>;
+      foreignKeys: Array<{
+        fromTable: string;
+        fromColumn: string;
+        toTable: string;
+        toColumn: string;
+      }>;
+    }>('GET', `/api/v1/schemas/${schemaName}/relations`);
+  }
+
   // Table Rows (Data CRUD)
   async listRows(schemaName: string, tableName: string, options?: {
     limit?: number;

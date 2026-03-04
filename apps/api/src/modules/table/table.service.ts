@@ -284,3 +284,102 @@ export async function syncTableMetadata(schemaName: string): Promise<void> {
     );
   }
 }
+
+// Foreign key information
+export interface ForeignKey {
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+}
+
+// Get foreign keys in schema
+export async function getForeignKeys(schemaName: string): Promise<ForeignKey[]> {
+  const result = await query<{
+    from_table: string;
+    from_column: string;
+    to_table: string;
+    to_column: string;
+  }>(
+    `SELECT
+       tc.table_name as from_table,
+       kcu.column_name as from_column,
+       ccu.table_name as to_table,
+       ccu.column_name as to_column
+     FROM information_schema.table_constraints tc
+     JOIN information_schema.key_column_usage kcu
+       ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+     JOIN information_schema.constraint_column_usage ccu
+       ON ccu.constraint_name = tc.constraint_name
+     WHERE tc.constraint_type = 'FOREIGN KEY'
+       AND tc.table_schema = $1
+       AND ccu.table_schema = $1`,
+    [schemaName]
+  );
+
+  return result.map(row => ({
+    fromTable: row.from_table,
+    fromColumn: row.from_column,
+    toTable: row.to_table,
+    toColumn: row.to_column,
+  }));
+}
+
+// Get schema relations (tables with columns + foreign keys) - optimized single query
+export async function getSchemaRelations(schemaName: string): Promise<{
+  tables: Array<{
+    name: string;
+    columns: Array<{ name: string; type: string; isPrimaryKey: boolean }>;
+  }>;
+  foreignKeys: ForeignKey[];
+}> {
+  // Get all columns for all tables in one query
+  const columnsResult = await query<{
+    table_name: string;
+    column_name: string;
+    data_type: string;
+    is_primary: boolean;
+  }>(
+    `SELECT
+       c.table_name,
+       c.column_name,
+       c.data_type,
+       COALESCE(pk.is_primary, false) as is_primary
+     FROM information_schema.columns c
+     LEFT JOIN (
+       SELECT a.attname as column_name, t.relname as table_name, true as is_primary
+       FROM pg_index i
+       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+       JOIN pg_class t ON t.oid = i.indrelid
+       JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE i.indisprimary AND n.nspname = $1
+     ) pk ON pk.table_name = c.table_name AND pk.column_name = c.column_name
+     WHERE c.table_schema = $1
+       AND c.table_name NOT LIKE '\\_%'
+     ORDER BY c.table_name, c.ordinal_position`,
+    [schemaName]
+  );
+
+  // Group columns by table
+  const tableMap = new Map<string, Array<{ name: string; type: string; isPrimaryKey: boolean }>>();
+  for (const row of columnsResult) {
+    if (!tableMap.has(row.table_name)) {
+      tableMap.set(row.table_name, []);
+    }
+    tableMap.get(row.table_name)!.push({
+      name: row.column_name,
+      type: row.data_type,
+      isPrimaryKey: row.is_primary,
+    });
+  }
+
+  const tables = Array.from(tableMap.entries()).map(([name, columns]) => ({
+    name,
+    columns,
+  }));
+
+  const foreignKeys = await getForeignKeys(schemaName);
+
+  return { tables, foreignKeys };
+}

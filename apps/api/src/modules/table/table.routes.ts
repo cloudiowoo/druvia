@@ -9,6 +9,9 @@ export async function tableRoutes(app: FastifyInstance) {
   // Get schema metadata (for SQL editor autocomplete)
   app.get('/schemas/:schemaName/metadata', controller.getSchemaMetadata as never);
 
+  // Get schema relations for ER diagram
+  app.get('/schemas/:schemaName/relations', controller.getSchemaRelations as never);
+
   // List tables in schema
   app.get('/schemas/:schemaName/tables', controller.listTables as never);
 

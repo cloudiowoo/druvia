@@ -273,4 +273,164 @@ describe('TableService Integration', () => {
       expect(meta.rows.length).toBe(0);
     });
   });
+
+  describe('getForeignKeys', () => {
+    it('should return empty array when no foreign keys', async () => {
+      await tableService.createTable(testSchema, {
+        name: 'standalone',
+        columns: [{ name: 'id', type: 'SERIAL', primaryKey: true }],
+      });
+
+      const foreignKeys = await tableService.getForeignKeys(testSchema);
+      expect(foreignKeys).toEqual([]);
+    });
+
+    it('should return foreign key relationships', async () => {
+      // Create parent table
+      await tableService.createTable(testSchema, {
+        name: 'users',
+        columns: [
+          { name: 'id', type: 'SERIAL', primaryKey: true },
+          { name: 'name', type: 'VARCHAR(100)' },
+        ],
+      });
+
+      // Create child table with foreign key using raw SQL (schema prefix needed)
+      await pool.query(`
+        CREATE TABLE "${testSchema}"."posts" (
+          id SERIAL PRIMARY KEY,
+          user_id INT REFERENCES "${testSchema}"."users"(id),
+          title VARCHAR(255)
+        )
+      `);
+      await pool.query(
+        `INSERT INTO "${testSchema}"._meta_tables (table_name) VALUES ($1)`,
+        ['posts']
+      );
+
+      const foreignKeys = await tableService.getForeignKeys(testSchema);
+
+      expect(foreignKeys.length).toBe(1);
+      expect(foreignKeys[0]).toEqual({
+        fromTable: 'posts',
+        fromColumn: 'user_id',
+        toTable: 'users',
+        toColumn: 'id',
+      });
+    });
+
+    it('should return multiple foreign keys', async () => {
+      // Create parent tables
+      await tableService.createTable(testSchema, {
+        name: 'authors',
+        columns: [{ name: 'id', type: 'SERIAL', primaryKey: true }],
+      });
+      await tableService.createTable(testSchema, {
+        name: 'categories',
+        columns: [{ name: 'id', type: 'SERIAL', primaryKey: true }],
+      });
+
+      // Create child table with multiple foreign keys using raw SQL
+      await pool.query(`
+        CREATE TABLE "${testSchema}"."articles" (
+          id SERIAL PRIMARY KEY,
+          author_id INT REFERENCES "${testSchema}"."authors"(id),
+          category_id INT REFERENCES "${testSchema}"."categories"(id)
+        )
+      `);
+      await pool.query(
+        `INSERT INTO "${testSchema}"._meta_tables (table_name) VALUES ($1)`,
+        ['articles']
+      );
+
+      const foreignKeys = await tableService.getForeignKeys(testSchema);
+
+      expect(foreignKeys.length).toBe(2);
+      expect(foreignKeys.map(fk => fk.fromColumn).sort()).toEqual(['author_id', 'category_id']);
+    });
+  });
+
+  describe('getSchemaRelations', () => {
+    it('should return empty tables array for empty schema', async () => {
+      const relations = await tableService.getSchemaRelations(testSchema);
+
+      expect(relations.tables).toEqual([]);
+      expect(relations.foreignKeys).toEqual([]);
+    });
+
+    it('should return tables with columns', async () => {
+      await tableService.createTable(testSchema, {
+        name: 'products',
+        columns: [
+          { name: 'id', type: 'SERIAL', primaryKey: true },
+          { name: 'name', type: 'VARCHAR(100)' },
+          { name: 'price', type: 'DECIMAL(10,2)' },
+        ],
+      });
+
+      const relations = await tableService.getSchemaRelations(testSchema);
+
+      expect(relations.tables.length).toBe(1);
+      expect(relations.tables[0].name).toBe('products');
+      expect(relations.tables[0].columns.length).toBe(3);
+
+      const idCol = relations.tables[0].columns.find(c => c.name === 'id');
+      expect(idCol?.isPrimaryKey).toBe(true);
+
+      const nameCol = relations.tables[0].columns.find(c => c.name === 'name');
+      expect(nameCol?.isPrimaryKey).toBe(false);
+    });
+
+    it('should return tables with foreign key relationships', async () => {
+      // Create tables with relationship
+      await tableService.createTable(testSchema, {
+        name: 'departments',
+        columns: [
+          { name: 'id', type: 'SERIAL', primaryKey: true },
+          { name: 'name', type: 'VARCHAR(100)' },
+        ],
+      });
+
+      // Create child table with foreign key using raw SQL
+      await pool.query(`
+        CREATE TABLE "${testSchema}"."employees" (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(100),
+          dept_id INT REFERENCES "${testSchema}"."departments"(id)
+        )
+      `);
+      await pool.query(
+        `INSERT INTO "${testSchema}"._meta_tables (table_name) VALUES ($1)`,
+        ['employees']
+      );
+
+      const relations = await tableService.getSchemaRelations(testSchema);
+
+      // Check tables
+      expect(relations.tables.length).toBe(2);
+      const tableNames = relations.tables.map(t => t.name).sort();
+      expect(tableNames).toEqual(['departments', 'employees']);
+
+      // Check foreign keys
+      expect(relations.foreignKeys.length).toBe(1);
+      expect(relations.foreignKeys[0]).toEqual({
+        fromTable: 'employees',
+        fromColumn: 'dept_id',
+        toTable: 'departments',
+        toColumn: 'id',
+      });
+    });
+
+    it('should not include meta tables', async () => {
+      await tableService.createTable(testSchema, {
+        name: 'regular_table',
+        columns: [{ name: 'id', type: 'SERIAL', primaryKey: true }],
+      });
+
+      const relations = await tableService.getSchemaRelations(testSchema);
+
+      const tableNames = relations.tables.map(t => t.name);
+      expect(tableNames).not.toContain('_meta_tables');
+    });
+  });
 });
