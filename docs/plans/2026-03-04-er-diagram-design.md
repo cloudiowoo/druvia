@@ -44,7 +44,7 @@
 
 ### 后端新增
 
-- `GET /api/v1/projects/:projectId/schema/relations` - 返回表和外键信息
+- `GET /api/v1/schemas/:schemaName/relations` - 返回表和外键信息（复用现有 table 模块）
 
 ## API 设计
 
@@ -127,23 +127,22 @@ dagre 布局方向：从左到右（LR），被引用的表在左侧，引用方
 
 ## 文件清单
 
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `apps/api/src/modules/table/table.service.ts` | 添加 getForeignKeys, getSchemaRelations 函数 |
+| `apps/api/src/modules/table/table.controller.ts` | 添加 getSchemaRelations 方法 |
+| `apps/api/src/modules/table/table.routes.ts` | 添加 /schemas/:schemaName/relations 路由 |
+| `apps/admin/src/app/t/[tenantId]/p/[projectId]/tables/page.tsx` | 添加 Tabs 和 ER 图组件 |
+| `apps/admin/src/lib/api.ts` | 添加 getSchemaRelations 方法 |
+
 ### 新建文件
 
 | 文件 | 说明 |
 |------|------|
 | `apps/admin/src/components/tables/ERDiagram.tsx` | ER 图主组件 |
 | `apps/admin/src/components/tables/TableNode.tsx` | 自定义表节点 |
-| `apps/admin/src/hooks/useERData.ts` | 数据获取与转换 Hook |
-| `apps/api/src/modules/schema/schema.service.ts` | Schema 关系查询服务 |
-| `apps/api/src/modules/schema/schema.routes.ts` | Schema 路由 |
-
-### 修改文件
-
-| 文件 | 修改内容 |
-|------|----------|
-| `apps/admin/src/app/t/[tenantId]/p/[projectId]/tables/page.tsx` | 添加 Tabs 和 ER 图组件 |
-| `apps/admin/src/lib/api.ts` | 添加 getSchemaRelations 方法 |
-| `apps/api/src/routes.ts` | 注册 schema 路由 |
 
 ## 依赖安装
 

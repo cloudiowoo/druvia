@@ -510,6 +510,7 @@ export default function TablesPage() {
   const [tablesWithColumns, setTablesWithColumns] = useState<TableWithColumns[]>([]);
   const [foreignKeys, setForeignKeys] = useState<ForeignKey[]>([]);
   const [erLoading, setErLoading] = useState(false);
+  const [erError, setErError] = useState<string | null>(null);
 
   const fetchTables = async () => {
     if (!currentProject?.schemaName) return;
@@ -523,10 +524,13 @@ export default function TablesPage() {
   const fetchERData = async () => {
     if (!currentProject?.schemaName) return;
     setErLoading(true);
+    setErError(null);
     const res = await api.getSchemaRelations(currentProject.schemaName);
     if (res.success && res.data) {
       setTablesWithColumns(res.data.tables);
       setForeignKeys(res.data.foreignKeys);
+    } else {
+      setErError(res.error?.message || '加载失败');
     }
     setErLoading(false);
   };
@@ -654,6 +658,15 @@ export default function TablesPage() {
               <div className="text-center">
                 <Skeleton className="h-8 w-8 rounded-full mx-auto mb-2" />
                 <span className="text-muted-foreground">加载中...</span>
+              </div>
+            </div>
+          ) : erError ? (
+            <div className="h-[500px] border rounded-lg flex items-center justify-center">
+              <div className="text-center">
+                <p className="text-destructive mb-4">{erError}</p>
+                <Button variant="outline" onClick={fetchERData}>
+                  重试
+                </Button>
               </div>
             </div>
           ) : (
