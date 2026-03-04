@@ -759,11 +759,199 @@ class ApiClient {
     objectPath: string,
     expiresIn?: number
   ) {
-    return this.request<{ url: string; expiresIn: number }>(
+    return this.request<{ url: string; expiresIn: number | null }>(
       'POST',
       `/api/v1/projects/${projectId}/storage/buckets/${bucketName}/signed-url`,
       { objectPath, expiresIn }
     );
+  }
+
+  // ============================================
+  // Authentication Admin - Providers
+  // ============================================
+
+  async listAuthProviders(projectId: string) {
+    return this.request<Array<{
+      id: string;
+      name: string;
+      type: 'builtin' | 'oauth';
+      enabled: boolean;
+      configured: boolean;
+      hasCredentials: boolean;
+    }>>('GET', `/api/v1/projects/${projectId}/auth/providers`);
+  }
+
+  async getAuthProvider(projectId: string, provider: string) {
+    return this.request<{
+      id: number;
+      projectId: string;
+      provider: string;
+      enabled: boolean;
+      clientId: string | null;
+      config: Record<string, unknown>;
+      createdAt: string;
+      updatedAt: string;
+    }>('GET', `/api/v1/projects/${projectId}/auth/providers/${provider}`);
+  }
+
+  async createAuthProvider(
+    projectId: string,
+    data: {
+      provider: string;
+      enabled?: boolean;
+      clientId?: string;
+      clientSecret?: string;
+      config?: Record<string, unknown>;
+    }
+  ) {
+    return this.request<{
+      id: number;
+      projectId: string;
+      provider: string;
+      enabled: boolean;
+      clientId: string | null;
+      config: Record<string, unknown>;
+    }>('POST', `/api/v1/projects/${projectId}/auth/providers`, data);
+  }
+
+  async updateAuthProvider(
+    projectId: string,
+    provider: string,
+    data: {
+      enabled?: boolean;
+      clientId?: string;
+      clientSecret?: string;
+      config?: Record<string, unknown>;
+    }
+  ) {
+    return this.request<{
+      id: number;
+      projectId: string;
+      provider: string;
+      enabled: boolean;
+      clientId: string | null;
+      config: Record<string, unknown>;
+    }>('PATCH', `/api/v1/projects/${projectId}/auth/providers/${provider}`, data);
+  }
+
+  async deleteAuthProvider(projectId: string, provider: string) {
+    return this.request<void>('DELETE', `/api/v1/projects/${projectId}/auth/providers/${provider}`);
+  }
+
+  async getSupportedAuthProviders() {
+    return this.request<Array<{
+      id: string;
+      name: string;
+      type: 'builtin' | 'oauth';
+    }>>('GET', '/api/v1/auth/providers/supported');
+  }
+
+  // ============================================
+  // Authentication Admin - Config
+  // ============================================
+
+  async getAuthConfig(projectId: string) {
+    return this.request<{
+      projectId: string;
+      jwtExpiresIn: number;
+      refreshTokenExpiresIn: number;
+      passwordMinLength: number;
+      requireEmailVerification: boolean;
+      allowSignup: boolean;
+    }>('GET', `/api/v1/projects/${projectId}/auth/config`);
+  }
+
+  async updateAuthConfig(
+    projectId: string,
+    data: {
+      jwtExpiresIn?: number;
+      refreshTokenExpiresIn?: number;
+      passwordMinLength?: number;
+      requireEmailVerification?: boolean;
+      allowSignup?: boolean;
+    }
+  ) {
+    return this.request<{
+      projectId: string;
+      jwtExpiresIn: number;
+      refreshTokenExpiresIn: number;
+      passwordMinLength: number;
+      requireEmailVerification: boolean;
+      allowSignup: boolean;
+    }>('PUT', `/api/v1/projects/${projectId}/auth/config`, data);
+  }
+
+  // ============================================
+  // Authentication Admin - Users
+  // ============================================
+
+  async listProjectUsers(
+    projectId: string,
+    options?: { limit?: number; offset?: number; status?: string; search?: string }
+  ) {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    if (options?.status) params.set('status', options.status);
+    if (options?.search) params.set('search', options.search);
+    const query = params.toString();
+    return this.request<Array<{
+      id: string;
+      email: string;
+      username: string | null;
+      avatarUrl: string | null;
+      provider: string;
+      providerId: string | null;
+      status: 'active' | 'disabled';
+      lastLoginAt: string | null;
+      createdAt: string;
+    }>>('GET', `/api/v1/projects/${projectId}/auth/users${query ? `?${query}` : ''}`) as Promise<{
+      success: boolean;
+      data?: Array<{
+        id: string;
+        email: string;
+        username: string | null;
+        avatarUrl: string | null;
+        provider: string;
+        providerId: string | null;
+        status: 'active' | 'disabled';
+        lastLoginAt: string | null;
+        createdAt: string;
+      }>;
+      pagination?: { limit: number; offset: number; total: number };
+      error?: { code: string; message: string };
+    }>;
+  }
+
+  async getProjectUser(projectId: string, userId: string) {
+    return this.request<{
+      id: string;
+      email: string;
+      username: string | null;
+      avatarUrl: string | null;
+      provider: string;
+      providerId: string | null;
+      status: 'active' | 'disabled';
+      lastLoginAt: string | null;
+      createdAt: string;
+    }>('GET', `/api/v1/projects/${projectId}/auth/users/${userId}`);
+  }
+
+  async updateProjectUser(
+    projectId: string,
+    userId: string,
+    data: { status?: 'active' | 'disabled' }
+  ) {
+    return this.request<{
+      id: string;
+      email: string;
+      username: string | null;
+      status: 'active' | 'disabled';
+    }>('PATCH', `/api/v1/projects/${projectId}/auth/users/${userId}`, data);
+  }
+
+  async deleteProjectUser(projectId: string, userId: string) {
+    return this.request<void>('DELETE', `/api/v1/projects/${projectId}/auth/users/${userId}`);
   }
 }
 

@@ -211,7 +211,10 @@ export default function StoragePage() {
     const res = await api.getObjectSignedUrl(projectId, selectedBucket.name, obj.name);
     if (res.success && res.data) {
       await navigator.clipboard.writeText(res.data.url);
-      toast({ title: '签名 URL 已复制到剪贴板' });
+      const message = res.data.expiresIn === null
+        ? '公开链接已复制到剪贴板'
+        : '签名链接已复制到剪贴板';
+      toast({ title: message });
     } else {
       toast({ title: '获取链接失败', variant: 'destructive' });
     }

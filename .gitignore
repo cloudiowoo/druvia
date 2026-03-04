@@ -82,6 +82,12 @@ redis_data/
 *.sql.bak
 
 # ================================
+# Storage (local adapter)
+# ================================
+data/
+tests/.storage/
+
+# ================================
 # Backup files
 # ================================
 *.bak
@@ -90,7 +96,6 @@ redis_data/
 # ================================
 # Claude Code
 # ================================
-.claude/settings.local.json
 
 # ================================
 # Git Worktrees
@@ -115,3 +120,7 @@ temp/
 # ================================
 hasura/.env
 hasura/metadata/databases/*/tables/*.yaml.bak
+
+# Claude Code plugin settings (user-local)
+**/.claude/*.local.md
+**/.claude/*.local.json
