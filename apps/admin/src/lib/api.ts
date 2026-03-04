@@ -9,6 +9,59 @@ interface ApiResponse<T> {
   };
 }
 
+// Functions Types
+interface EdgeFunction {
+  id: string;
+  projectId: string;
+  name: string;
+  code: string;
+  runtime: string;
+  status: 'active' | 'disabled';
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface FunctionSecret {
+  id: string;
+  projectId: string;
+  key: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface FunctionSchedule {
+  id: string;
+  functionId: string;
+  cronExpression: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface FunctionLog {
+  id: string;
+  functionId: string;
+  executionId: string;
+  level: 'info' | 'warn' | 'error';
+  message: string | null;
+  durationMs: number | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+interface InvokeResult {
+  success: boolean;
+  data?: unknown;
+  error?: { message: string };
+  duration: number;
+  executionId: string;
+}
+
+export type { EdgeFunction, FunctionSecret, FunctionSchedule, FunctionLog, InvokeResult };
+
 class ApiClient {
   private token: string | null = null;
 
@@ -1100,6 +1153,73 @@ class ApiClient {
     errors: string[];
   }>> {
     return this.request('POST', `/api/v1/projects/${projectId}/sql/import`, { sql });
+  }
+
+  // ============================================
+  // Functions API
+  // ============================================
+
+  async listFunctions(projectId: string): Promise<ApiResponse<EdgeFunction[]>> {
+    return this.request('GET', `/api/v1/projects/${projectId}/functions`);
+  }
+
+  async createFunction(projectId: string, data: { name: string; code: string; description?: string }): Promise<ApiResponse<EdgeFunction>> {
+    return this.request('POST', `/api/v1/projects/${projectId}/functions`, data);
+  }
+
+  async getFunction(projectId: string, name: string): Promise<ApiResponse<EdgeFunction>> {
+    return this.request('GET', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(name)}`);
+  }
+
+  async updateFunction(projectId: string, name: string, data: { code?: string; status?: string; description?: string }): Promise<ApiResponse<EdgeFunction>> {
+    return this.request('PUT', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(name)}`, data);
+  }
+
+  async deleteFunction(projectId: string, name: string): Promise<ApiResponse<void>> {
+    return this.request('DELETE', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(name)}`);
+  }
+
+  async invokeFunction(projectId: string, name: string, payload?: unknown): Promise<ApiResponse<InvokeResult>> {
+    return this.request('POST', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(name)}/invoke`, { payload });
+  }
+
+  async getFunctionLogs(projectId: string, name: string, options?: { limit?: number; offset?: number; level?: string }): Promise<ApiResponse<FunctionLog[]>> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    if (options?.level) params.set('level', options.level);
+    const query = params.toString();
+    return this.request('GET', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(name)}/logs${query ? `?${query}` : ''}`);
+  }
+
+  // Secrets
+  async listSecrets(projectId: string): Promise<ApiResponse<FunctionSecret[]>> {
+    return this.request('GET', `/api/v1/projects/${projectId}/functions/secrets`);
+  }
+
+  async createSecret(projectId: string, key: string, value: string): Promise<ApiResponse<FunctionSecret>> {
+    return this.request('POST', `/api/v1/projects/${projectId}/functions/secrets`, { key, value });
+  }
+
+  async deleteSecret(projectId: string, key: string): Promise<ApiResponse<void>> {
+    return this.request('DELETE', `/api/v1/projects/${projectId}/functions/secrets/${encodeURIComponent(key)}`);
+  }
+
+  // Schedules
+  async listSchedules(projectId: string, functionName: string): Promise<ApiResponse<FunctionSchedule[]>> {
+    return this.request('GET', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(functionName)}/schedules`);
+  }
+
+  async createSchedule(projectId: string, functionName: string, cronExpression: string): Promise<ApiResponse<FunctionSchedule>> {
+    return this.request('POST', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(functionName)}/schedules`, { cronExpression });
+  }
+
+  async updateSchedule(projectId: string, functionName: string, scheduleId: string, data: { cronExpression?: string; enabled?: boolean }): Promise<ApiResponse<FunctionSchedule>> {
+    return this.request('PATCH', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(functionName)}/schedules/${scheduleId}`, data);
+  }
+
+  async deleteSchedule(projectId: string, functionName: string, scheduleId: string): Promise<ApiResponse<void>> {
+    return this.request('DELETE', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(functionName)}/schedules/${scheduleId}`);
   }
 }
 

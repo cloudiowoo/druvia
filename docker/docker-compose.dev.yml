@@ -5,7 +5,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: druvia-postgres
     restart: unless-stopped
     environment:
@@ -39,7 +39,7 @@ services:
       retries: 5
 
   hasura:
-    image: hasura/graphql-engine:v2.36.0
+    image: hasura/graphql-engine:v2.48.0
     container_name: druvia-hasura
     restart: unless-stopped
     depends_on:
@@ -58,3 +58,33 @@ services:
       - "8080:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  deno:
+    image: denoland/deno:alpine-2.0.6
+    container_name: druvia-deno
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./deno-worker:/app:ro
+      - deno-cache:/deno-dir
+    environment:
+      DENO_DIR: /deno-dir
+      DRUVIA_API_URL: http://host.docker.internal:3001
+    working_dir: /app
+    command: ["run", "--allow-net", "--allow-env", "--allow-read=/tmp,/app", "--allow-write=/tmp", "--unstable-worker-options", "main.ts"]
+    ports:
+      - "7133:7133"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          memory: 128M
+
+volumes:
+  deno-cache:

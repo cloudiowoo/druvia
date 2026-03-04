@@ -69,6 +69,39 @@ services:
     networks:
       - druvia-network
 
+  deno:
+    image: denoland/deno:alpine-2.0.6
+    container_name: druvia-deno
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./deno-worker:/app:ro
+      - deno-cache:/deno-dir
+    environment:
+      DENO_DIR: /deno-dir
+      DRUVIA_API_URL: ${DRUVIA_API_URL:-http://host.docker.internal:3001}
+    working_dir: /app
+    command: ["run", "--allow-net", "--allow-env", "--allow-read=/tmp,/app", "--allow-write=/tmp", "--unstable-worker-options", "main.ts"]
+    ports:
+      - "${DENO_PORT:-7133}:7133"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          memory: 128M
+    networks:
+      - druvia-network
+
+
 networks:
   druvia-network:
     driver: bridge
+
+volumes:
+  deno-cache:
