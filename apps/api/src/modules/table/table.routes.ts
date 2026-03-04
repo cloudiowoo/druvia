@@ -6,6 +6,9 @@ export async function tableRoutes(app: FastifyInstance) {
   // All table routes require authentication
   app.addHook('preHandler', authenticate);
 
+  // Get schema metadata (for SQL editor autocomplete)
+  app.get('/schemas/:schemaName/metadata', controller.getSchemaMetadata as never);
+
   // List tables in schema
   app.get('/schemas/:schemaName/tables', controller.listTables as never);
 

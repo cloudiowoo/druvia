@@ -204,6 +204,64 @@ export async function updateSchemaRegistryStats(schemaName: string): Promise<voi
   );
 }
 
+// 获取 Schema 元数据（用于 SQL 编辑器自动完成）
+export interface TableMetadata {
+  name: string;
+  columns: Array<{
+    name: string;
+    type: string;
+  }>;
+}
+
+export interface SchemaMetadata {
+  tables: TableMetadata[];
+}
+
+export async function getSchemaMetadata(schemaName: string): Promise<SchemaMetadata> {
+  // 获取所有表及其列
+  const result = await query<{
+    table_name: string;
+    column_name: string;
+    data_type: string;
+    udt_name: string;
+  }>(
+    `SELECT
+       t.table_name,
+       c.column_name,
+       c.data_type,
+       c.udt_name
+     FROM information_schema.tables t
+     JOIN information_schema.columns c
+       ON t.table_schema = c.table_schema
+       AND t.table_name = c.table_name
+     WHERE t.table_schema = $1
+       AND t.table_type = 'BASE TABLE'
+       AND t.table_name NOT LIKE '_meta_%'
+     ORDER BY t.table_name, c.ordinal_position`,
+    [schemaName]
+  );
+
+  // 组装成 tables 结构
+  const tablesMap = new Map<string, TableMetadata>();
+
+  for (const row of result) {
+    if (!tablesMap.has(row.table_name)) {
+      tablesMap.set(row.table_name, {
+        name: row.table_name,
+        columns: [],
+      });
+    }
+    tablesMap.get(row.table_name)!.columns.push({
+      name: row.column_name,
+      type: row.udt_name, // 使用 udt_name 获取更精确的类型（如 int4, varchar 等）
+    });
+  }
+
+  return {
+    tables: Array.from(tablesMap.values()),
+  };
+}
+
 // 列出租户的所有 Schema
 export async function listTenantSchemas(tenantId: string): Promise<Array<{
   schemaName: string;

@@ -1,18 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
-import { Play, Trash2, Clock, Shield, AlertTriangle } from 'lucide-react';
-
-interface QueryResult {
-  rows: Array<Record<string, unknown>>;
-  columns: Array<{ name: string; type: string }>;
-  rowCount: number;
-}
+import { SqlTabBar } from '@/components/SqlTabBar';
+import { SqlImportExport } from '@/components/SqlImportExport';
+import type { SchemaMetadata } from '@/components/SqlEditor';
+import { Trash2, Clock, Shield, AlertTriangle } from 'lucide-react';
 
 interface QueryHistory {
   sql: string;
@@ -28,14 +25,12 @@ export default function ProjectDatabasePage() {
   const projectId = params.projectId as string;
   const { currentTenant, currentProject } = useAppStore();
 
-  const [sql, setSql] = useState('SELECT * FROM your_table LIMIT 10;');
-  const [executing, setExecuting] = useState(false);
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<QueryHistory[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [mode, setMode] = useState<'query' | 'ddl'>('query');
+  const [schemaMetadata, setSchemaMetadata] = useState<SchemaMetadata | undefined>();
 
+  // 加载查询历史
   useEffect(() => {
     const saved = localStorage.getItem(`${HISTORY_KEY}_${projectId}`);
     if (saved) {
@@ -43,57 +38,46 @@ export default function ProjectDatabasePage() {
     }
   }, [projectId]);
 
-  const saveHistory = (newHistory: QueryHistory[]) => {
+  // 加载 Schema 元数据（用于自动完成）
+  useEffect(() => {
+    async function loadMetadata() {
+      if (!currentProject?.schemaName) return;
+      const res = await api.getSchemaMetadata(currentProject.schemaName);
+      if (res.success && res.data) {
+        setSchemaMetadata(res.data);
+      }
+    }
+    loadMetadata();
+  }, [currentProject?.schemaName]);
+
+  const saveHistory = useCallback((sql: string, queryMode: 'query' | 'ddl') => {
+    const newHistory = [
+      { sql: sql.trim(), timestamp: Date.now(), mode: queryMode },
+      ...history.filter(h => h.sql !== sql.trim()).slice(0, 19),
+    ];
     setHistory(newHistory);
     localStorage.setItem(`${HISTORY_KEY}_${projectId}`, JSON.stringify(newHistory));
-  };
-
-  const handleExecute = async () => {
-    if (!sql.trim()) return;
-    setExecuting(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      const res = mode === 'ddl'
-        ? await api.executeDdl(projectId, sql)
-        : await api.executeQuery(projectId, sql);
-      if (res.success && res.data) {
-        setResult(res.data);
-        const newHistory = [
-          { sql: sql.trim(), timestamp: Date.now(), mode },
-          ...history.filter(h => h.sql !== sql.trim()).slice(0, 19),
-        ];
-        saveHistory(newHistory);
-      } else {
-        setError(res.error?.message || '执行失败');
-      }
-    } catch {
-      setError('网络错误');
-    } finally {
-      setExecuting(false);
-    }
-  };
-
-  const handleHistoryClick = (item: QueryHistory) => {
-    setSql(item.sql);
-    setMode(item.mode || 'query');
-    setShowHistory(false);
-  };
+  }, [history, projectId]);
 
   const clearHistory = () => {
-    saveHistory([]);
+    setHistory([]);
+    localStorage.setItem(`${HISTORY_KEY}_${projectId}`, JSON.stringify([]));
   };
+
+  const handleExecute = useCallback(async (sql: string, queryMode: 'query' | 'ddl') => {
+    const res = queryMode === 'ddl'
+      ? await api.executeDdl(projectId, sql)
+      : await api.executeQuery(projectId, sql);
+
+    if (res.success) {
+      saveHistory(sql, queryMode);
+    }
+
+    return res;
+  }, [projectId, saveHistory]);
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleString('zh-CN');
-  };
-
-  const formatValue = (value: unknown): string => {
-    if (value === null) return 'NULL';
-    if (value === undefined) return '';
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
   };
 
   return (
@@ -111,188 +95,135 @@ export default function ProjectDatabasePage() {
           <span>数据库</span>
         </div>
         <h1 className="text-2xl font-bold">SQL 编辑器</h1>
-        <p className="text-gray-500">
-          Schema: <span className="font-mono">{currentProject?.schemaName}</span>
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-gray-500">
+            Schema: <span className="font-mono">{currentProject?.schemaName}</span>
+          </p>
+          <SqlImportExport
+            projectId={projectId}
+            onImportComplete={() => {
+              // 刷新 schema metadata
+              if (currentProject?.schemaName) {
+                api.getSchemaMetadata(currentProject.schemaName).then(res => {
+                  if (res.success && res.data) {
+                    setSchemaMetadata(res.data);
+                  }
+                });
+              }
+            }}
+          />
+        </div>
       </div>
 
-      {/* 模式切换 */}
-      <div className="mb-4 flex items-center gap-4">
-        <div className="flex rounded-lg border overflow-hidden">
-          <button
-            onClick={() => setMode('query')}
-            className={`px-4 py-2 text-sm flex items-center gap-2 ${
-              mode === 'query'
-                ? 'bg-blue-600 text-white'
-                : 'bg-white text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <Shield className="h-4 w-4" />
-            只读查询
-          </button>
-          <button
-            onClick={() => setMode('ddl')}
-            className={`px-4 py-2 text-sm flex items-center gap-2 ${
-              mode === 'ddl'
-                ? 'bg-orange-600 text-white'
-                : 'bg-white text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <AlertTriangle className="h-4 w-4" />
-            DDL/DML
-          </button>
+      {/* 模式切换 + 历史按钮 */}
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex rounded-lg border overflow-hidden">
+            <button
+              onClick={() => setMode('query')}
+              className={`px-4 py-2 text-sm flex items-center gap-2 ${
+                mode === 'query'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Shield className="h-4 w-4" />
+              只读查询
+            </button>
+            <button
+              onClick={() => setMode('ddl')}
+              className={`px-4 py-2 text-sm flex items-center gap-2 ${
+                mode === 'ddl'
+                  ? 'bg-orange-600 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <AlertTriangle className="h-4 w-4" />
+              DDL/DML
+            </button>
+          </div>
+          {mode === 'ddl' && (
+            <span className="text-sm text-orange-600 flex items-center gap-1">
+              <AlertTriangle className="h-4 w-4" />
+              DDL 模式可执行 CREATE/ALTER/DROP/INSERT/UPDATE/DELETE
+            </span>
+          )}
         </div>
-        {mode === 'ddl' && (
-          <span className="text-sm text-orange-600 flex items-center gap-1">
-            <AlertTriangle className="h-4 w-4" />
-            DDL 模式可执行 CREATE/ALTER/DROP/INSERT/UPDATE/DELETE
-          </span>
-        )}
+
+        <button
+          onClick={() => setShowHistory(!showHistory)}
+          className="btn btn-sm flex items-center gap-1"
+        >
+          <Clock className="h-4 w-4" />
+          历史 {history.length > 0 && `(${history.length})`}
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* SQL 编辑器 */}
-        <div className="lg:col-span-3 space-y-4">
+        {/* SQL 编辑器（多标签） */}
+        <div className={`${showHistory ? 'lg:col-span-3' : 'lg:col-span-4'}`}>
           <div className="card">
-            <div className="card-header flex items-center justify-between">
-              <h2 className="font-semibold">查询</h2>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowHistory(!showHistory)}
-                  className="btn btn-sm flex items-center gap-1"
-                >
-                  <Clock className="h-4 w-4" />
-                  历史
-                </button>
-                <button
-                  onClick={handleExecute}
-                  disabled={executing || !sql.trim()}
-                  className={`btn btn-sm flex items-center gap-1 ${
-                    mode === 'ddl' ? 'btn-warning' : 'btn-primary'
-                  }`}
-                >
-                  <Play className="h-4 w-4" />
-                  {executing ? '执行中...' : '执行'}
-                </button>
-              </div>
-            </div>
-            <div className="card-body">
-              <textarea
-                className="input w-full font-mono text-sm"
-                rows={8}
-                value={sql}
-                onChange={(e) => setSql(e.target.value)}
-                placeholder="输入 SQL 查询..."
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                    handleExecute();
-                  }
-                }}
-              />
-              <p className="text-xs text-gray-500 mt-2">
-                提示：按 Cmd/Ctrl + Enter 执行查询
-              </p>
-            </div>
+            <SqlTabBar
+              projectId={projectId}
+              schemaMetadata={schemaMetadata}
+              onExecute={handleExecute}
+              mode={mode}
+            />
           </div>
+        </div>
 
-          {/* 错误信息 */}
-          {error && (
-            <div className="card border-red-200 bg-red-50">
-              <div className="card-body">
-                <p className="text-red-600">{error}</p>
-              </div>
-            </div>
-          )}
-
-          {/* 查询结果 */}
-          {result && (
+        {/* 查询历史（可折叠） */}
+        {showHistory && (
+          <div className="lg:col-span-1">
             <div className="card">
-              <div className="card-header">
-                <h2 className="font-semibold">
-                  结果 ({result.rowCount} 行)
-                </h2>
+              <div className="card-header flex items-center justify-between">
+                <h2 className="font-semibold">查询历史</h2>
+                {history.length > 0 && (
+                  <button
+                    onClick={clearHistory}
+                    className="p-1 hover:bg-gray-100 rounded"
+                    title="清空历史"
+                  >
+                    <Trash2 className="h-4 w-4 text-gray-500" />
+                  </button>
+                )}
               </div>
-              <div className="overflow-x-auto">
-                {result.rows.length === 0 ? (
-                  <div className="p-8 text-center text-gray-500">
-                    查询成功，无返回数据
+              <div className="card-body p-0">
+                {history.length === 0 ? (
+                  <div className="p-4 text-center text-gray-500 text-sm">
+                    暂无历史记录
                   </div>
                 ) : (
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        {result.columns.map((col) => (
-                          <th key={col.name} className="font-mono text-xs">
-                            {col.name}
-                            <span className="text-gray-400 ml-1">({col.type})</span>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.rows.map((row, i) => (
-                        <tr key={i}>
-                          {result.columns.map((col) => (
-                            <td key={col.name} className="font-mono text-sm">
-                              {formatValue(row[col.name])}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="divide-y max-h-[500px] overflow-y-auto">
+                    {history.map((item, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          // 复制到剪贴板
+                          navigator.clipboard.writeText(item.sql);
+                        }}
+                        className="w-full p-3 text-left hover:bg-gray-50 transition-colors"
+                        title="点击复制"
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          {item.mode === 'ddl' ? (
+                            <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">DDL</span>
+                          ) : (
+                            <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">查询</span>
+                          )}
+                        </div>
+                        <p className="font-mono text-xs truncate">{item.sql}</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          {formatDate(item.timestamp)}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
-          )}
-        </div>
-
-        {/* 查询历史 */}
-        <div className={`lg:col-span-1 ${showHistory ? '' : 'hidden lg:block'}`}>
-          <div className="card">
-            <div className="card-header flex items-center justify-between">
-              <h2 className="font-semibold">查询历史</h2>
-              {history.length > 0 && (
-                <button
-                  onClick={clearHistory}
-                  className="p-1 hover:bg-gray-100 rounded"
-                  title="清空历史"
-                >
-                  <Trash2 className="h-4 w-4 text-gray-500" />
-                </button>
-              )}
-            </div>
-            <div className="card-body p-0">
-              {history.length === 0 ? (
-                <div className="p-4 text-center text-gray-500 text-sm">
-                  暂无历史记录
-                </div>
-              ) : (
-                <div className="divide-y max-h-96 overflow-y-auto">
-                  {history.map((item, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleHistoryClick(item)}
-                      className="w-full p-3 text-left hover:bg-gray-50 transition-colors"
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        {item.mode === 'ddl' ? (
-                          <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">DDL</span>
-                        ) : (
-                          <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">查询</span>
-                        )}
-                      </div>
-                      <p className="font-mono text-xs truncate">{item.sql}</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        {formatDate(item.timestamp)}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
-        </div>
+        )}
       </div>
     </DashboardLayout>
   );

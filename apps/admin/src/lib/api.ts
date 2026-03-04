@@ -243,6 +243,18 @@ class ApiClient {
     return this.request<void>('DELETE', `/api/v1/schemas/${schemaName}/tables/${tableName}`);
   }
 
+  async getSchemaMetadata(schemaName: string) {
+    return this.request<{
+      tables: Array<{
+        name: string;
+        columns: Array<{
+          name: string;
+          type: string;
+        }>;
+      }>;
+    }>('GET', `/api/v1/schemas/${schemaName}/metadata`);
+  }
+
   // Table Rows (Data CRUD)
   async listRows(schemaName: string, tableName: string, options?: {
     limit?: number;
@@ -1012,6 +1024,82 @@ class ApiClient {
       tableName: string;
       schemaName: string;
     }>>('GET', `/api/v1/projects/${projectId}/realtime/tables`);
+  }
+
+  // ============================================
+  // SQL Import/Export
+  // ============================================
+
+  async listExportableTables(projectId: string) {
+    return this.request<Array<{
+      name: string;
+      rowCount: number;
+    }>>('GET', `/api/v1/projects/${projectId}/sql/tables`);
+  }
+
+  async exportSql(
+    projectId: string,
+    options?: { tables?: string[]; includeData?: boolean; includeDrops?: boolean }
+  ): Promise<Blob> {
+    const params = new URLSearchParams();
+    if (options?.tables?.length) params.set('tables', options.tables.join(','));
+    if (options?.includeData) params.set('includeData', 'true');
+    if (options?.includeDrops) params.set('includeDrops', 'true');
+
+    const query = params.toString();
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(
+      `${API_URL}/api/v1/projects/${projectId}/sql/export${query ? `?${query}` : ''}`,
+      { headers }
+    );
+
+    if (!response.ok) {
+      throw new Error('Export failed');
+    }
+
+    return response.blob();
+  }
+
+  async importSql(projectId: string, file: File): Promise<ApiResponse<{
+    statementsExecuted: number;
+    errors: string[];
+  }>> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/v1/projects/${projectId}/sql/import`,
+        {
+          method: 'POST',
+          headers,
+          body: formData,
+        }
+      );
+
+      return response.json();
+    } catch (error) {
+      return {
+        success: false,
+        error: { code: 'NETWORK_ERROR', message: '网络连接失败' },
+      };
+    }
+  }
+
+  async importSqlText(projectId: string, sql: string): Promise<ApiResponse<{
+    statementsExecuted: number;
+    errors: string[];
+  }>> {
+    return this.request('POST', `/api/v1/projects/${projectId}/sql/import`, { sql });
   }
 }
 

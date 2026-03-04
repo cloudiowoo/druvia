@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as tableService from './table.service.js';
+import * as schemaService from '../schema/schema.service.js';
 import type { TableDefinition, ColumnDefinition } from './table.service.js';
 
 interface SchemaParams {
@@ -221,4 +222,23 @@ export async function previewDDL(
       createIndexes: indexes,
     },
   });
+}
+
+// Get schema metadata (for SQL editor autocomplete)
+export async function getSchemaMetadata(
+  request: FastifyRequest<{ Params: SchemaParams }>,
+  reply: FastifyReply
+) {
+  const { schemaName } = request.params;
+
+  try {
+    const metadata = await schemaService.getSchemaMetadata(schemaName);
+    return reply.send({ success: true, data: metadata });
+  } catch (error) {
+    const err = error as Error;
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'GET_METADATA_FAILED', message: err.message },
+    });
+  }
 }

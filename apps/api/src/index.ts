@@ -17,6 +17,7 @@ import { dashboardRoutes } from './modules/dashboard/dashboard.routes.js';
 import { storageRoutes } from './modules/storage/storage.routes.js';
 import { authAdminRoutes } from './modules/auth-admin/auth-admin.routes.js';
 import { realtimeRoutes } from './modules/realtime/realtime.routes.js';
+import { sqlRoutes } from './modules/sql/sql.routes.js';
 
 const app = Fastify({
   logger: true,
@@ -61,6 +62,7 @@ app.register(dashboardRoutes, { prefix: '/api/v1' });
 app.register(storageRoutes, { prefix: '/api/v1' });
 app.register(authAdminRoutes, { prefix: '/api/v1' });
 app.register(realtimeRoutes, { prefix: '/api/v1' });
+app.register(sqlRoutes, { prefix: '/api/v1' });
 
 async function start() {
   try {
