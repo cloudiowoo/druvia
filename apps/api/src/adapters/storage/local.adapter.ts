@@ -3,14 +3,19 @@ import path from 'path';
 import crypto from 'crypto';
 import type { StorageAdapter, UploadOptions, UploadResult, LocalStorageConfig } from './interface.js';
 
+// Secret for signing URLs (use JWT_SECRET from env)
+const getSigningSecret = () => process.env.JWT_SECRET || 'local-storage-secret';
+
 export class LocalAdapter implements StorageAdapter {
   readonly name = 'local';
   private basePath: string;
   private publicUrl: string;
+  private apiBaseUrl: string;
 
   constructor(config: LocalStorageConfig) {
     this.basePath = config.basePath || '/data/storage';
     this.publicUrl = config.publicUrl || '/storage';
+    this.apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:3001';
   }
 
   async upload(file: Buffer, filePath: string, options?: UploadOptions): Promise<UploadResult> {
@@ -55,9 +60,40 @@ export class LocalAdapter implements StorageAdapter {
     return `${this.publicUrl}/${filePath}`;
   }
 
-  async getSignedUrl(filePath: string, _expiresIn?: number): Promise<string> {
-    // Local storage doesn't support signed URLs, return public URL
-    return this.getPublicUrl(filePath);
+  async getSignedUrl(filePath: string, expiresIn = 3600): Promise<string> {
+    // Generate signed URL with expiration
+    const expires = Math.floor(Date.now() / 1000) + expiresIn;
+    const dataToSign = `${filePath}:${expires}`;
+    const signature = crypto
+      .createHmac('sha256', getSigningSecret())
+      .update(dataToSign)
+      .digest('hex');
+
+    const params = new URLSearchParams({
+      expires: String(expires),
+      signature,
+    });
+
+    return `${this.apiBaseUrl}/api/v1/storage/download/${encodeURIComponent(filePath)}?${params}`;
+  }
+
+  // Verify signed URL signature
+  static verifySignature(filePath: string, expires: string, signature: string): boolean {
+    const now = Math.floor(Date.now() / 1000);
+    if (parseInt(expires, 10) < now) {
+      return false; // Expired
+    }
+
+    const dataToSign = `${filePath}:${expires}`;
+    const expectedSignature = crypto
+      .createHmac('sha256', getSigningSecret())
+      .update(dataToSign)
+      .digest('hex');
+
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
   }
 
   async list(prefix: string): Promise<string[]> {
@@ -85,10 +121,15 @@ export class LocalAdapter implements StorageAdapter {
     return files;
   }
 
-  // Helper: Read file (for serving)
-  async read(filePath: string): Promise<Buffer> {
+  // Download file
+  async download(filePath: string): Promise<Buffer> {
     const fullPath = path.join(this.basePath, filePath);
     return fs.readFile(fullPath);
+  }
+
+  // Helper: Read file (alias for download, for backward compatibility)
+  async read(filePath: string): Promise<Buffer> {
+    return this.download(filePath);
   }
 
   // Helper: Get file stats

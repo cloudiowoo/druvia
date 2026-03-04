@@ -28,3 +28,11 @@ export function generateFileId(): string {
 export function generateApiKeyId(): string {
   return generateId('key');
 }
+
+export function generateBucketId(): string {
+  return generateId('bucket');
+}
+
+export function generateObjectId(): string {
+  return generateId('obj');
+}

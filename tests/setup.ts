@@ -7,3 +7,4 @@ process.env.DB_NAME = 'druvia';
 process.env.POSTGRES_PASSWORD = 'p@sscode1234!';
 process.env.HASURA_ADMIN_SECRET = ''; // Disable Hasura webhook verification in tests
 process.env.REDIS_URL = 'redis://localhost:6379';
+process.env.STORAGE_PATH = './tests/.storage'; // Isolate test storage from dev data

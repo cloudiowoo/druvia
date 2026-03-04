@@ -56,6 +56,23 @@ export class R2Adapter implements StorageAdapter {
     await this.client.send(command);
   }
 
+  async download(path: string): Promise<Buffer> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: path,
+    });
+    const response = await this.client.send(command);
+    if (!response.Body) {
+      throw new Error('Object body is empty');
+    }
+    // Convert stream to buffer
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }
+
   async exists(path: string): Promise<boolean> {
     try {
       const command = new HeadObjectCommand({

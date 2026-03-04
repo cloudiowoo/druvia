@@ -596,6 +596,175 @@ class ApiClient {
   async deleteProjectDbUser(projectId: string) {
     return this.request<void>('DELETE', `/api/v1/projects/${projectId}/db/user`);
   }
+
+  // ============================================
+  // Storage Buckets
+  // ============================================
+
+  async listBuckets(projectId: string) {
+    return this.request<Array<{
+      bucketId: string;
+      projectId: string;
+      name: string;
+      public: boolean;
+      fileSizeLimit: number | null;
+      allowedMimeTypes: string[] | null;
+      createdAt: string;
+      updatedAt: string;
+    }>>('GET', `/api/v1/projects/${projectId}/storage/buckets`);
+  }
+
+  async createBucket(
+    projectId: string,
+    data: { name: string; public?: boolean; fileSizeLimit?: number; allowedMimeTypes?: string[] }
+  ) {
+    return this.request<{
+      bucketId: string;
+      projectId: string;
+      name: string;
+      public: boolean;
+      fileSizeLimit: number | null;
+      allowedMimeTypes: string[] | null;
+    }>('POST', `/api/v1/projects/${projectId}/storage/buckets`, data);
+  }
+
+  async getBucket(projectId: string, bucketName: string) {
+    return this.request<{
+      bucketId: string;
+      projectId: string;
+      name: string;
+      public: boolean;
+      fileSizeLimit: number | null;
+      allowedMimeTypes: string[] | null;
+      corsConfig: Record<string, unknown> | null;
+      createdAt: string;
+      updatedAt: string;
+    }>('GET', `/api/v1/projects/${projectId}/storage/buckets/${bucketName}`);
+  }
+
+  async updateBucket(
+    projectId: string,
+    bucketName: string,
+    data: Partial<{
+      public: boolean;
+      fileSizeLimit: number | null;
+      allowedMimeTypes: string[] | null;
+      corsConfig: Record<string, unknown> | null;
+    }>
+  ) {
+    return this.request<{
+      bucketId: string;
+      name: string;
+      public: boolean;
+      fileSizeLimit: number | null;
+      allowedMimeTypes: string[] | null;
+    }>('PATCH', `/api/v1/projects/${projectId}/storage/buckets/${bucketName}`, data);
+  }
+
+  async deleteBucket(projectId: string, bucketName: string) {
+    return this.request<void>('DELETE', `/api/v1/projects/${projectId}/storage/buckets/${bucketName}`);
+  }
+
+  // ============================================
+  // Storage Objects
+  // ============================================
+
+  async listObjects(
+    projectId: string,
+    bucketName: string,
+    options?: { prefix?: string; limit?: number; offset?: number }
+  ) {
+    const params = new URLSearchParams();
+    if (options?.prefix) params.set('prefix', options.prefix);
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    const query = params.toString();
+    return this.request<Array<{
+      objectId: string;
+      bucketId: string;
+      name: string;
+      size: number;
+      mimeType: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>>('GET', `/api/v1/projects/${projectId}/storage/buckets/${bucketName}/objects${query ? `?${query}` : ''}`);
+  }
+
+  async uploadObject(projectId: string, bucketName: string, file: File): Promise<ApiResponse<{
+    objectId: string;
+    bucketId: string;
+    name: string;
+    size: number;
+    mimeType: string | null;
+  }>> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/v1/projects/${projectId}/storage/buckets/${bucketName}/objects`,
+        {
+          method: 'POST',
+          headers,
+          body: formData,
+        }
+      );
+
+      if (response.status === 204) {
+        return { success: true };
+      }
+
+      return response.json();
+    } catch (error) {
+      return {
+        success: false,
+        error: { code: 'NETWORK_ERROR', message: '网络连接失败' },
+      };
+    }
+  }
+
+  async downloadObject(projectId: string, bucketName: string, objectPath: string): Promise<Blob> {
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(
+      `${API_URL}/api/v1/projects/${projectId}/storage/buckets/${bucketName}/objects/${objectPath}`,
+      { headers }
+    );
+
+    if (!response.ok) {
+      throw new Error('Download failed');
+    }
+
+    return response.blob();
+  }
+
+  async deleteObject(projectId: string, bucketName: string, objectPath: string) {
+    return this.request<void>(
+      'DELETE',
+      `/api/v1/projects/${projectId}/storage/buckets/${bucketName}/objects/${objectPath}`
+    );
+  }
+
+  async getObjectSignedUrl(
+    projectId: string,
+    bucketName: string,
+    objectPath: string,
+    expiresIn?: number
+  ) {
+    return this.request<{ url: string; expiresIn: number }>(
+      'POST',
+      `/api/v1/projects/${projectId}/storage/buckets/${bucketName}/signed-url`,
+      { objectPath, expiresIn }
+    );
+  }
 }
 
 export const api = new ApiClient();

@@ -18,6 +18,7 @@ export interface StorageAdapter {
   readonly name: string;
 
   upload(file: Buffer, path: string, options?: UploadOptions): Promise<UploadResult>;
+  download(path: string): Promise<Buffer>;
   delete(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   getPublicUrl(path: string): string;
