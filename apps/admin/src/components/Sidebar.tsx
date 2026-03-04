@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   LogOut,
   Shield,
+  Radio,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -61,6 +62,7 @@ export function Sidebar() {
     { href: `/t/${tid}/p/${pid}/database`, label: '数据库', icon: <Database className="h-4 w-4" /> },
     { href: `/t/${tid}/p/${pid}/storage`, label: '存储', icon: <HardDrive className="h-4 w-4" /> },
     { href: `/t/${tid}/p/${pid}/auth`, label: '认证', icon: <Shield className="h-4 w-4" /> },
+    { href: `/t/${tid}/p/${pid}/realtime`, label: '实时', icon: <Radio className="h-4 w-4" /> },
     { href: `/t/${tid}/p/${pid}/api`, label: 'API', icon: <Key className="h-4 w-4" /> },
     { href: `/t/${tid}/p/${pid}/settings`, label: '设置', icon: <Settings className="h-4 w-4" /> },
   ];

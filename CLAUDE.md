@@ -22,6 +22,7 @@
 ### API 规则
 - **Fastify POST 空 body**：POST 请求必须发送 `{}` 而非空 body，否则返回 `FST_ERR_CTP_EMPTY_JSON_BODY`
 - **API 类型定义**：确保前端 API 类型与后端返回字段一致（如 `role` 字段）
+- **Controller 权限检查**：使用 `verifyProjectAccess(request, reply)` helper，通过 `request.user?.userId` 获取用户 ID
 
 ### 前端规则
 - **状态同步**：登录/登出时需同步 `useAuth.user` 到 `useAppStore.currentUser`（用于角色判断）
@@ -46,6 +47,7 @@
 - **设计文档**：存放在 `docs/plans/`，按日期命名
 
 ### 测试规则
+- **配置**：根目录已有 vitest 配置，不要在 apps/ 子项目单独安装
 - **位置**：`tests/` 目录 (unit/, integration/, e2e/)
 - **命名**：`<module>.test.ts`
 - **数据隔离**：使用 `beforeEach` 清理并重置测试数据，避免测试间干扰
@@ -204,6 +206,8 @@ druvia/
 2. **遵循适配器模式** - Storage/Auth 必须通过适配器
 3. **Schema 隔离** - 租户数据必须在独立 Schema
 4. **Hasura 权限** - 使用 Hasura 权限控制，不用 PostgreSQL RLS
+   - 表需先 `pg_track_table` 才能配置权限和订阅
+   - Hasura Metadata API: `pg_create_select_permission`, `pg_drop_select_permission`
 5. **TDD 开发** - 先写测试，再写实现
 
 ---
@@ -258,5 +262,5 @@ docker-compose down -v && docker-compose up -d
 
 ---
 
-**Last Updated**: 2026-03-01
+**Last Updated**: 2026-03-04
 **Architecture**: 三级渐进式披露（元数据 → CLAUDE.md → Skills）

@@ -953,6 +953,66 @@ class ApiClient {
   async deleteProjectUser(projectId: string, userId: string) {
     return this.request<void>('DELETE', `/api/v1/projects/${projectId}/auth/users/${userId}`);
   }
+
+  // ============================================
+  // Realtime
+  // ============================================
+
+  async listRealtimeSubscriptions(projectId: string) {
+    return this.request<{
+      subscriptions: Array<{
+        tableName: string;
+        schemaName: string;
+        enabled: boolean;
+        operations: ('INSERT' | 'UPDATE' | 'DELETE')[];
+        hasSelectPermission: boolean;
+      }>;
+      stats: {
+        totalTables: number;
+        enabledTables: number;
+        disabledTables: number;
+      };
+    }>('GET', `/api/v1/projects/${projectId}/realtime/subscriptions`);
+  }
+
+  async configureRealtimeSubscription(
+    projectId: string,
+    tableName: string,
+    data: { enabled: boolean; role?: string }
+  ) {
+    return this.request<{
+      tableName: string;
+      schemaName: string;
+      enabled: boolean;
+      operations: ('INSERT' | 'UPDATE' | 'DELETE')[];
+      hasSelectPermission: boolean;
+    }>('POST', `/api/v1/projects/${projectId}/realtime/subscriptions/${tableName}`, data);
+  }
+
+  async getRealtimeConfig(projectId: string) {
+    return this.request<{
+      schemaName: string;
+      websocketEndpoint: string;
+      graphqlEndpoint: string;
+      hasuraConnected: boolean;
+    }>('GET', `/api/v1/projects/${projectId}/realtime/config`);
+  }
+
+  async getSubscriptionExample(projectId: string, tableName: string, operation?: string) {
+    const params = operation ? `?operation=${operation}` : '';
+    return this.request<Array<{
+      language: 'javascript' | 'graphql';
+      code: string;
+      description: string;
+    }>>('GET', `/api/v1/projects/${projectId}/realtime/subscriptions/${tableName}/example${params}`);
+  }
+
+  async listRealtimeTables(projectId: string) {
+    return this.request<Array<{
+      tableName: string;
+      schemaName: string;
+    }>>('GET', `/api/v1/projects/${projectId}/realtime/tables`);
+  }
 }
 
 export const api = new ApiClient();
