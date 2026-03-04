@@ -522,6 +522,7 @@ export default function TablesPage() {
   const [foreignKeys, setForeignKeys] = useState<ForeignKey[]>([]);
   const [erLoading, setErLoading] = useState(false);
   const [erError, setErError] = useState<string | null>(null);
+  const [erLoaded, setErLoaded] = useState(false);
 
   const fetchTables = async () => {
     if (!currentProject?.schemaName) return;
@@ -540,6 +541,7 @@ export default function TablesPage() {
     if (res.success && res.data) {
       setTablesWithColumns(res.data.tables);
       setForeignKeys(res.data.foreignKeys);
+      setErLoaded(true);
     } else {
       setErError(res.error?.message || '加载失败');
     }
@@ -551,7 +553,7 @@ export default function TablesPage() {
   }, [currentProject?.schemaName]);
 
   const handleTabChange = (value: string) => {
-    if (value === 'er' && tablesWithColumns.length === 0) {
+    if (value === 'er' && !erLoaded && !erLoading) {
       fetchERData();
     }
   };
