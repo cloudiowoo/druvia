@@ -1,7 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as tableService from './table.service.js';
 import * as schemaService from '../schema/schema.service.js';
-import type { TableDefinition, ColumnDefinition } from './table.service.js';
+import type { TableDefinition, ColumnDefinition, ForeignKeyDetail } from './table.service.js';
 
 interface SchemaParams {
   schemaName: string;
@@ -258,6 +258,85 @@ export async function getSchemaRelations(
     return reply.status(500).send({
       success: false,
       error: { code: 'INTERNAL_ERROR', message: err.message || 'Failed to get schema relations' },
+    });
+  }
+}
+
+// Foreign key params
+interface ForeignKeyParams extends TableParams {
+  constraintName: string;
+}
+
+// Foreign key body
+interface AddForeignKeyBody {
+  column: string;
+  targetTable: string;
+  targetColumn: string;
+  onDelete?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+  onUpdate?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+}
+
+// Get table foreign keys
+export async function getTableForeignKeys(
+  request: FastifyRequest<{ Params: TableParams }>,
+  reply: FastifyReply
+) {
+  const { schemaName, tableName } = request.params;
+
+  try {
+    const foreignKeys = await tableService.getTableForeignKeys(schemaName, tableName);
+    return reply.send({ success: true, data: foreignKeys });
+  } catch (error) {
+    const err = error as Error;
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'GET_FOREIGN_KEYS_FAILED', message: err.message },
+    });
+  }
+}
+
+// Add foreign key
+export async function addForeignKey(
+  request: FastifyRequest<{ Params: TableParams; Body: AddForeignKeyBody }>,
+  reply: FastifyReply
+) {
+  const { schemaName, tableName } = request.params;
+  const body = request.body;
+
+  if (!body.column || !body.targetTable || !body.targetColumn) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_INPUT', message: 'column, targetTable, and targetColumn are required' },
+    });
+  }
+
+  try {
+    const constraintName = await tableService.addForeignKey(schemaName, tableName, body);
+    return reply.status(201).send({ success: true, data: { constraintName } });
+  } catch (error) {
+    const err = error as Error;
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'ADD_FOREIGN_KEY_FAILED', message: err.message },
+    });
+  }
+}
+
+// Drop foreign key
+export async function dropForeignKey(
+  request: FastifyRequest<{ Params: ForeignKeyParams }>,
+  reply: FastifyReply
+) {
+  const { schemaName, tableName, constraintName } = request.params;
+
+  try {
+    await tableService.dropForeignKey(schemaName, tableName, constraintName);
+    return reply.send({ success: true });
+  } catch (error) {
+    const err = error as Error;
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'DROP_FOREIGN_KEY_FAILED', message: err.message },
     });
   }
 }

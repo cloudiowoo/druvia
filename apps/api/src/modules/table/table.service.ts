@@ -383,3 +383,121 @@ export async function getSchemaRelations(schemaName: string): Promise<{
 
   return { tables, foreignKeys };
 }
+
+// 获取表的外键详情（包含约束名和级联规则）
+export interface ForeignKeyDetail {
+  constraintName: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+  onDelete: string;
+  onUpdate: string;
+}
+
+export async function getTableForeignKeys(
+  schemaName: string,
+  tableName: string
+): Promise<ForeignKeyDetail[]> {
+  const result = await query<{
+    constraint_name: string;
+    column_name: string;
+    foreign_table_name: string;
+    foreign_column_name: string;
+    delete_rule: string;
+    update_rule: string;
+  }>(
+    `SELECT
+       tc.constraint_name,
+       kcu.column_name,
+       ccu.table_name AS foreign_table_name,
+       ccu.column_name AS foreign_column_name,
+       rc.delete_rule,
+       rc.update_rule
+     FROM information_schema.table_constraints tc
+     JOIN information_schema.key_column_usage kcu
+       ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+     JOIN information_schema.constraint_column_usage ccu
+       ON ccu.constraint_name = tc.constraint_name
+       AND ccu.table_schema = tc.table_schema
+     JOIN information_schema.referential_constraints rc
+       ON rc.constraint_name = tc.constraint_name
+       AND rc.constraint_schema = tc.table_schema
+     WHERE tc.constraint_type = 'FOREIGN KEY'
+       AND tc.table_schema = $1
+       AND tc.table_name = $2`,
+    [schemaName, tableName]
+  );
+
+  return result.map(row => ({
+    constraintName: row.constraint_name,
+    fromColumn: row.column_name,
+    toTable: row.foreign_table_name,
+    toColumn: row.foreign_column_name,
+    onDelete: row.delete_rule,
+    onUpdate: row.update_rule,
+  }));
+}
+
+// 添加外键约束
+export async function addForeignKey(
+  schemaName: string,
+  tableName: string,
+  config: {
+    column: string;
+    targetTable: string;
+    targetColumn: string;
+    onDelete?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+    onUpdate?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+  }
+): Promise<string> {
+  // 验证标识符格式，防止 SQL 注入
+  const identifierRegex = /^[a-z_][a-z0-9_]*$/i;
+  if (!identifierRegex.test(schemaName) ||
+      !identifierRegex.test(tableName) ||
+      !identifierRegex.test(config.column) ||
+      !identifierRegex.test(config.targetTable) ||
+      !identifierRegex.test(config.targetColumn)) {
+    throw new Error('Invalid identifier format');
+  }
+
+  const constraintName = `fk_${tableName}_${config.column}_${config.targetTable}`;
+  const onDelete = config.onDelete || 'NO ACTION';
+  const onUpdate = config.onUpdate || 'NO ACTION';
+
+  // 验证级联规则是有效值
+  const validActions = ['CASCADE', 'SET NULL', 'RESTRICT', 'NO ACTION'];
+  if (!validActions.includes(onDelete) || !validActions.includes(onUpdate)) {
+    throw new Error('Invalid cascade action');
+  }
+
+  await pool.query(
+    `ALTER TABLE "${schemaName}"."${tableName}"
+     ADD CONSTRAINT "${constraintName}"
+     FOREIGN KEY ("${config.column}")
+     REFERENCES "${schemaName}"."${config.targetTable}"("${config.targetColumn}")
+     ON DELETE ${onDelete}
+     ON UPDATE ${onUpdate}`
+  );
+
+  return constraintName;
+}
+
+// 删除外键约束
+export async function dropForeignKey(
+  schemaName: string,
+  tableName: string,
+  constraintName: string
+): Promise<void> {
+  // 验证标识符格式，防止 SQL 注入
+  const identifierRegex = /^[a-z_][a-z0-9_]*$/i;
+  if (!identifierRegex.test(schemaName) ||
+      !identifierRegex.test(tableName) ||
+      !identifierRegex.test(constraintName)) {
+    throw new Error('Invalid identifier format');
+  }
+
+  await pool.query(
+    `ALTER TABLE "${schemaName}"."${tableName}" DROP CONSTRAINT "${constraintName}"`
+  );
+}

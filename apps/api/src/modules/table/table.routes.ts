@@ -38,4 +38,13 @@ export async function tableRoutes(app: FastifyInstance) {
 
   // Rename column
   app.patch('/schemas/:schemaName/tables/:tableName/columns/:columnName', controller.renameColumn as never);
+
+  // Get table foreign keys
+  app.get('/schemas/:schemaName/tables/:tableName/foreign-keys', controller.getTableForeignKeys as never);
+
+  // Add foreign key
+  app.post('/schemas/:schemaName/tables/:tableName/foreign-keys', controller.addForeignKey as never);
+
+  // Drop foreign key
+  app.delete('/schemas/:schemaName/tables/:tableName/foreign-keys/:constraintName', controller.dropForeignKey as never);
 }
