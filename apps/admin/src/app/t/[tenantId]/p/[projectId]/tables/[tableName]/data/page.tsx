@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
 import { SvarDataGrid } from '@/components/SvarDataGrid';
+import { TableSidebar } from '@/components/tables/TableSidebar';
 import { Button } from '@/components/ui/button';
 import { Breadcrumb } from '@/components/Breadcrumb';
 import { ArrowLeft, Download } from 'lucide-react';
@@ -26,6 +27,19 @@ export default function DataBrowserPage() {
   const { currentProject } = useAppStore();
   const { toast } = useToast();
   const [exporting, setExporting] = useState(false);
+  const [tables, setTables] = useState<Array<{ tableName: string; rowCount: number }>>([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // 加载表列表
+  useEffect(() => {
+    if (currentProject?.schemaName) {
+      api.listTables(currentProject.schemaName).then(res => {
+        if (res.success && res.data) {
+          setTables(res.data);
+        }
+      });
+    }
+  }, [currentProject?.schemaName]);
 
   const handleExport = async (format: 'csv' | 'json') => {
     if (!currentProject?.schemaName) return;
@@ -71,44 +85,54 @@ export default function DataBrowserPage() {
 
   return (
     <DashboardLayout>
-      <Breadcrumb />
+      <div className="flex h-[calc(100vh-64px)]">
+        <TableSidebar
+          tables={tables}
+          currentTable={tableName}
+          collapsed={sidebarCollapsed}
+          onCollapsedChange={setSidebarCollapsed}
+        />
+        <div className="flex-1 overflow-auto p-6">
+          <Breadcrumb />
 
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" asChild>
-            <Link href={`/t/${tenantId}/p/${projectId}/tables/${tableName}`}>
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
-          <h1 className="text-2xl font-bold">数据浏览</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" disabled={exporting}>
-                <Download className="h-4 w-4 mr-2" />
-                {exporting ? '导出中...' : '导出'}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-4">
+              <Button variant="ghost" size="icon" asChild>
+                <Link href={`/t/${tenantId}/p/${projectId}/tables/${tableName}`}>
+                  <ArrowLeft className="h-4 w-4" />
+                </Link>
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem onClick={() => handleExport('csv')}>
-                导出为 CSV
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport('json')}>
-                导出为 JSON
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              <h1 className="text-2xl font-bold">数据浏览</h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" disabled={exporting}>
+                    <Download className="h-4 w-4 mr-2" />
+                    {exporting ? '导出中...' : '导出'}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => handleExport('csv')}>
+                    导出为 CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleExport('json')}>
+                    导出为 JSON
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          <SvarDataGrid
+            schemaName={currentProject.schemaName}
+            tableName={tableName}
+            primaryKeyColumn="id"
+            pageSize={50}
+            onError={handleError}
+          />
         </div>
       </div>
-
-      <SvarDataGrid
-        schemaName={currentProject.schemaName}
-        tableName={tableName}
-        primaryKeyColumn="id"
-        pageSize={50}
-        onError={handleError}
-      />
     </DashboardLayout>
   );
 }

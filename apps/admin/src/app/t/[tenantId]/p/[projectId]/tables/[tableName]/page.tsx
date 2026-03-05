@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
-import { api } from '@/lib/api';
+import { api, ForeignKeyDetail } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,6 +42,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Plus, Trash2, MoreHorizontal, Save, ArrowLeft, Key, Database } from 'lucide-react';
 import { Breadcrumb } from '@/components/Breadcrumb';
+import { ForeignKeyPopover } from '@/components/tables/ForeignKeyPopover';
+import { useToast } from '@/hooks/use-toast';
 
 interface Column {
   name: string;
@@ -75,26 +77,78 @@ export default function TableStructurePage() {
   const projectId = params.projectId as string;
   const tableName = params.tableName as string;
   const { currentProject, currentTenant } = useAppStore();
+  const { toast } = useToast();
 
   const [columns, setColumns] = useState<Column[]>([]);
   const [originalColumns, setOriginalColumns] = useState<Column[]>([]);
+  const [foreignKeys, setForeignKeys] = useState<ForeignKeyDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // 加载表结构和外键
   useEffect(() => {
-    async function fetchStructure() {
+    async function fetchData() {
       if (!currentProject?.schemaName) return;
-      const res = await api.getTableStructure(currentProject.schemaName, tableName);
-      if (res.success && res.data) {
-        setColumns(res.data.columns);
-        setOriginalColumns(res.data.columns);
+
+      const [structureRes, fkRes] = await Promise.all([
+        api.getTableStructure(currentProject.schemaName, tableName),
+        api.getTableForeignKeys(currentProject.schemaName, tableName),
+      ]);
+
+      if (structureRes.success && structureRes.data) {
+        setColumns(structureRes.data.columns);
+        setOriginalColumns(structureRes.data.columns);
+      }
+      if (fkRes.success && fkRes.data) {
+        setForeignKeys(fkRes.data);
       }
       setLoading(false);
     }
-    fetchStructure();
+    fetchData();
   }, [currentProject?.schemaName, tableName]);
+
+  // 获取列的外键信息
+  const getColumnForeignKey = (columnName: string) => {
+    return foreignKeys.find(fk => fk.fromColumn === columnName);
+  };
+
+  // 添加外键
+  const handleAddForeignKey = async (config: {
+    column: string;
+    targetTable: string;
+    targetColumn: string;
+    onDelete: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+    onUpdate: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+  }) => {
+    if (!currentProject?.schemaName) return;
+
+    const res = await api.addForeignKey(currentProject.schemaName, tableName, config);
+    if (res.success) {
+      // 刷新外键列表
+      const fkRes = await api.getTableForeignKeys(currentProject.schemaName, tableName);
+      if (fkRes.success && fkRes.data) {
+        setForeignKeys(fkRes.data);
+      }
+      toast({ title: '外键添加成功' });
+    } else {
+      toast({ title: '外键添加失败', description: res.error?.message, variant: 'destructive' });
+    }
+  };
+
+  // 删除外键
+  const handleRemoveForeignKey = async (constraintName: string) => {
+    if (!currentProject?.schemaName) return;
+
+    const res = await api.dropForeignKey(currentProject.schemaName, tableName, constraintName);
+    if (res.success) {
+      setForeignKeys(foreignKeys.filter(fk => fk.constraintName !== constraintName));
+      toast({ title: '外键删除成功' });
+    } else {
+      toast({ title: '外键删除失败', description: res.error?.message, variant: 'destructive' });
+    }
+  };
 
   const hasChanges = JSON.stringify(columns) !== JSON.stringify(originalColumns);
 
@@ -251,12 +305,15 @@ export default function TableStructurePage() {
                   <TableHead className="w-[180px]">默认值</TableHead>
                   <TableHead className="w-[80px] text-center">可空</TableHead>
                   <TableHead className="w-[80px] text-center">主键</TableHead>
+                  <TableHead className="w-[80px] text-center">外键</TableHead>
                   <TableHead className="w-[60px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {columns.map((column, index) => (
-                  <TableRow key={index} className={column.isNew ? 'bg-green-50' : column.isModified ? 'bg-yellow-50' : ''}>
+                {columns.map((column, index) => {
+                  const fk = getColumnForeignKey(column.name);
+                  return (
+                  <TableRow key={index} className={column.isNew ? 'bg-green-50 dark:bg-green-950' : column.isModified ? 'bg-yellow-50 dark:bg-yellow-950' : ''}>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {column.primaryKey && (
@@ -318,6 +375,24 @@ export default function TableStructurePage() {
                         className="h-4 w-4"
                       />
                     </TableCell>
+                    <TableCell className="text-center">
+                      {!column.isNew && currentProject?.schemaName && (
+                        <ForeignKeyPopover
+                          schemaName={currentProject.schemaName}
+                          columnName={column.name}
+                          columnType={column.type}
+                          existingFk={fk ? {
+                            column: fk.fromColumn,
+                            targetTable: fk.toTable,
+                            targetColumn: fk.toColumn,
+                            onDelete: fk.onDelete as 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION',
+                            onUpdate: fk.onUpdate as 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION',
+                          } : undefined}
+                          onAdd={handleAddForeignKey}
+                          onRemove={() => fk && handleRemoveForeignKey(fk.constraintName)}
+                        />
+                      )}
+                    </TableCell>
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -338,7 +413,8 @@ export default function TableStructurePage() {
                       </DropdownMenu>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
             <div className="p-4 border-t">

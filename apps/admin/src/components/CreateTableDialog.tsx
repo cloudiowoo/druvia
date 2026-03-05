@@ -22,6 +22,7 @@ import {
 import { Plus, Trash2, FileText, LayoutTemplate } from 'lucide-react';
 import { api } from '@/lib/api';
 import { TABLE_TEMPLATES } from '@/lib/table-templates';
+import { ForeignKeyPopover } from '@/components/tables/ForeignKeyPopover';
 
 interface Column {
   name: string;
@@ -29,6 +30,12 @@ interface Column {
   nullable: boolean;
   primaryKey: boolean;
   defaultValue?: string;
+  references?: {
+    table: string;
+    column: string;
+    onDelete?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+    onUpdate?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+  };
 }
 
 const DEFAULT_COLUMNS: Column[] = [
@@ -87,7 +94,7 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
     ]);
   };
 
-  const updateColumn = (index: number, field: keyof Column, value: string | boolean) => {
+  const updateColumn = (index: number, field: keyof Column, value: string | boolean | Column['references']) => {
     const updated = [...columns];
     updated[index] = { ...updated[index], [field]: value };
     setColumns(updated);
@@ -125,6 +132,7 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
         nullable: c.nullable,
         primaryKey: c.primaryKey,
         defaultValue: c.defaultValue,
+        references: c.references,
       })),
     });
 
@@ -228,6 +236,7 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
                     <th className="text-left p-2 font-medium w-[140px]">类型</th>
                     <th className="text-center p-2 font-medium w-[60px]">可空</th>
                     <th className="text-center p-2 font-medium w-[60px]">主键</th>
+                    <th className="text-center p-2 font-medium w-[60px]">外键</th>
                     <th className="w-[40px]"></th>
                   </tr>
                 </thead>
@@ -274,6 +283,29 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
                           checked={column.primaryKey}
                           onChange={(e) => updateColumn(index, 'primaryKey', e.target.checked)}
                           className="h-4 w-4"
+                        />
+                      </td>
+                      <td className="p-2 text-center">
+                        <ForeignKeyPopover
+                          schemaName={schemaName}
+                          columnName={column.name}
+                          columnType={column.type}
+                          existingFk={column.references ? {
+                            column: column.name,
+                            targetTable: column.references.table,
+                            targetColumn: column.references.column,
+                            onDelete: column.references.onDelete || 'NO ACTION',
+                            onUpdate: column.references.onUpdate || 'NO ACTION',
+                          } : undefined}
+                          onAdd={(config) => {
+                            updateColumn(index, 'references', {
+                              table: config.targetTable,
+                              column: config.targetColumn,
+                              onDelete: config.onDelete,
+                              onUpdate: config.onUpdate,
+                            });
+                          }}
+                          onRemove={() => updateColumn(index, 'references', undefined)}
                         />
                       </td>
                       <td className="p-2">

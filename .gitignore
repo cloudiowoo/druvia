@@ -84,7 +84,7 @@ redis_data/
 # ================================
 # Storage (local adapter)
 # ================================
-data/
+apps/api/data/
 tests/.storage/
 
 # ================================

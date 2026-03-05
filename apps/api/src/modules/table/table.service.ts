@@ -43,7 +43,7 @@ export interface TableMetadata {
 }
 
 // Generate column DDL
-function generateColumnDDL(col: ColumnDefinition): string {
+function generateColumnDDL(col: ColumnDefinition, schemaName: string): string {
   let ddl = `"${col.name}" ${col.type}`;
 
   if (col.primaryKey) {
@@ -59,7 +59,7 @@ function generateColumnDDL(col: ColumnDefinition): string {
     ddl += ` DEFAULT ${col.defaultValue}`;
   }
   if (col.references) {
-    ddl += ` REFERENCES "${col.references.table}"("${col.references.column}")`;
+    ddl += ` REFERENCES "${schemaName}"."${col.references.table}"("${col.references.column}")`;
     if (col.references.onDelete) {
       ddl += ` ON DELETE ${col.references.onDelete}`;
     }
@@ -70,7 +70,7 @@ function generateColumnDDL(col: ColumnDefinition): string {
 
 // Generate CREATE TABLE DDL
 export function generateCreateTableDDL(schemaName: string, table: TableDefinition): string {
-  const columns = table.columns.map(generateColumnDDL);
+  const columns = table.columns.map(col => generateColumnDDL(col, schemaName));
 
   // Add composite primary key if specified
   if (table.primaryKey && table.primaryKey.length > 1) {
@@ -160,7 +160,7 @@ export async function addColumn(
   tableName: string,
   column: ColumnDefinition
 ): Promise<void> {
-  const colDDL = generateColumnDDL(column);
+  const colDDL = generateColumnDDL(column, schemaName);
   await pool.query(`ALTER TABLE "${schemaName}"."${tableName}" ADD COLUMN ${colDDL}`);
 }
 

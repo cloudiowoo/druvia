@@ -28,7 +28,10 @@ import {
   ArrowUp,
   ArrowDown,
   Trash,
+  Edit,
 } from 'lucide-react';
+import { RecordFormDialog } from '@/components/data/RecordFormDialog';
+import { ForeignKeyDetail } from '@/lib/api';
 
 // PostgreSQL 类型 → SVAR 编辑器映射
 // SVAR 支持的编辑器类型: "text" | "combo" | "datepicker" | "richselect"
@@ -129,6 +132,10 @@ export function SvarDataGrid({
   const [orderDir, setOrderDir] = useState<'asc' | 'desc'>('asc');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteRowId, setDeleteRowId] = useState<unknown>(null);
+  const [editingRecord, setEditingRecord] = useState<Record<string, unknown> | null>(null);
+  const [formDialogOpen, setFormDialogOpen] = useState(false);
+  const [formMode, setFormMode] = useState<'create' | 'edit'>('edit');
+  const [foreignKeys, setForeignKeys] = useState<ForeignKeyDetail[]>([]);
 
   const provider = useMemo(
     () => new DruviaDataProvider(schemaName, tableName, primaryKeyColumn),
@@ -150,6 +157,15 @@ export function SvarDataGrid({
   useEffect(() => {
     fetchTableStructure();
   }, [fetchTableStructure]);
+
+  // 加载外键信息
+  useEffect(() => {
+    api.getTableForeignKeys(schemaName, tableName).then(res => {
+      if (res.success && res.data) {
+        setForeignKeys(res.data);
+      }
+    });
+  }, [schemaName, tableName]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -276,54 +292,6 @@ export function SvarDataGrid({
     setPage(1);
   };
 
-  // 新增行 - 使用表结构中的默认值
-  const handleAddRow = async () => {
-    try {
-      // 构建新行数据，跳过有数据库默认值的列（如 id, created_at）
-      const newRowData: Record<string, unknown> = {};
-
-      for (const col of tableStructure) {
-        // 跳过主键列（通常有自动生成的默认值）
-        if (col.primaryKey) continue;
-
-        // 跳过有数据库函数默认值的列（如 now(), gen_random_uuid()）
-        if (col.defaultValue && /\(.*\)/.test(col.defaultValue)) continue;
-
-        const baseType = col.type.split('(')[0].toLowerCase();
-
-        // 对于没有默认值的列，设置合理的初始值
-        if (!col.defaultValue) {
-          if (['varchar', 'text', 'char', 'character varying', 'character'].includes(baseType)) {
-            // 字符串类型：可空设为 null，不可空设为空字符串
-            newRowData[col.name] = col.nullable ? null : '';
-          } else if (['integer', 'bigint', 'smallint', 'numeric', 'decimal'].includes(baseType)) {
-            // 数字类型：可空设为 null，不可空设为 0
-            newRowData[col.name] = col.nullable ? null : 0;
-          } else if (baseType === 'boolean') {
-            // 布尔类型：可空设为 null，不可空设为 false
-            newRowData[col.name] = col.nullable ? null : false;
-          }
-        }
-      }
-
-      // 确保至少有一个字段（后端要求非空 body）
-      if (Object.keys(newRowData).length === 0) {
-        // 如果所有列都有默认值，找第一个非主键列设置 null
-        const firstNonPkCol = tableStructure.find(c => !c.primaryKey);
-        if (firstNonPkCol) {
-          newRowData[firstNonPkCol.name] = null;
-        }
-      }
-
-      const newRow = await provider.handleEvent('add-row', { row: newRowData });
-      if (newRow) {
-        fetchData();
-      }
-    } catch (err) {
-      onError?.(err instanceof Error ? err : new Error('Add failed'));
-    }
-  };
-
   // 删除单行
   const handleDeleteRow = async (id: unknown) => {
     try {
@@ -364,19 +332,37 @@ export function SvarDataGrid({
       {/* 工具栏 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={handleAddRow}>
+          <Button size="sm" onClick={() => {
+            setEditingRecord(null);
+            setFormMode('create');
+            setFormDialogOpen(true);
+          }}>
             <Plus className="h-4 w-4 mr-2" />
             新增行
           </Button>
           {selectedRows.length === 1 && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => confirmDeleteRow(selectedRows[0])}
-            >
-              <Trash className="h-4 w-4 mr-2" />
-              删除
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setEditingRecord(selectedRows[0]);
+                  setFormMode('edit');
+                  setFormDialogOpen(true);
+                }}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                编辑
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => confirmDeleteRow(selectedRows[0])}
+              >
+                <Trash className="h-4 w-4 mr-2" />
+                删除
+              </Button>
+            </>
           )}
           {selectedRows.length > 1 && (
             <Button size="sm" variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
@@ -576,6 +562,27 @@ export function SvarDataGrid({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 记录详情表单弹窗 */}
+      <RecordFormDialog
+        open={formDialogOpen}
+        onOpenChange={setFormDialogOpen}
+        schemaName={schemaName}
+        tableName={tableName}
+        columns={tableStructure}
+        foreignKeys={foreignKeys}
+        record={editingRecord || undefined}
+        mode={formMode}
+        onSave={async (data) => {
+          if (formMode === 'create') {
+            await provider.handleEvent('add-row', { row: data });
+          } else if (editingRecord) {
+            const id = editingRecord[primaryKeyColumn];
+            await provider.handleEvent('update-cell', { id, data });
+          }
+          fetchData();
+        }}
+      />
     </div>
   );
 }

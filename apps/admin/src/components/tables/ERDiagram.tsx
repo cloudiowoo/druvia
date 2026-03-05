@@ -130,14 +130,14 @@ export function ERDiagram({ tables, foreignKeys, onTableClick }: ERDiagramProps)
 
   if (tables.length === 0) {
     return (
-      <div className="h-[500px] border rounded-lg flex items-center justify-center text-muted-foreground">
+      <div className="h-[calc(80vh-120px)] min-h-[400px] border rounded-lg flex items-center justify-center text-muted-foreground">
         暂无数据表，请先创建表
       </div>
     );
   }
 
   return (
-    <div className="h-[500px] border rounded-lg">
+    <div className="h-[calc(80vh-120px)] min-h-[400px] border rounded-lg">
       <ReactFlowProvider>
         <ReactFlow
           nodes={nodes}
