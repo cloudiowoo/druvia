@@ -60,6 +60,16 @@ interface InvokeResult {
   executionId: string;
 }
 
+// Foreign Key Types
+export interface ForeignKeyDetail {
+  constraintName: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+  onDelete: string;
+  onUpdate: string;
+}
+
 export type { EdgeFunction, FunctionSecret, FunctionSchedule, FunctionLog, InvokeResult };
 
 class ApiClient {
@@ -1236,6 +1246,36 @@ class ApiClient {
 
   async deleteSchedule(projectId: string, functionName: string, scheduleId: string): Promise<ApiResponse<void>> {
     return this.request('DELETE', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(functionName)}/schedules/${scheduleId}`);
+  }
+
+  // ============================================
+  // Foreign Keys
+  // ============================================
+
+  async getTableForeignKeys(schemaName: string, tableName: string): Promise<ApiResponse<ForeignKeyDetail[]>> {
+    return this.request('GET', `/api/v1/schemas/${schemaName}/tables/${tableName}/foreign-keys`);
+  }
+
+  async addForeignKey(
+    schemaName: string,
+    tableName: string,
+    config: {
+      column: string;
+      targetTable: string;
+      targetColumn: string;
+      onDelete?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+      onUpdate?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+    }
+  ): Promise<ApiResponse<{ constraintName: string }>> {
+    return this.request('POST', `/api/v1/schemas/${schemaName}/tables/${tableName}/foreign-keys`, config);
+  }
+
+  async dropForeignKey(
+    schemaName: string,
+    tableName: string,
+    constraintName: string
+  ): Promise<ApiResponse<void>> {
+    return this.request('DELETE', `/api/v1/schemas/${schemaName}/tables/${tableName}/foreign-keys/${constraintName}`);
   }
 }
 
