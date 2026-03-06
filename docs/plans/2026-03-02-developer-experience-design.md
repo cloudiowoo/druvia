@@ -753,24 +753,88 @@ const tableSchema = z.object({
 ## M16: MCP 集成（借鉴 InsForge）
 
 ### 概述
-实现 Model Context Protocol 服务器，让 Claude Code 等 AI 工具能直接操作 Druvia
+实现 Model Context Protocol 服务器，让各种 AI 工具能直接操作 Druvia。
+
+### 支持的 AI 工具
+- Claude Code、Cursor、Windsurf、Cline、Kiro
+- GitHub Copilot、Codex、Roo Code
+- Google Antigravity、Gemini CLI
+- 其他支持 MCP 协议的工具
 
 ### 功能设计
 
 | 工具 | 说明 |
 |------|------|
+| fetch_docs | 获取 Druvia 使用文档 |
 | list_tables | 列出所有表 |
 | get_table_schema | 获取表结构 |
 | query_data | 执行 SELECT 查询 |
 | insert_row | 插入数据 |
 | update_row | 更新数据 |
 | create_table | 创建表 |
+| list_buckets | 列出存储桶 |
+| upload_file | 上传文件 |
 
-### 实现方案
+### 实现方案对比
+
+| 方案 | 说明 | 优点 | 缺点 | 复杂度 |
+|------|------|------|------|--------|
+| **A: 独立 npm 包** | `@druvia/mcp` 独立发布 | 解耦、用户 npx 即用 | 需维护独立包 | 中 |
+| **B: 内置 API 端点** | `/api/mcp` 在 Fastify 实现 | 简单、无需额外部署 | 耦合主项目 | 低 |
+| **C: 远程 MCP 服务** | 托管 MCP Server | 用户无需本地运行 | 需云服务支持 | 高 |
+
+**推荐方案 A**：参考 InsForge `@insforge/mcp` 模式
+
+### 架构设计
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AI Coding Assistants                      │
+│  (Claude Code, Cursor, Copilot, Windsurf, Cline, Kiro...)   │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ MCP Protocol (stdio/HTTP)
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│              @druvia/mcp (npm package)                       │
+│  • 本地运行: npx @druvia/mcp                                 │
+│  • 依赖: @modelcontextprotocol/sdk                          │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ REST API (API_KEY + API_BASE_URL)
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Druvia Backend API                         │
+│  /api/v1/tables, /api/v1/sql, /api/v1/storage...            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 认证方式
+- 环境变量：`DRUVIA_API_KEY` + `DRUVIA_API_URL`
+- 支持项目级 API Key（需新增 API Key 管理功能）
+
+### 使用方式
+
+```json
+// .mcp.json 或 claude_desktop_config.json
+{
+  "mcpServers": {
+    "druvia": {
+      "command": "npx",
+      "args": ["-y", "@druvia/mcp@latest"],
+      "env": {
+        "DRUVIA_API_KEY": "your-api-key",
+        "DRUVIA_API_URL": "http://localhost:3001"
+      }
+    }
+  }
+}
+```
+
+### 代码示例
 
 ```typescript
 // packages/mcp-server/src/index.ts
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 
 const server = new McpServer({
   name: 'druvia-mcp',
@@ -778,32 +842,17 @@ const server = new McpServer({
 });
 
 server.tool('list_tables', { schemaName: z.string() }, async ({ schemaName }) => {
-  const tables = await tableService.listTables(schemaName);
+  const tables = await api.listTables(schemaName);
   return { tables };
 });
 
-server.tool('query_data', { schemaName: z.string(), sql: z.string() }, async ({ schemaName, sql }) => {
-  const result = await projectService.executeQuery(schemaName, sql);
+server.tool('query_data', {
+  schemaName: z.string(),
+  sql: z.string()
+}, async ({ schemaName, sql }) => {
+  const result = await api.executeQuery(schemaName, sql);
   return result;
 });
-```
-
-### 使用方式
-
-```json
-// claude_desktop_config.json
-{
-  "mcpServers": {
-    "druvia": {
-      "command": "node",
-      "args": ["packages/mcp-server/dist/index.js"],
-      "env": {
-        "DRUVIA_API_URL": "http://localhost:3001",
-        "DRUVIA_API_KEY": "your-api-key"
-      }
-    }
-  }
-}
 ```
 
 ---
@@ -833,25 +882,32 @@ server.tool('query_data', { schemaName: z.string(), sql: z.string() }, async ({ 
 1. M1: 表数据 CRUD — 集成 SVAR DataGrid + DruviaDataProvider 适配层
 2. M2: 快速建表模板
 
-### Phase 2 (P1) ⏳ 进行中
-3. M3: SQL 编辑器增强 — 语法高亮、自动完成、**多标签**
-4. M4: 数据库导入导出 — SQL 导入导出、**CSV 导入**
+### Phase 2 (P1) ✅ 已完成
+3. M3: SQL 编辑器增强 — 语法高亮、自动完成、多标签
+4. M4: 数据库导入导出 — SQL 导入导出 (CSV 导入移至 Phase 5)
 
-### Phase 3 (P2)
-5. M5: API 测试工具 — 集成 @graphiql/react
-6. M6: 数据生成器 — 集成 @faker-js/faker
-7. M7: 表关系可视化 — 集成 reactflow
-8. 🆕 M11: 外键关系配置
-9. 🆕 M12: 侧边栏表列表
-10. 🆕 M13: JSON 单元格编辑器
+### Phase 3 (P2) ✅ 已完成
+5. M7: 表关系可视化 — 集成 reactflow + dagre 自动布局
+6. M11: 外键关系配置 — 建表/编辑表时配置外键
+7. M12: 侧边栏表列表 — 快速切换表、搜索过滤
+8. M13: JSON 单元格编辑器 — 语法高亮、格式化、弹窗编辑
+9. M14: 记录详情表单 — 字段类型适配、外键下拉
 
-### Phase 4 (P3)
-11. M8: Schema 版本控制 — 集成 pgroll
-12. M9: API 文档生成
-13. M10: 环境管理
-14. 🆕 M14: 记录详情表单
-15. 🆕 M15: 表单验证增强
-16. 🆕 M16: MCP 集成
+### Phase 4 (P2) ✅ 已完成
+10. M17: Authentication 管理界面 — OAuth 配置、用户管理
+11. M18: Storage 管理界面 — Buckets、文件管理、访问控制
+12. M19: Edge Functions — Deno Worker + 管理 UI
+13. M20: Realtime 管理界面 — Hasura Subscriptions 可视化
+
+### Phase 5 (P3) ⏳ 待开发
+14. M4-CSV: CSV 导入 — 列映射、批量导入
+15. M5: API 测试工具 — 集成 @graphiql/react
+16. M9: API 文档生成 — OpenAPI/GraphQL Schema
+17. M6: 数据生成器 — 集成 @faker-js/faker
+18. M16: MCP 集成 — Claude Code 操作 Druvia
+19. M8: Schema 版本控制 — 集成 pgroll
+20. M10: 环境管理
+21. M15: 表单验证增强
 
 ---
 
@@ -871,36 +927,81 @@ server.tool('query_data', { schemaName: z.string(), sql: z.string() }, async ({ 
 - [x] 模板自动填充表名和字段
 - [x] 支持 5 种常用模板
 
-### M3 SQL 编辑器增强
-- [ ] SQL 语法高亮
-- [ ] 表名/字段名自动完成
-- [ ] Cmd/Ctrl + Enter 执行
-- [ ] SQL 格式化
-- [ ] 🆕 多标签支持
+### M3 SQL 编辑器增强 ✅
+- [x] SQL 语法高亮
+- [x] 表名/字段名自动完成
+- [x] Cmd/Ctrl + Enter 执行
+- [x] SQL 格式化
+- [x] 多标签支持
 
-### M4 导入导出
-- [ ] 可导出完整 SQL
-- [ ] 可导出仅结构/仅数据
-- [ ] 可导入 SQL 文件
-- [ ] 导入失败自动回滚
-- [ ] 🆕 CSV 导入支持
+### M4 导入导出 (部分完成)
+- [x] 可导出完整 SQL
+- [x] 可导出仅结构/仅数据
+- [x] 可导入 SQL 文件
+- [x] 导入失败自动回滚
+- [ ] CSV 导入支持 (移至 Phase 5)
 
-### M11 外键关系配置
-- [ ] 可在建表时配置外键
-- [ ] 支持级联规则配置
-- [ ] 数据网格显示外键链接
+### M7 表关系可视化 ✅
+- [x] 自动从外键生成关系图
+- [x] 表节点显示表名和字段
+- [x] 关系线显示外键关联
+- [x] 可拖拽调整布局
+- [x] 可缩放/平移画布
+- [x] 点击表节点跳转到表详情
 
-### M12 侧边栏表列表
-- [ ] 显示表列表
-- [ ] 支持搜索过滤
-- [ ] 快速切换表
+### M11 外键关系配置 ✅
+- [x] 可在建表时配置外键
+- [x] 支持级联规则配置
+- [x] 编辑表时可添加/删除外键
 
-### M13 JSON 单元格编辑器
-- [ ] JSON 语法高亮
-- [ ] 自动格式化
-- [ ] 语法验证
+### M12 侧边栏表列表 ✅
+- [x] 显示表列表
+- [x] 支持搜索过滤
+- [x] 快速切换表
+- [x] 当前表高亮显示
 
-### M16 MCP 集成
+### M13 JSON 单元格编辑器 ✅
+- [x] JSON 语法高亮
+- [x] 自动格式化
+- [x] 语法验证
+- [x] 弹窗编辑器
+
+### M14 记录详情表单 ✅
+- [x] 弹窗表单编辑
+- [x] 字段类型适配
+- [x] 外键下拉选择
+- [x] 表单验证
+
+### M17 Authentication 管理界面 ✅
+- [x] OAuth 提供商配置
+- [x] 项目用户列表
+- [x] 用户详情/禁用
+
+### M18 Storage 管理界面 ✅
+- [x] Buckets 管理
+- [x] 文件上传/下载/删除
+- [x] 公开/私有访问控制
+
+### M19 Edge Functions ✅
+- [x] Deno Worker 容器
+- [x] 函数创建/编辑/部署
+- [x] Secrets 管理
+- [x] 函数调用
+
+### M20 Realtime 管理界面 ✅
+- [x] 订阅管理
+- [x] 事件日志
+- [x] 测试订阅
+
+### M5 API 测试工具 (待开发)
+- [ ] GraphQL Playground
+- [ ] REST 测试客户端
+
+### M6 数据生成器 (待开发)
+- [ ] Faker 测试数据生成
+- [ ] 字段类型智能映射
+
+### M16 MCP 集成 (待开发)
 - [ ] 实现 MCP Server
 - [ ] 支持表操作工具
 - [ ] 支持数据查询工具
@@ -908,5 +1009,5 @@ server.tool('query_data', { schemaName: z.string(), sql: z.string() }, async ({ 
 ---
 
 **创建日期**: 2026-03-02
-**更新日期**: 2026-03-02
-**状态**: Phase 2 进行中
+**更新日期**: 2026-03-06
+**状态**: Phase 1-4 已完成，Phase 5 待开发

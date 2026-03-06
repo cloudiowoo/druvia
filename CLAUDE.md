@@ -71,10 +71,13 @@ druvia/
 - **BigInt 返回字符串**：用 `Number()` 或 `parseInt()` 转换
 - **动态 SQL 标识符**：使用 `pg-format`（`%I` 标识符，`%L` 字面值）
 - **命名规则**：表 `druvia_*` snake_case，TS 接口 camelCase
+- **外键引用需 schema 前缀**：`REFERENCES "schema"."table"("column")` 而非 `REFERENCES "table"("column")`
 
 ### 前端
 - **CodeMirror 快捷键**：自定义 keymap 用 `Prec.highest()` 包装
 - **状态同步**：登录/登出时同步 `useAuth.user` → `useAppStore.currentUser`
+- **Radix Select 空值**：`<Select.Item />` value 不能为空字符串，用 `__NULL__` 常量代替
+- **JSON.stringify(undefined)**：返回 `undefined` 不是字符串，需先检查再调用 `.length`
 
 ### 构建
 - **顺序**：`pnpm --filter @druvia/shared build` 必须先于 API
@@ -111,4 +114,4 @@ druvia/
 
 ---
 
-*Last Updated: 2026-03-04*
+*Last Updated: 2026-03-06*
