@@ -899,15 +899,20 @@ server.tool('query_data', {
 12. M19: Edge Functions — Deno Worker + 管理 UI
 13. M20: Realtime 管理界面 — Hasura Subscriptions 可视化
 
-### Phase 5 (P3) ⏳ 待开发
+### Phase 5 P1 ✅ 已完成
 14. M4-CSV: CSV 导入 — 列映射、批量导入
 15. M5: API 测试工具 — 集成 @graphiql/react
 16. M9: API 文档生成 — OpenAPI/GraphQL Schema
+
+### Phase 5 P2 ⏳ 待开发
 17. M6: 数据生成器 — 集成 @faker-js/faker
-18. M16: MCP 集成 — Claude Code 操作 Druvia
-19. M8: Schema 版本控制 — 集成 pgroll
-20. M10: 环境管理
-21. M15: 表单验证增强
+18. M15: 表单验证增强 — zod + react-hook-form
+19. M21: 单租户模式重构 — 默认单租户→多项目，保留多租户逻辑结构
+20. M16: MCP 集成 — Claude Code 操作 Druvia
+21. M10: 环境管理
+
+### 后续考虑 (上线后)
+- M8: Schema 版本控制 — 集成 pgroll
 
 ---
 
@@ -1009,5 +1014,5 @@ server.tool('query_data', {
 ---
 
 **创建日期**: 2026-03-02
-**更新日期**: 2026-03-06
+**更新日期**: 2026-03-07
 **状态**: Phase 1-4 已完成，Phase 5 待开发
