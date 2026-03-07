@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import * as controller from './table.controller.js';
-import { authenticate } from '../../middleware/auth.js';
+import { authenticate, verifySchemaAccess } from '../../middleware/auth.js';
+import { importRoutes } from './import.routes.js';
 
 export async function tableRoutes(app: FastifyInstance) {
-  // All table routes require authentication
+  // All table routes require authentication and schema access verification
   app.addHook('preHandler', authenticate);
+  app.addHook('preHandler', verifySchemaAccess);
 
   // Get schema metadata (for SQL editor autocomplete)
   app.get('/schemas/:schemaName/metadata', controller.getSchemaMetadata as never);
@@ -47,4 +49,13 @@ export async function tableRoutes(app: FastifyInstance) {
 
   // Drop foreign key
   app.delete('/schemas/:schemaName/tables/:tableName/foreign-keys/:constraintName', controller.dropForeignKey as never);
+
+  // Track all tables in Hasura (for GraphQL access)
+  app.post('/schemas/:schemaName/hasura/track-all', controller.trackAllTablesInHasura as never);
+
+  // Track single table in Hasura
+  app.post('/schemas/:schemaName/tables/:tableName/hasura/track', controller.trackTableInHasura as never);
+
+  // Register import routes
+  app.register(importRoutes, { prefix: '/schemas' });
 }

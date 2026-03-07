@@ -14,3 +14,18 @@ export async function checkProjectAccess(userId: string, projectId: string): Pro
   );
   return result?.exists || false;
 }
+
+export async function checkSchemaAccess(userId: string, schemaName: string): Promise<boolean> {
+  // 检查用户是否有权访问该 schema（通过 schema 名称查找项目，再验证所有权）
+  const result = await queryOne<{ exists: boolean }>(
+    `SELECT EXISTS(
+      SELECT 1 FROM druvia_projects p
+      JOIN druvia_tenants t ON t.tenant_id = p.tenant_id
+      WHERE p.schema_name = $1 AND t.owner_uid = (
+        SELECT id FROM druvia_users WHERE user_id = $2
+      )
+    ) as exists`,
+    [schemaName, userId]
+  );
+  return result?.exists || false;
+}

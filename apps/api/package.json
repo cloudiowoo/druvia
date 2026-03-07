@@ -21,7 +21,8 @@
     "ioredis": "^5.9.3",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.11.0",
-    "pg-format": "^1.0.4"
+    "pg-format": "^1.0.4",
+    "yaml": "^2.8.2"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",

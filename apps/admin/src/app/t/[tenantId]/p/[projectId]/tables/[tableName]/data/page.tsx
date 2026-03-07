@@ -10,7 +10,7 @@ import { SvarDataGrid } from '@/components/SvarDataGrid';
 import { TableSidebar } from '@/components/tables/TableSidebar';
 import { Button } from '@/components/ui/button';
 import { Breadcrumb } from '@/components/Breadcrumb';
-import { ArrowLeft, Download } from 'lucide-react';
+import { ArrowLeft, Download, Upload } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
+import { CsvImportDialog } from '@/components/data/CsvImportDialog';
 
 export default function DataBrowserPage() {
   const params = useParams();
@@ -27,8 +28,11 @@ export default function DataBrowserPage() {
   const { currentProject } = useAppStore();
   const { toast } = useToast();
   const [exporting, setExporting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [columns, setColumns] = useState<Array<{ name: string; type: string }>>([]);
   const [tables, setTables] = useState<Array<{ tableName: string; rowCount: number }>>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [gridKey, setGridKey] = useState(Date.now()); // Key to force grid refresh
 
   // 加载表列表
   useEffect(() => {
@@ -40,6 +44,17 @@ export default function DataBrowserPage() {
       });
     }
   }, [currentProject?.schemaName]);
+
+  // 加载表结构（用于 CSV 导入列映射）
+  useEffect(() => {
+    if (currentProject?.schemaName && tableName) {
+      api.getTableStructure(currentProject.schemaName, tableName).then(res => {
+        if (res.success && res.data) {
+          setColumns(res.data.columns.map(c => ({ name: c.name, type: c.type })));
+        }
+      });
+    }
+  }, [currentProject?.schemaName, tableName]);
 
   const handleExport = async (format: 'csv' | 'json') => {
     if (!currentProject?.schemaName) return;
@@ -105,6 +120,10 @@ export default function DataBrowserPage() {
               <h1 className="text-2xl font-bold">数据浏览</h1>
             </div>
             <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+                <Upload className="h-4 w-4 mr-2" />
+                导入 CSV
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" disabled={exporting}>
@@ -125,11 +144,27 @@ export default function DataBrowserPage() {
           </div>
 
           <SvarDataGrid
+            key={gridKey}
             schemaName={currentProject.schemaName}
             tableName={tableName}
             primaryKeyColumn="id"
             pageSize={50}
             onError={handleError}
+          />
+
+          <CsvImportDialog
+            open={importOpen}
+            onOpenChange={setImportOpen}
+            schemaName={currentProject.schemaName}
+            tableName={tableName}
+            columns={columns}
+            onSuccess={() => {
+              setGridKey(Date.now()); // Refresh grid after import
+              toast({
+                title: '导入成功',
+                description: '数据已成功导入',
+              });
+            }}
           />
         </div>
       </div>

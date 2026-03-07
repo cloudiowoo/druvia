@@ -55,7 +55,7 @@ interface HasuraTable {
   }>;
 }
 
-async function hasuraMetadataRequest<T = unknown>(
+export async function hasuraMetadataRequest<T = unknown>(
   type: string,
   args: Record<string, unknown>
 ): Promise<T> {

@@ -340,3 +340,48 @@ export async function dropForeignKey(
     });
   }
 }
+
+// Track all tables in Hasura
+export async function trackAllTablesInHasura(
+  request: FastifyRequest<{ Params: SchemaParams }>,
+  reply: FastifyReply
+) {
+  const { schemaName } = request.params;
+
+  try {
+    const result = await tableService.trackAllTablesInHasura(schemaName);
+    return reply.send({
+      success: true,
+      data: result,
+      message: `Tracked ${result.tracked.length} tables, ${result.failed.length} failed`,
+    });
+  } catch (error) {
+    const err = error as Error;
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'TRACK_FAILED', message: err.message },
+    });
+  }
+}
+
+// Track single table in Hasura
+export async function trackTableInHasura(
+  request: FastifyRequest<{ Params: TableParams }>,
+  reply: FastifyReply
+) {
+  const { schemaName, tableName } = request.params;
+
+  try {
+    await tableService.trackTableInHasura(schemaName, tableName);
+    return reply.send({
+      success: true,
+      message: `Table ${tableName} tracked in Hasura`,
+    });
+  } catch (error) {
+    const err = error as Error;
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'TRACK_FAILED', message: err.message },
+    });
+  }
+}

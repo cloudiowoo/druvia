@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/index.js';
+import { checkSchemaAccess } from '../lib/access.js';
 
 // JWT Payload 类型
 export interface JwtPayload {
@@ -79,6 +80,40 @@ export async function optionalAuth(
     request.user = verifyToken(token);
   } catch {
     // 忽略无效 token，继续处理请求
+  }
+}
+
+// Schema 访问验证中间件 - 验证用户是否有权访问指定 schema
+// 用于 /schemas/:schema/* 或 /schemas/:schemaName/* 路由
+export async function verifySchemaAccess(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  const userId = request.user?.userId;
+  if (!userId) {
+    return reply.status(401).send({
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+    });
+  }
+
+  // 支持 :schema 和 :schemaName 两种参数名
+  const params = request.params as { schema?: string; schemaName?: string };
+  const schemaName = params.schema || params.schemaName;
+
+  if (!schemaName) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'BAD_REQUEST', message: 'Schema name is required' },
+    });
+  }
+
+  const hasAccess = await checkSchemaAccess(userId, schemaName);
+  if (!hasAccess) {
+    return reply.status(403).send({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Access denied to this schema' },
+    });
   }
 }
 

@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import * as controller from './data.controller.js';
-import { authenticate } from '../../middleware/auth.js';
+import { authenticate, verifySchemaAccess } from '../../middleware/auth.js';
 
 export async function dataRoutes(app: FastifyInstance) {
-  // All data routes require authentication
+  // All data routes require authentication and schema access verification
   app.addHook('preHandler', authenticate);
+  app.addHook('preHandler', verifySchemaAccess);
 
   // List rows with pagination, sorting, and filtering
   app.get('/schemas/:schema/tables/:table/rows', controller.listRows as never);

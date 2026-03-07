@@ -3,10 +3,28 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Copy, Check, Eye, EyeOff, Database, RefreshCw, Trash2, Plus } from 'lucide-react';
+
+// Dynamic imports to avoid SSR issues with these components
+const GraphQLPlayground = dynamic(
+  () => import('./components/GraphQLPlayground').then(mod => ({ default: mod.GraphQLPlayground })),
+  { ssr: false, loading: () => <div className="flex items-center justify-center h-96">加载中...</div> }
+);
+
+const RestClient = dynamic(
+  () => import('./components/RestClient').then(mod => ({ default: mod.RestClient })),
+  { ssr: false, loading: () => <div className="flex items-center justify-center h-96">加载中...</div> }
+);
+
+const ApiDocumentation = dynamic(
+  () => import('./components/ApiDocumentation').then(mod => ({ default: mod.ApiDocumentation })),
+  { ssr: false, loading: () => <div className="flex items-center justify-center h-96">加载中...</div> }
+);
 
 const HASURA_URL = process.env.NEXT_PUBLIC_HASURA_URL || 'http://localhost:8080';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -50,6 +68,9 @@ export default function ProjectApiPage() {
   const restEndpoint = currentProject?.schemaName
     ? `${API_URL}/api/v1/schemas/${currentProject.schemaName}`
     : `${API_URL}/api/v1/schemas/<schema>`;
+
+  // Hasura URL for GraphQL playground (credentials handled server-side via proxy)
+  const hasuraUrl = HASURA_URL;
 
   useEffect(() => {
     const loadDbInfo = async () => {
@@ -167,7 +188,7 @@ export default function ProjectApiPage() {
         <span className="text-gray-900">API</span>
       </nav>
 
-      <h1 className="text-2xl font-bold mb-6">API 配置</h1>
+      <h1 className="text-2xl font-bold mb-6">API</h1>
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
@@ -175,155 +196,176 @@ export default function ProjectApiPage() {
         </div>
       )}
 
-      <div className="space-y-6">
-        {/* GraphQL 端点 */}
-        <div className="bg-white rounded-lg border p-6">
-          <h2 className="text-lg font-semibold mb-4">GraphQL 端点</h2>
-          <div className="flex items-center gap-2 bg-gray-50 p-3 rounded font-mono text-sm">
-            <span className="flex-1 truncate">{graphqlEndpoint}</span>
-            <CopyButton text={graphqlEndpoint} field="graphql" />
-          </div>
-        </div>
+      <Tabs defaultValue="config" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="config">配置</TabsTrigger>
+          <TabsTrigger value="graphql">GraphQL</TabsTrigger>
+          <TabsTrigger value="rest">REST</TabsTrigger>
+          <TabsTrigger value="docs">文档</TabsTrigger>
+        </TabsList>
 
-        {/* REST API 端点 */}
-        <div className="bg-white rounded-lg border p-6">
-          <h2 className="text-lg font-semibold mb-4">REST API 端点</h2>
-          <div className="flex items-center gap-2 bg-gray-50 p-3 rounded font-mono text-sm">
-            <span className="flex-1 truncate">{restEndpoint}</span>
-            <CopyButton text={restEndpoint} field="rest" />
-          </div>
-        </div>
-
-        {/* 数据库直连 */}
-        <div className="bg-white rounded-lg border p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Database className="h-5 w-5 text-blue-600" />
-            <h2 className="text-lg font-semibold">数据库直连</h2>
-          </div>
-
-          {!dbInfo?.hasCredentials ? (
-            <div className="text-center py-8">
-              <Database className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500 mb-4">尚未创建数据库用户</p>
-              <p className="text-sm text-gray-400 mb-6">
-                创建数据库用户后，可使用 DBeaver、Navicat 等工具直接连接数据库
-              </p>
-              <button
-                onClick={handleCreateDbUser}
-                disabled={isLoading}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                <Plus className="h-4 w-4" />
-                {creatingUser ? '创建中...' : '创建数据库用户'}
-              </button>
+        {/* 配置 Tab - 原有内容 */}
+        <TabsContent value="config" className="space-y-6">
+          {/* GraphQL 端点 */}
+          <div className="bg-white rounded-lg border p-6">
+            <h2 className="text-lg font-semibold mb-4">GraphQL 端点</h2>
+            <div className="flex items-center gap-2 bg-gray-50 p-3 rounded font-mono text-sm">
+              <span className="flex-1 truncate">{graphqlEndpoint}</span>
+              <CopyButton text={graphqlEndpoint} field="graphql" />
             </div>
-          ) : (
-            <div className="space-y-4">
-              {/* 连接字符串 */}
-              {connectionString && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">连接字符串</label>
-                  <div className="flex items-center gap-2 bg-gray-50 p-3 rounded font-mono text-xs break-all">
-                    <span className="flex-1">{connectionString}</span>
-                    <CopyButton text={connectionString} field="connStr" />
-                  </div>
-                </div>
-              )}
+          </div>
 
-              {/* 连接信息 */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">主机</label>
-                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
-                    <span className="flex-1">{dbInfo?.host || dbCredentials?.host}</span>
-                    <CopyButton text={dbInfo?.host || dbCredentials?.host || ''} field="host" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">端口</label>
-                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
-                    <span className="flex-1">{dbInfo?.port || dbCredentials?.port}</span>
-                    <CopyButton text={String(dbInfo?.port || dbCredentials?.port || '')} field="port" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">数据库</label>
-                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
-                    <span className="flex-1">{dbInfo?.database || dbCredentials?.database}</span>
-                    <CopyButton text={dbInfo?.database || dbCredentials?.database || ''} field="database" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Schema</label>
-                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
-                    <span className="flex-1">{dbInfo?.schemaName || dbCredentials?.schemaName}</span>
-                    <CopyButton text={dbInfo?.schemaName || dbCredentials?.schemaName || ''} field="schema" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">用户名</label>
-                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
-                    <span className="flex-1">{dbInfo?.username || dbCredentials?.username}</span>
-                    <CopyButton text={dbInfo?.username || dbCredentials?.username || ''} field="username" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">密码</label>
-                  <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
-                    {dbCredentials?.password ? (
-                      <>
-                        <span className="flex-1">
-                          {showDbPassword ? dbCredentials.password : '••••••••••••••••'}
-                        </span>
-                        <button
-                          onClick={() => setShowDbPassword(!showDbPassword)}
-                          className="p-1 hover:bg-gray-100 rounded"
-                        >
-                          {showDbPassword ? <EyeOff className="h-4 w-4 text-gray-500" /> : <Eye className="h-4 w-4 text-gray-500" />}
-                        </button>
-                        <CopyButton text={dbCredentials.password} field="password" />
-                      </>
-                    ) : (
-                      <span className="flex-1 text-gray-400">密码仅在创建或重置时显示一次</span>
-                    )}
-                  </div>
-                </div>
-              </div>
+          {/* REST API 端点 */}
+          <div className="bg-white rounded-lg border p-6">
+            <h2 className="text-lg font-semibold mb-4">REST API 端点</h2>
+            <div className="flex items-center gap-2 bg-gray-50 p-3 rounded font-mono text-sm">
+              <span className="flex-1 truncate">{restEndpoint}</span>
+              <CopyButton text={restEndpoint} field="rest" />
+            </div>
+          </div>
 
-              {/* 操作按钮 */}
-              <div className="flex items-center gap-3 pt-4 border-t">
+          {/* 数据库直连 */}
+          <div className="bg-white rounded-lg border p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Database className="h-5 w-5 text-blue-600" />
+              <h2 className="text-lg font-semibold">数据库直连</h2>
+            </div>
+
+            {!dbInfo?.hasCredentials ? (
+              <div className="text-center py-8">
+                <Database className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500 mb-4">尚未创建数据库用户</p>
+                <p className="text-sm text-gray-400 mb-6">
+                  创建数据库用户后，可使用 DBeaver、Navicat 等工具直接连接数据库
+                </p>
                 <button
-                  onClick={handleResetPassword}
+                  onClick={handleCreateDbUser}
                   disabled={isLoading}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
-                  <RefreshCw className={`h-4 w-4 ${resettingPassword ? 'animate-spin' : ''}`} />
-                  {resettingPassword ? '重置中...' : '重置密码'}
-                </button>
-                <button
-                  onClick={handleDeleteDbUser}
-                  disabled={isLoading}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  {deletingUser ? '删除中...' : '删除用户'}
+                  <Plus className="h-4 w-4" />
+                  {creatingUser ? '创建中...' : '创建数据库用户'}
                 </button>
               </div>
+            ) : (
+              <div className="space-y-4">
+                {connectionString && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">连接字符串</label>
+                    <div className="flex items-center gap-2 bg-gray-50 p-3 rounded font-mono text-xs break-all">
+                      <span className="flex-1">{connectionString}</span>
+                      <CopyButton text={connectionString} field="connStr" />
+                    </div>
+                  </div>
+                )}
 
-              {/* 使用说明 */}
-              <div className="mt-4 p-4 bg-blue-50 rounded-lg text-sm">
-                <h4 className="font-medium text-blue-900 mb-2">连接说明</h4>
-                <ul className="text-blue-800 space-y-1 list-disc list-inside">
-                  <li>使用 DBeaver、Navicat、pgAdmin 等工具连接</li>
-                  <li>数据库用户仅能访问当前项目的 Schema</li>
-                  <li>支持完整的 DDL/DML 操作权限</li>
-                  <li>密码仅在创建或重置时显示一次，请妥善保存</li>
-                </ul>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">主机</label>
+                    <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                      <span className="flex-1">{dbInfo?.host || dbCredentials?.host}</span>
+                      <CopyButton text={dbInfo?.host || dbCredentials?.host || ''} field="host" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">端口</label>
+                    <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                      <span className="flex-1">{dbInfo?.port || dbCredentials?.port}</span>
+                      <CopyButton text={String(dbInfo?.port || dbCredentials?.port || '')} field="port" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">数据库</label>
+                    <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                      <span className="flex-1">{dbInfo?.database || dbCredentials?.database}</span>
+                      <CopyButton text={dbInfo?.database || dbCredentials?.database || ''} field="database" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Schema</label>
+                    <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                      <span className="flex-1">{dbInfo?.schemaName || dbCredentials?.schemaName}</span>
+                      <CopyButton text={dbInfo?.schemaName || dbCredentials?.schemaName || ''} field="schema" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                    <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                      <span className="flex-1">{dbInfo?.username || dbCredentials?.username}</span>
+                      <CopyButton text={dbInfo?.username || dbCredentials?.username || ''} field="username" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                    <div className="flex items-center gap-2 bg-gray-50 p-2 rounded font-mono text-sm">
+                      {dbCredentials?.password ? (
+                        <>
+                          <span className="flex-1">
+                            {showDbPassword ? dbCredentials.password : '••••••••••••••••'}
+                          </span>
+                          <button
+                            onClick={() => setShowDbPassword(!showDbPassword)}
+                            className="p-1 hover:bg-gray-100 rounded"
+                          >
+                            {showDbPassword ? <EyeOff className="h-4 w-4 text-gray-500" /> : <Eye className="h-4 w-4 text-gray-500" />}
+                          </button>
+                          <CopyButton text={dbCredentials.password} field="password" />
+                        </>
+                      ) : (
+                        <span className="flex-1 text-gray-400">密码仅在创建或重置时显示一次</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-4 border-t">
+                  <button
+                    onClick={handleResetPassword}
+                    disabled={isLoading}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${resettingPassword ? 'animate-spin' : ''}`} />
+                    {resettingPassword ? '重置中...' : '重置密码'}
+                  </button>
+                  <button
+                    onClick={handleDeleteDbUser}
+                    disabled={isLoading}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {deletingUser ? '删除中...' : '删除用户'}
+                  </button>
+                </div>
+
+                <div className="mt-4 p-4 bg-blue-50 rounded-lg text-sm">
+                  <h4 className="font-medium text-blue-900 mb-2">连接说明</h4>
+                  <ul className="text-blue-800 space-y-1 list-disc list-inside">
+                    <li>使用 DBeaver、Navicat、pgAdmin 等工具连接</li>
+                    <li>数据库用户仅能访问当前项目的 Schema</li>
+                    <li>支持完整的 DDL/DML 操作权限</li>
+                    <li>密码仅在创建或重置时显示一次，请妥善保存</li>
+                  </ul>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* GraphQL Tab */}
+        <TabsContent value="graphql" className="h-[calc(100vh-220px)] min-h-[500px]">
+          <GraphQLPlayground hasuraUrl={hasuraUrl} projectId={projectId} />
+        </TabsContent>
+
+        {/* REST Tab */}
+        <TabsContent value="rest" className="h-[calc(100vh-220px)] min-h-[500px]">
+          <RestClient openApiUrl={`${API_URL}/api/v1/projects/${projectId}/openapi`} />
+        </TabsContent>
+
+        {/* 文档 Tab */}
+        <TabsContent value="docs" className="h-[calc(100vh-220px)] min-h-[500px]">
+          <ApiDocumentation projectId={projectId} />
+        </TabsContent>
+      </Tabs>
     </DashboardLayout>
   );
 }

@@ -1,4 +1,5 @@
 import { pool, query, queryOne } from '../../db/index.js';
+import { hasuraMetadataRequest } from '../realtime/realtime.service.js';
 
 // Column definition
 export interface ColumnDefinition {
@@ -127,10 +128,106 @@ export async function createTable(schemaName: string, table: TableDefinition): P
   } finally {
     client.release();
   }
+
+  // Track table in Hasura (after DB transaction commits)
+  await trackTableInHasura(schemaName, table.name);
+}
+
+// Track table in Hasura for GraphQL access
+export async function trackTableInHasura(schemaName: string, tableName: string): Promise<void> {
+  try {
+    // 1. Track the table
+    await hasuraMetadataRequest('pg_track_table', {
+      source: 'default',
+      table: { schema: schemaName, name: tableName },
+    });
+  } catch (error) {
+    // Ignore if already tracked
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (!errorMsg.includes('already tracked') && !errorMsg.includes('already exists')) {
+      console.warn(`Failed to track table ${schemaName}.${tableName} in Hasura:`, errorMsg);
+    }
+  }
+
+  try {
+    // 2. Add select permission for 'user' role
+    await hasuraMetadataRequest('pg_create_select_permission', {
+      source: 'default',
+      table: { schema: schemaName, name: tableName },
+      role: 'user',
+      permission: {
+        columns: '*',
+        filter: {},
+        allow_aggregations: true,
+      },
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (!errorMsg.includes('already exists')) {
+      console.warn(`Failed to create select permission for ${schemaName}.${tableName}:`, errorMsg);
+    }
+  }
+
+  try {
+    // 3. Add insert permission for 'user' role
+    await hasuraMetadataRequest('pg_create_insert_permission', {
+      source: 'default',
+      table: { schema: schemaName, name: tableName },
+      role: 'user',
+      permission: {
+        columns: '*',
+        check: {},
+      },
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (!errorMsg.includes('already exists')) {
+      console.warn(`Failed to create insert permission for ${schemaName}.${tableName}:`, errorMsg);
+    }
+  }
+
+  try {
+    // 4. Add update permission for 'user' role
+    await hasuraMetadataRequest('pg_create_update_permission', {
+      source: 'default',
+      table: { schema: schemaName, name: tableName },
+      role: 'user',
+      permission: {
+        columns: '*',
+        filter: {},
+        check: {},
+      },
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (!errorMsg.includes('already exists')) {
+      console.warn(`Failed to create update permission for ${schemaName}.${tableName}:`, errorMsg);
+    }
+  }
+
+  try {
+    // 5. Add delete permission for 'user' role
+    await hasuraMetadataRequest('pg_create_delete_permission', {
+      source: 'default',
+      table: { schema: schemaName, name: tableName },
+      role: 'user',
+      permission: {
+        filter: {},
+      },
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (!errorMsg.includes('already exists')) {
+      console.warn(`Failed to create delete permission for ${schemaName}.${tableName}:`, errorMsg);
+    }
+  }
 }
 
 // Drop table from schema
 export async function dropTable(schemaName: string, tableName: string): Promise<void> {
+  // Untrack from Hasura first (before dropping the table)
+  await untrackTableFromHasura(schemaName, tableName);
+
   const client = await pool.connect();
 
   try {
@@ -151,6 +248,23 @@ export async function dropTable(schemaName: string, tableName: string): Promise<
     throw error;
   } finally {
     client.release();
+  }
+}
+
+// Untrack table from Hasura
+async function untrackTableFromHasura(schemaName: string, tableName: string): Promise<void> {
+  try {
+    await hasuraMetadataRequest('pg_untrack_table', {
+      source: 'default',
+      table: { schema: schemaName, name: tableName },
+      cascade: true,
+    });
+  } catch (error) {
+    // Ignore if not tracked
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (!errorMsg.includes('not tracked') && !errorMsg.includes('does not exist')) {
+      console.warn(`Failed to untrack table ${schemaName}.${tableName} from Hasura:`, errorMsg);
+    }
   }
 }
 
@@ -500,4 +614,26 @@ export async function dropForeignKey(
   await pool.query(
     `ALTER TABLE "${schemaName}"."${tableName}" DROP CONSTRAINT "${constraintName}"`
   );
+}
+
+// Track all existing tables in schema to Hasura
+export async function trackAllTablesInHasura(schemaName: string): Promise<{
+  tracked: string[];
+  failed: string[];
+}> {
+  const tables = await listTables(schemaName);
+  const tracked: string[] = [];
+  const failed: string[] = [];
+
+  for (const table of tables) {
+    try {
+      await trackTableInHasura(schemaName, table.tableName);
+      tracked.push(table.tableName);
+    } catch (error) {
+      console.error(`Failed to track ${table.tableName}:`, error);
+      failed.push(table.tableName);
+    }
+  }
+
+  return { tracked, failed };
 }
