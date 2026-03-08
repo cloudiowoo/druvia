@@ -22,7 +22,7 @@ async function verifyProjectAccess(
   request: FastifyRequest<{ Params: ProjectParams }>,
   reply: FastifyReply
 ): Promise<boolean> {
-  const userId = (request as unknown as { userId?: string }).userId;
+  const userId = request.user?.userId;
   if (!userId) {
     reply.status(401).send({
       success: false,
