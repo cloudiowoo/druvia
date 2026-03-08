@@ -1,13 +1,30 @@
 'use client';
 
-import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { projectNameSchema } from '@/lib/schemas';
+
+// 项目别名验证 schema
+const projectAliasSchema = z.string()
+  .min(3, '别名至少 3 个字符')
+  .max(16, '别名最长 16 个字符')
+  .regex(/^[a-z0-9]+$/, '别名只能包含小写字母和数字');
+
+// 创建项目表单 schema
+const createProjectFormSchema = z.object({
+  name: projectNameSchema,
+  alias: projectAliasSchema,
+});
+
+type CreateProjectFormData = z.infer<typeof createProjectFormSchema>;
 
 export default function NewProjectPage() {
   const params = useParams();
@@ -15,27 +32,29 @@ export default function NewProjectPage() {
   const tenantId = params.tenantId as string;
   const { currentTenant } = useAppStore();
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [form, setForm] = useState({
-    alias: '',
-    name: '',
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    setError,
+  } = useForm<CreateProjectFormData>({
+    resolver: zodResolver(createProjectFormSchema),
+    defaultValues: {
+      name: '',
+      alias: '',
+    },
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
+  const onSubmit = async (data: CreateProjectFormData) => {
     try {
-      const res = await api.createProject(tenantId, form);
+      const res = await api.createProject(tenantId, data);
       if (res.success && res.data) {
         router.push(`/t/${tenantId}/p/${res.data.projectId}`);
       } else {
-        setError(res.error?.message || '创建失败');
+        setError('root', { message: res.error?.message || '创建失败' });
       }
-    } finally {
-      setLoading(false);
+    } catch {
+      setError('root', { message: '创建失败，请重试' });
     }
   };
 
@@ -59,10 +78,10 @@ export default function NewProjectPage() {
 
       <div className="border rounded-lg max-w-xl">
         <div className="p-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            {errors.root && (
               <div className="bg-destructive/10 text-destructive px-4 py-2 rounded-md text-sm">
-                {error}
+                {errors.root.message}
               </div>
             )}
 
@@ -72,11 +91,13 @@ export default function NewProjectPage() {
               </label>
               <Input
                 id="name"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                {...register('name')}
                 placeholder="我的项目"
-                required
+                className={errors.name ? 'border-destructive' : ''}
               />
+              {errors.name && (
+                <p className="text-xs text-destructive">{errors.name.message}</p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -85,27 +106,26 @@ export default function NewProjectPage() {
               </label>
               <Input
                 id="alias"
-                value={form.alias}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    alias: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, ''),
-                  })
-                }
+                {...register('alias', {
+                  onChange: (e) => {
+                    e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '');
+                  },
+                })}
                 placeholder="main"
-                pattern="[a-z0-9]{3,16}"
-                minLength={3}
-                maxLength={16}
-                required
+                className={errors.alias ? 'border-destructive' : ''}
               />
-              <p className="text-xs text-muted-foreground">
-                3-16 个字符，仅限小写字母和数字
-              </p>
+              {errors.alias ? (
+                <p className="text-xs text-destructive">{errors.alias.message}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  3-16 个字符，仅限小写字母和数字
+                </p>
+              )}
             </div>
 
             <div className="flex gap-3 pt-4">
-              <Button type="submit" disabled={loading}>
-                {loading ? '创建中...' : '创建项目'}
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? '创建中...' : '创建项目'}
               </Button>
               <Button type="button" variant="outline" onClick={() => router.back()}>
                 取消

@@ -10,7 +10,7 @@ import { SvarDataGrid } from '@/components/SvarDataGrid';
 import { TableSidebar } from '@/components/tables/TableSidebar';
 import { Button } from '@/components/ui/button';
 import { Breadcrumb } from '@/components/Breadcrumb';
-import { ArrowLeft, Download, Upload } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Wand2 } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import { CsvImportDialog } from '@/components/data/CsvImportDialog';
+import { DataGeneratorDialog } from '@/components/data/DataGeneratorDialog';
 
 export default function DataBrowserPage() {
   const params = useParams();
@@ -29,6 +30,7 @@ export default function DataBrowserPage() {
   const { toast } = useToast();
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [generatorOpen, setGeneratorOpen] = useState(false);
   const [columns, setColumns] = useState<Array<{ name: string; type: string }>>([]);
   const [tables, setTables] = useState<Array<{ tableName: string; rowCount: number }>>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -120,6 +122,10 @@ export default function DataBrowserPage() {
               <h1 className="text-2xl font-bold">数据浏览</h1>
             </div>
             <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setGeneratorOpen(true)}>
+                <Wand2 className="h-4 w-4 mr-2" />
+                生成测试数据
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
                 <Upload className="h-4 w-4 mr-2" />
                 导入 CSV
@@ -163,6 +169,21 @@ export default function DataBrowserPage() {
               toast({
                 title: '导入成功',
                 description: '数据已成功导入',
+              });
+            }}
+          />
+
+          <DataGeneratorDialog
+            open={generatorOpen}
+            onOpenChange={setGeneratorOpen}
+            schemaName={currentProject.schemaName}
+            tableName={tableName}
+            columns={columns}
+            onSuccess={() => {
+              setGridKey(Date.now()); // Refresh grid after generation
+              toast({
+                title: '生成成功',
+                description: '测试数据已成功生成',
               });
             }}
           />

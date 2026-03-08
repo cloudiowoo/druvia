@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useAppStore } from '@/store';
+import { isMultiTenantEnabled, getDefaultTenantId } from '@/lib/tenant-config';
 import {
   LayoutDashboard,
   Building2,
@@ -30,13 +31,32 @@ interface NavItem {
 }
 
 // Global navigation (no tenant context)
-const globalNav: NavItem[] = [
-  { href: '/dashboard', label: '仪表板', icon: <LayoutDashboard className="h-4 w-4" /> },
-  { href: '/tenants', label: '租户管理', icon: <Building2 className="h-4 w-4" /> },
-  { href: '/users', label: '用户管理', icon: <Users className="h-4 w-4" /> },
-  { href: '/backups', label: '备份管理', icon: <HardDrive className="h-4 w-4" /> },
-  { href: '/settings', label: '设置', icon: <Settings className="h-4 w-4" /> },
-];
+// In single-tenant mode, hide tenant management and redirect dashboard to default tenant
+const getGlobalNav = (): NavItem[] => {
+  const multiTenant = isMultiTenantEnabled();
+  const defaultTenant = getDefaultTenantId();
+
+  const nav: NavItem[] = [
+    {
+      href: multiTenant ? '/dashboard' : `/t/${defaultTenant}`,
+      label: '仪表板',
+      icon: <LayoutDashboard className="h-4 w-4" />
+    },
+  ];
+
+  // Only show tenant management in multi-tenant mode
+  if (multiTenant) {
+    nav.push({ href: '/tenants', label: '租户管理', icon: <Building2 className="h-4 w-4" /> });
+  }
+
+  nav.push(
+    { href: '/users', label: '用户管理', icon: <Users className="h-4 w-4" /> },
+    { href: '/backups', label: '备份管理', icon: <HardDrive className="h-4 w-4" /> },
+    { href: '/settings', label: '设置', icon: <Settings className="h-4 w-4" /> },
+  );
+
+  return nav;
+};
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -75,18 +95,21 @@ export function Sidebar() {
   let contextSubtitle: string | null = null;
   let backHref: string | null = null;
 
+  const multiTenant = isMultiTenantEnabled();
+
   if (projectId && tenantId) {
     navItems = getProjectNav(tenantId, projectId);
     contextTitle = currentProject?.name || '项目';
-    contextSubtitle = currentTenant?.name ?? null;
+    contextSubtitle = multiTenant ? (currentTenant?.name ?? null) : null;
     backHref = `/t/${tenantId}`;
   } else if (tenantId) {
     navItems = getTenantNav(tenantId);
-    contextTitle = currentTenant?.name || '租户';
-    contextSubtitle = currentTenant?.alias ?? null;
-    backHref = '/tenants';
+    contextTitle = multiTenant ? (currentTenant?.name || '租户') : 'Druvia';
+    contextSubtitle = multiTenant ? (currentTenant?.alias ?? null) : null;
+    // In single-tenant mode, don't show back button from tenant view
+    backHref = multiTenant ? '/tenants' : null;
   } else {
-    navItems = globalNav;
+    navItems = getGlobalNav();
   }
 
   const handleBack = () => {

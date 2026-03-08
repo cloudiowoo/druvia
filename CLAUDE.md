@@ -73,6 +73,9 @@ druvia/
 - **命名规则**：表 `druvia_*` snake_case，TS 接口 camelCase
 - **外键引用需 schema 前缀**：`REFERENCES "schema"."table"("column")` 而非 `REFERENCES "table"("column")`
 - **Hasura 表追踪**：创建表后需调用 `trackTableInHasura()` 才能在 GraphQL 中使用
+- **Schema 克隆外键问题**：`CREATE TABLE ... LIKE ... INCLUDING ALL` 会复制外键但不更新 schema 引用，需手动重建
+- **迁移文件编号**：新建前先 `ls migrations/*.sql` 检查现有编号，避免冲突
+- **druvia_users 表结构**：用 `username` 而非 `name`，必须提供 `user_id`
 
 ### 前端
 - **CodeMirror 快捷键**：自定义 keymap 用 `Prec.highest()` 包装
@@ -81,6 +84,8 @@ druvia/
 - **JSON.stringify(undefined)**：返回 `undefined` 不是字符串，需先检查再调用 `.length`
 - **GraphiQL CSS**：必须导入 `graphiql/style.css`（含 CSS 变量），非 `graphiql/graphiql.css`
 - **GraphiQL Monaco**：需先 `import('graphiql/setup-workers/webpack')` 再导入 GraphiQL，否则 `toUrl` 错误
+- **Zod 验证错误**：使用 `.issues` 而非 `.errors` 获取验证错误列表
+- **useEffect 依赖数组**：Zustand setter 函数（如 `setCurrentEnv`）放入依赖会导致无限循环，需排除并加 eslint-disable 注释
 
 ### 构建
 - **顺序**：`pnpm --filter @druvia/shared build` 必须先于 API
@@ -117,4 +122,4 @@ druvia/
 
 ---
 
-*Last Updated: 2026-03-07*
+*Last Updated: 2026-03-08*

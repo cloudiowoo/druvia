@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
+import { isMultiTenantEnabled, getDefaultTenantId } from '@/lib/tenant-config';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,7 +18,13 @@ export default function LoginPage() {
 
     const success = await login(email, password);
     if (success) {
-      router.push('/dashboard');
+      // In single-tenant mode, go directly to default tenant dashboard
+      // In multi-tenant mode, go to tenant selection page
+      if (isMultiTenantEnabled()) {
+        router.push('/tenants');
+      } else {
+        router.push(`/t/${getDefaultTenantId()}`);
+      }
     } else {
       setError('邮箱或密码错误');
     }

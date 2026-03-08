@@ -44,6 +44,7 @@ import { Plus, Trash2, MoreHorizontal, Save, ArrowLeft, Key, Database } from 'lu
 import { Breadcrumb } from '@/components/Breadcrumb';
 import { ForeignKeyPopover } from '@/components/tables/ForeignKeyPopover';
 import { useToast } from '@/hooks/use-toast';
+import { columnNameSchema } from '@/lib/schemas';
 
 interface Column {
   name: string;
@@ -86,6 +87,29 @@ export default function TableStructurePage() {
   const [saving, setSaving] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [columnErrors, setColumnErrors] = useState<Record<number, string>>({});
+
+  // 验证列名
+  const validateColumnName = (index: number, name: string) => {
+    if (!name) {
+      setColumnErrors(prev => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+      return;
+    }
+    const result = columnNameSchema.safeParse(name);
+    if (!result.success) {
+      setColumnErrors(prev => ({ ...prev, [index]: result.error.issues[0].message }));
+    } else {
+      setColumnErrors(prev => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+    }
+  };
 
   // 加载表结构和外键
   useEffect(() => {
@@ -315,19 +339,30 @@ export default function TableStructurePage() {
                   return (
                   <TableRow key={index} className={column.isNew ? 'bg-green-50 dark:bg-green-950' : column.isModified ? 'bg-yellow-50 dark:bg-yellow-950' : ''}>
                     <TableCell>
-                      <div className="flex items-center gap-2">
-                        {column.primaryKey && (
-                          <Key className="h-4 w-4 text-amber-500" />
-                        )}
-                        <Input
-                          value={column.name}
-                          onChange={(e) => updateColumn(index, 'name', e.target.value)}
-                          placeholder="column_name"
-                          className="font-mono"
-                          disabled={!column.isNew && column.primaryKey}
-                        />
-                        {column.isNew && (
-                          <Badge variant="outline" className="text-green-600">新</Badge>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          {column.primaryKey && (
+                            <Key className="h-4 w-4 text-amber-500" />
+                          )}
+                          <Input
+                            value={column.name}
+                            onChange={(e) => {
+                              const value = e.target.value.toLowerCase();
+                              updateColumn(index, 'name', value);
+                              if (column.isNew) {
+                                validateColumnName(index, value);
+                              }
+                            }}
+                            placeholder="column_name"
+                            className={`font-mono ${columnErrors[index] ? 'border-destructive' : ''}`}
+                            disabled={!column.isNew && column.primaryKey}
+                          />
+                          {column.isNew && (
+                            <Badge variant="outline" className="text-green-600">新</Badge>
+                          )}
+                        </div>
+                        {columnErrors[index] && (
+                          <p className="text-xs text-destructive">{columnErrors[index]}</p>
                         )}
                       </div>
                     </TableCell>

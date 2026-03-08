@@ -20,6 +20,8 @@ import { realtimeRoutes } from './modules/realtime/realtime.routes.js';
 import { sqlRoutes } from './modules/sql/sql.routes.js';
 import { functionsRoutes } from './modules/functions/functions.routes.js';
 import { openapiRoutes } from './modules/openapi/openapi.routes.js';
+import { apiKeysRoutes } from './modules/api-keys/api-keys.routes.js';
+import { environmentRoutes } from './modules/environment/environment.routes.js';
 
 const app = Fastify({
   logger: true,
@@ -67,6 +69,8 @@ app.register(realtimeRoutes, { prefix: '/api/v1' });
 app.register(sqlRoutes, { prefix: '/api/v1' });
 app.register(functionsRoutes, { prefix: '/api/v1' });
 app.register(openapiRoutes, { prefix: '/api/v1' });
+app.register(apiKeysRoutes, { prefix: '/api/v1' });
+app.register(environmentRoutes, { prefix: '/api/v1' });
 
 async function start() {
   try {

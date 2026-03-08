@@ -22,6 +22,7 @@ import {
 import { Plus, Trash2, FileText, LayoutTemplate } from 'lucide-react';
 import { api } from '@/lib/api';
 import { TABLE_TEMPLATES } from '@/lib/table-templates';
+import { tableNameSchema, columnNameSchema } from '@/lib/schemas';
 import { ForeignKeyPopover } from '@/components/tables/ForeignKeyPopover';
 
 interface Column {
@@ -69,6 +70,8 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
   const [error, setError] = useState<string | null>(null);
   const [createMode, setCreateMode] = useState<'blank' | 'template'>('blank');
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [tableNameError, setTableNameError] = useState<string | null>(null);
+  const [columnErrors, setColumnErrors] = useState<Record<number, string>>({});
 
   const resetForm = () => {
     setTableName('');
@@ -76,6 +79,42 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
     setError(null);
     setCreateMode('blank');
     setSelectedTemplate(null);
+    setTableNameError(null);
+    setColumnErrors({});
+  };
+
+  const validateTableName = (name: string) => {
+    if (!name) {
+      setTableNameError(null);
+      return;
+    }
+    const result = tableNameSchema.safeParse(name);
+    if (!result.success) {
+      setTableNameError(result.error.issues[0].message);
+    } else {
+      setTableNameError(null);
+    }
+  };
+
+  const validateColumnName = (index: number, name: string) => {
+    if (!name) {
+      setColumnErrors(prev => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+      return;
+    }
+    const result = columnNameSchema.safeParse(name);
+    if (!result.success) {
+      setColumnErrors(prev => ({ ...prev, [index]: result.error.issues[0].message }));
+    } else {
+      setColumnErrors(prev => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+    }
   };
 
   const applyTemplate = (templateId: string) => {
@@ -105,13 +144,10 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
   };
 
   const handleCreate = async () => {
-    if (!tableName.trim()) {
-      setError('请输入表名');
-      return;
-    }
-
-    if (!/^[a-z][a-z0-9_]*$/.test(tableName)) {
-      setError('表名必须以小写字母开头，只能包含小写字母、数字和下划线');
+    // 使用 zod 验证表名
+    const tableNameResult = tableNameSchema.safeParse(tableName);
+    if (!tableNameResult.success) {
+      setError(tableNameResult.error.issues[0].message);
       return;
     }
 
@@ -119,6 +155,15 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
     if (validColumns.length === 0) {
       setError('至少需要一个字段');
       return;
+    }
+
+    // 验证所有列名
+    for (let i = 0; i < validColumns.length; i++) {
+      const colResult = columnNameSchema.safeParse(validColumns[i].name);
+      if (!colResult.success) {
+        setError(`字段 "${validColumns[i].name}": ${colResult.error.issues[0].message}`);
+        return;
+      }
     }
 
     setCreating(true);
@@ -217,13 +262,21 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
             <label className="text-sm font-medium mb-2 block">表名</label>
             <Input
               value={tableName}
-              onChange={(e) => setTableName(e.target.value.toLowerCase())}
+              onChange={(e) => {
+                const value = e.target.value.toLowerCase();
+                setTableName(value);
+                validateTableName(value);
+              }}
               placeholder="my_table"
-              className="font-mono"
+              className={`font-mono ${tableNameError ? 'border-destructive' : ''}`}
             />
-            <p className="text-xs text-muted-foreground mt-1">
-              小写字母开头，只能包含小写字母、数字和下划线
-            </p>
+            {tableNameError ? (
+              <p className="text-xs text-destructive mt-1">{tableNameError}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-1">
+                小写字母开头，只能包含小写字母、数字和下划线
+              </p>
+            )}
           </div>
 
           <div>
@@ -244,12 +297,21 @@ export function CreateTableDialog({ schemaName, onSuccess, trigger }: CreateTabl
                   {columns.map((column, index) => (
                     <tr key={index} className="border-t">
                       <td className="p-2">
-                        <Input
-                          value={column.name}
-                          onChange={(e) => updateColumn(index, 'name', e.target.value.toLowerCase())}
-                          placeholder="column_name"
-                          className="font-mono h-8"
-                        />
+                        <div>
+                          <Input
+                            value={column.name}
+                            onChange={(e) => {
+                              const value = e.target.value.toLowerCase();
+                              updateColumn(index, 'name', value);
+                              validateColumnName(index, value);
+                            }}
+                            placeholder="column_name"
+                            className={`font-mono h-8 ${columnErrors[index] ? 'border-destructive' : ''}`}
+                          />
+                          {columnErrors[index] && (
+                            <p className="text-xs text-destructive mt-1">{columnErrors[index]}</p>
+                          )}
+                        </div>
                       </td>
                       <td className="p-2">
                         <Select

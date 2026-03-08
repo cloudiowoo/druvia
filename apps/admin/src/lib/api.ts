@@ -1277,6 +1277,67 @@ class ApiClient {
   ): Promise<ApiResponse<void>> {
     return this.request('DELETE', `/api/v1/schemas/${schemaName}/tables/${tableName}/foreign-keys/${constraintName}`);
   }
+
+  // ============================================
+  // Environments
+  // ============================================
+
+  async listEnvironments(projectId: string) {
+    return this.request<Array<{
+      id: number;
+      projectId: string;
+      envName: string;
+      schemaName: string;
+      createdAt: string;
+    }>>('GET', `/api/v1/projects/${projectId}/environments`);
+  }
+
+  async createEnvironment(projectId: string, envName: string, cloneData?: boolean) {
+    return this.request<{
+      id: number;
+      projectId: string;
+      envName: string;
+      schemaName: string;
+      createdAt: string;
+    }>('POST', `/api/v1/projects/${projectId}/environments`, { envName, cloneData });
+  }
+
+  async deleteEnvironment(projectId: string, envName: string) {
+    return this.request<void>('DELETE', `/api/v1/projects/${projectId}/environments/${envName}`);
+  }
+
+  // ============================================
+  // API Keys
+  // ============================================
+
+  async listApiKeys(projectId: string) {
+    return this.request<Array<{
+      id: number;
+      projectId: string;
+      keyPrefix: string;
+      name: string | null;
+      createdAt: string;
+      lastUsedAt: string | null;
+    }>>('GET', `/api/v1/projects/${projectId}/api-keys`);
+  }
+
+  async createApiKey(projectId: string, name?: string) {
+    return this.request<{
+      key: string;
+      apiKey: {
+        id: number;
+        projectId: string;
+        keyPrefix: string;
+        name: string | null;
+        createdAt: string;
+        lastUsedAt: string | null;
+      };
+    }>('POST', `/api/v1/projects/${projectId}/api-keys`, { name });
+  }
+
+  async deleteApiKey(projectId: string, keyId: number) {
+    return this.request<void>('DELETE', `/api/v1/projects/${projectId}/api-keys/${keyId}`);
+  }
 }
 
 export const api = new ApiClient();
