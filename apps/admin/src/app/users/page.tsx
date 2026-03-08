@@ -4,6 +4,24 @@ import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { api } from '@/lib/api';
 import { useAppStore } from '@/store';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { toast } from '@/hooks/use-toast';
 
 interface User {
   userId: string;
@@ -46,6 +64,8 @@ export default function UsersPage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState<string | null>(null);
 
   const currentUser = useAppStore((state) => state.currentUser);
   const isSuperAdmin = currentUser?.role === 'super_admin';
@@ -79,12 +99,19 @@ export default function UsersPage() {
   };
 
   const handleDelete = async (userId: string) => {
-    if (!confirm('确定要删除此用户吗？此操作不可恢复。')) return;
+    setDeleteConfirm(userId);
+  };
 
-    const res = await api.deleteUser(userId);
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirm) return;
+    const res = await api.deleteUser(deleteConfirm);
     if (res.success) {
-      setUsers(users.filter(u => u.userId !== userId));
+      setUsers(users.filter(u => u.userId !== deleteConfirm));
+      toast({ title: '用户已删除' });
+    } else {
+      toast({ title: '删除失败', description: res.error?.message, variant: 'destructive' });
     }
+    setDeleteConfirm(null);
   };
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -121,11 +148,18 @@ export default function UsersPage() {
   };
 
   const handleResetPassword = async (userId: string) => {
-    if (!confirm('确定要重置此用户的密码吗？')) return;
-    const res = await api.resetUserPassword(userId);
+    setResetPasswordConfirm(userId);
+  };
+
+  const handleConfirmResetPassword = async () => {
+    if (!resetPasswordConfirm) return;
+    const res = await api.resetUserPassword(resetPasswordConfirm);
     if (res.success && res.data) {
       setTempPassword(res.data.tempPassword);
+    } else {
+      toast({ title: '重置失败', description: res.error?.message, variant: 'destructive' });
     }
+    setResetPasswordConfirm(null);
   };
 
   const openEditDialog = (user: User) => {
@@ -200,158 +234,198 @@ export default function UsersPage() {
         )}
       </div>
 
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除用户</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除此用户吗？此操作不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reset Password Confirmation Dialog */}
+      <AlertDialog open={!!resetPasswordConfirm} onOpenChange={() => setResetPasswordConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认重置密码</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要重置此用户的密码吗？系统将生成一个临时密码。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmResetPassword}>
+              重置密码
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Temp Password Modal */}
-      {tempPassword && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">密码已重置</h3>
+      <Dialog open={!!tempPassword} onOpenChange={() => setTempPassword(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>密码已重置</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
             <p className="text-gray-600 mb-2">临时密码：</p>
             <code className="block bg-gray-100 p-3 rounded text-lg font-mono mb-4">
               {tempPassword}
             </code>
-            <p className="text-sm text-gray-500 mb-4">
+            <p className="text-sm text-gray-500">
               请将此密码发送给用户，用户登录后应立即修改密码。
             </p>
+          </div>
+          <DialogFooter>
             <button
               onClick={() => setTempPassword(null)}
               className="btn btn-primary w-full"
             >
               确定
             </button>
-          </div>
-        </div>
-      )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add User Dialog */}
-      {showAddDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">添加用户</h3>
-            <form onSubmit={handleAddUser}>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">邮箱</label>
-                  <input
-                    type="email"
-                    required
-                    className="input w-full"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">用户名</label>
-                  <input
-                    type="text"
-                    required
-                    className="input w-full"
-                    value={formData.username}
-                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">密码</label>
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    className="input w-full"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">角色</label>
-                  <select
-                    className="input w-full"
-                    value={formData.role}
-                    onChange={(e) => setFormData({ ...formData, role: e.target.value as 'super_admin' | 'admin' })}
-                  >
-                    <option value="admin">管理员</option>
-                    <option value="super_admin">超级管理员</option>
-                  </select>
-                </div>
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>添加用户</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleAddUser}>
+            <div className="space-y-4 py-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">邮箱</label>
+                <input
+                  type="email"
+                  required
+                  className="input w-full"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                />
               </div>
-              <div className="flex gap-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setShowAddDialog(false)}
-                  className="btn flex-1"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="btn btn-primary flex-1"
-                >
-                  {submitting ? '创建中...' : '创建'}
-                </button>
+              <div>
+                <label className="block text-sm font-medium mb-1">用户名</label>
+                <input
+                  type="text"
+                  required
+                  className="input w-full"
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                />
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+              <div>
+                <label className="block text-sm font-medium mb-1">密码</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  className="input w-full"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">角色</label>
+                <select
+                  className="input w-full"
+                  value={formData.role}
+                  onChange={(e) => setFormData({ ...formData, role: e.target.value as 'super_admin' | 'admin' })}
+                >
+                  <option value="admin">管理员</option>
+                  <option value="super_admin">超级管理员</option>
+                </select>
+              </div>
+            </div>
+            <DialogFooter>
+              <button
+                type="button"
+                onClick={() => setShowAddDialog(false)}
+                className="btn"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="btn btn-primary"
+              >
+                {submitting ? '创建中...' : '创建'}
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit User Dialog */}
-      {showEditDialog && editingUser && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">编辑用户</h3>
-            <form onSubmit={handleEditUser}>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">邮箱</label>
-                  <input
-                    type="email"
-                    required
-                    className="input w-full"
-                    value={editFormData.email}
-                    onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">用户名</label>
-                  <input
-                    type="text"
-                    required
-                    className="input w-full"
-                    value={editFormData.username}
-                    onChange={(e) => setEditFormData({ ...editFormData, username: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">角色</label>
-                  <select
-                    className="input w-full"
-                    value={editFormData.role}
-                    onChange={(e) => setEditFormData({ ...editFormData, role: e.target.value as 'super_admin' | 'admin' })}
-                  >
-                    <option value="admin">管理员</option>
-                    <option value="super_admin">超级管理员</option>
-                  </select>
-                </div>
+      <Dialog open={showEditDialog} onOpenChange={(open) => { setShowEditDialog(open); if (!open) setEditingUser(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>编辑用户</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleEditUser}>
+            <div className="space-y-4 py-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">邮箱</label>
+                <input
+                  type="email"
+                  required
+                  className="input w-full"
+                  value={editFormData.email}
+                  onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                />
               </div>
-              <div className="flex gap-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => { setShowEditDialog(false); setEditingUser(null); }}
-                  className="btn flex-1"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="btn btn-primary flex-1"
-                >
-                  {submitting ? '保存中...' : '保存'}
-                </button>
+              <div>
+                <label className="block text-sm font-medium mb-1">用户名</label>
+                <input
+                  type="text"
+                  required
+                  className="input w-full"
+                  value={editFormData.username}
+                  onChange={(e) => setEditFormData({ ...editFormData, username: e.target.value })}
+                />
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+              <div>
+                <label className="block text-sm font-medium mb-1">角色</label>
+                <select
+                  className="input w-full"
+                  value={editFormData.role}
+                  onChange={(e) => setEditFormData({ ...editFormData, role: e.target.value as 'super_admin' | 'admin' })}
+                >
+                  <option value="admin">管理员</option>
+                  <option value="super_admin">超级管理员</option>
+                </select>
+              </div>
+            </div>
+            <DialogFooter>
+              <button
+                type="button"
+                onClick={() => { setShowEditDialog(false); setEditingUser(null); }}
+                className="btn"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="btn btn-primary"
+              >
+                {submitting ? '保存中...' : '保存'}
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <div className="card">
         {loading ? (

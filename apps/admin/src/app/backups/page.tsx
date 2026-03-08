@@ -3,6 +3,17 @@
 import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { api } from '@/lib/api';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { toast } from '@/hooks/use-toast';
 
 interface Backup {
   backupId: string;
@@ -38,6 +49,7 @@ export default function BackupsPage() {
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ backupId: string; input: string } | null>(null);
+  const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchTenants() {
@@ -113,12 +125,19 @@ export default function BackupsPage() {
   };
 
   const handleRestore = async (backupId: string) => {
-    if (!confirm('确定要恢复此备份吗？这将覆盖当前数据。')) return;
-    setRestoring(backupId);
+    setRestoreConfirm(backupId);
+  };
+
+  const handleConfirmRestore = async () => {
+    if (!restoreConfirm) return;
+    setRestoring(restoreConfirm);
+    setRestoreConfirm(null);
     try {
-      const res = await api.restoreBackup(backupId);
+      const res = await api.restoreBackup(restoreConfirm);
       if (res.success) {
-        alert('备份恢复成功');
+        toast({ title: '备份恢复成功' });
+      } else {
+        toast({ title: '恢复失败', description: res.error?.message, variant: 'destructive' });
       }
     } finally {
       setRestoring(null);
@@ -135,6 +154,9 @@ export default function BackupsPage() {
     if (res.success) {
       setBackups(backups.filter(b => b.backupId !== deleteConfirm.backupId));
       setDeleteConfirm(null);
+      toast({ title: '备份已删除' });
+    } else {
+      toast({ title: '删除失败', description: res.error?.message, variant: 'destructive' });
     }
   };
 
@@ -173,42 +195,57 @@ export default function BackupsPage() {
 
   return (
     <DashboardLayout>
+      {/* Restore Confirmation Dialog */}
+      <AlertDialog open={!!restoreConfirm} onOpenChange={() => setRestoreConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认恢复备份</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要恢复此备份吗？这将覆盖当前数据，此操作不可撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmRestore} className="bg-orange-600 text-white hover:bg-orange-700">
+              确认恢复
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Delete Confirmation Dialog */}
-      {deleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4 text-red-600">确认删除备份</h3>
-            <p className="text-gray-600 mb-4">
-              此操作不可恢复。请输入备份 ID 以确认删除：
-            </p>
-            <p className="font-mono text-sm bg-gray-100 p-2 rounded mb-4">
-              {deleteConfirm.backupId}
-            </p>
-            <input
-              type="text"
-              className="input w-full mb-4"
-              placeholder="输入备份 ID"
-              value={deleteConfirm.input}
-              onChange={(e) => setDeleteConfirm({ ...deleteConfirm, input: e.target.value })}
-            />
-            <div className="flex gap-3">
-              <button
-                onClick={() => setDeleteConfirm(null)}
-                className="btn flex-1"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleDelete}
-                disabled={deleteConfirm.input !== deleteConfirm.backupId}
-                className="btn bg-red-600 text-white hover:bg-red-700 flex-1 disabled:opacity-50"
-              >
-                确认删除
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AlertDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-600">确认删除备份</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>
+                <p className="mb-4">此操作不可恢复。请输入备份 ID 以确认删除：</p>
+                <p className="font-mono text-sm bg-gray-100 p-2 rounded mb-4">
+                  {deleteConfirm?.backupId}
+                </p>
+                <input
+                  type="text"
+                  className="input w-full"
+                  placeholder="输入备份 ID"
+                  value={deleteConfirm?.input || ''}
+                  onChange={(e) => deleteConfirm && setDeleteConfirm({ ...deleteConfirm, input: e.target.value })}
+                />
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleteConfirm?.input !== deleteConfirm?.backupId}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+            >
+              确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="flex items-center justify-between mb-8">
         <div>

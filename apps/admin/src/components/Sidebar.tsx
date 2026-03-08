@@ -39,7 +39,7 @@ const getGlobalNav = (): NavItem[] => {
   const nav: NavItem[] = [
     {
       href: multiTenant ? '/dashboard' : `/t/${defaultTenant}`,
-      label: '仪表板',
+      label: multiTenant ? '仪表板' : '首页',
       icon: <LayoutDashboard className="h-4 w-4" />
     },
   ];
@@ -70,12 +70,21 @@ export function Sidebar() {
   const projectId = projectMatch?.[2];
 
   // Build navigation based on context
-  const getTenantNav = (tid: string): NavItem[] => [
-    { href: `/t/${tid}`, label: '概览', icon: <LayoutDashboard className="h-4 w-4" /> },
-    { href: `/t/${tid}/projects`, label: '项目', icon: <FolderKanban className="h-4 w-4" /> },
-    { href: `/t/${tid}/backups`, label: '备份', icon: <HardDrive className="h-4 w-4" /> },
-    { href: `/t/${tid}/settings`, label: '设置', icon: <Settings className="h-4 w-4" /> },
-  ];
+  const getTenantNav = (tid: string): NavItem[] => {
+    const nav: NavItem[] = [
+      { href: `/t/${tid}`, label: '概览', icon: <LayoutDashboard className="h-4 w-4" /> },
+      { href: `/t/${tid}/projects`, label: '项目', icon: <FolderKanban className="h-4 w-4" /> },
+    ];
+    // 单租户模式下添加用户管理
+    if (!isMultiTenantEnabled()) {
+      nav.push({ href: '/users', label: '用户管理', icon: <Users className="h-4 w-4" /> });
+    }
+    nav.push(
+      { href: `/t/${tid}/backups`, label: '备份', icon: <HardDrive className="h-4 w-4" /> },
+      { href: `/t/${tid}/settings`, label: '设置', icon: <Settings className="h-4 w-4" /> },
+    );
+    return nav;
+  };
 
   const getProjectNav = (tid: string, pid: string): NavItem[] => [
     { href: `/t/${tid}/p/${pid}`, label: '概览', icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -96,6 +105,7 @@ export function Sidebar() {
   let backHref: string | null = null;
 
   const multiTenant = isMultiTenantEnabled();
+  const defaultTenant = getDefaultTenantId();
 
   if (projectId && tenantId) {
     navItems = getProjectNav(tenantId, projectId);
@@ -108,6 +118,12 @@ export function Sidebar() {
     contextSubtitle = multiTenant ? (currentTenant?.alias ?? null) : null;
     // In single-tenant mode, don't show back button from tenant view
     backHref = multiTenant ? '/tenants' : null;
+  } else if (!multiTenant) {
+    // 单租户模式下，全局页面也使用租户导航菜单
+    navItems = getTenantNav(defaultTenant);
+    contextTitle = 'Druvia';
+    contextSubtitle = null;
+    backHref = null;
   } else {
     navItems = getGlobalNav();
   }

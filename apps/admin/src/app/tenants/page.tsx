@@ -4,6 +4,17 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { api } from '@/lib/api';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { toast } from '@/hooks/use-toast';
 
 interface Tenant {
   tenantId: string;
@@ -16,6 +27,7 @@ interface Tenant {
 export default function TenantsPage() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchTenants() {
@@ -32,16 +44,41 @@ export default function TenantsPage() {
   }, []);
 
   const handleDelete = async (tenantId: string) => {
-    if (!confirm('确定要删除此租户吗？此操作不可恢复。')) return;
+    setDeleteConfirm(tenantId);
+  };
 
-    const res = await api.deleteTenant(tenantId);
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirm) return;
+    const res = await api.deleteTenant(deleteConfirm);
     if (res.success) {
-      setTenants(tenants.filter((t) => t.tenantId !== tenantId));
+      setTenants(tenants.filter((t) => t.tenantId !== deleteConfirm));
+      toast({ title: '租户已删除' });
+    } else {
+      toast({ title: '删除失败', description: res.error?.message, variant: 'destructive' });
     }
+    setDeleteConfirm(null);
   };
 
   return (
     <DashboardLayout>
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除租户</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除此租户吗？此操作将删除该租户下的所有项目和数据，不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold">租户管理</h1>

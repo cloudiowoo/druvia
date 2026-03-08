@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { isMultiTenantEnabled } from '@/lib/tenant-config';
+import { toast } from '@/hooks/use-toast';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const HASURA_URL = process.env.NEXT_PUBLIC_HASURA_URL || 'http://localhost:8080';
@@ -20,6 +22,7 @@ interface PlatformSettings {
 export default function SettingsPage() {
   const { user } = useAuth();
   const isSuperAdmin = user?.role === 'super_admin';
+  const multiTenant = isMultiTenantEnabled();
 
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,7 +65,9 @@ export default function SettingsPage() {
       const res = await api.updateSettings(settings);
       if (res.success && res.data) {
         setSettings(res.data);
-        alert('设置已保存');
+        toast({ title: '设置已保存' });
+      } else {
+        toast({ title: '保存失败', description: res.error?.message, variant: 'destructive' });
       }
     } finally {
       setSaving(false);
@@ -75,7 +80,9 @@ export default function SettingsPage() {
     try {
       const res = await api.updateProfile(profileData);
       if (res.success) {
-        alert('个人资料已更新');
+        toast({ title: '个人资料已更新' });
+      } else {
+        toast({ title: '更新失败', description: res.error?.message, variant: 'destructive' });
       }
     } finally {
       setSavingProfile(false);
@@ -85,7 +92,7 @@ export default function SettingsPage() {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (passwordData.newPassword !== passwordData.confirmPassword) {
-      alert('两次输入的密码不一致');
+      toast({ title: '两次输入的密码不一致', variant: 'destructive' });
       return;
     }
     setSavingPassword(true);
@@ -95,8 +102,10 @@ export default function SettingsPage() {
         newPassword: passwordData.newPassword,
       });
       if (res.success) {
-        alert('密码已修改');
+        toast({ title: '密码已修改' });
         setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      } else {
+        toast({ title: '修改失败', description: res.error?.message, variant: 'destructive' });
       }
     } finally {
       setSavingPassword(false);
@@ -217,27 +226,29 @@ export default function SettingsPage() {
         {isSuperAdmin && (
           <div className="card lg:col-span-2">
             <div className="card-header">
-              <h2 className="font-semibold">平台设置</h2>
+              <h2 className="font-semibold">{multiTenant ? '平台设置' : '系统设置'}</h2>
             </div>
             {loading ? (
               <div className="card-body text-center text-gray-500">加载中...</div>
             ) : settings ? (
               <div className="card-body">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {multiTenant && (
+                    <div>
+                      <label className="label">默认套餐</label>
+                      <select
+                        className="input w-full"
+                        value={settings.defaultPlan}
+                        onChange={(e) => setSettings({ ...settings, defaultPlan: e.target.value })}
+                      >
+                        <option value="free">免费版</option>
+                        <option value="pro">专业版</option>
+                        <option value="enterprise">企业版</option>
+                      </select>
+                    </div>
+                  )}
                   <div>
-                    <label className="label">默认套餐</label>
-                    <select
-                      className="input w-full"
-                      value={settings.defaultPlan}
-                      onChange={(e) => setSettings({ ...settings, defaultPlan: e.target.value })}
-                    >
-                      <option value="free">免费版</option>
-                      <option value="pro">专业版</option>
-                      <option value="enterprise">企业版</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label">默认存储限制</label>
+                    <label className="label">{multiTenant ? '默认存储限制' : '存储限制'}</label>
                     <div className="flex items-center gap-2">
                       <input
                         type="number"
@@ -248,24 +259,28 @@ export default function SettingsPage() {
                       <span className="text-gray-500">GB</span>
                     </div>
                   </div>
-                  <div>
-                    <label className="label">默认项目数限制</label>
-                    <input
-                      type="number"
-                      className="input w-full"
-                      value={settings.defaultProjectLimit}
-                      onChange={(e) => setSettings({ ...settings, defaultProjectLimit: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div>
-                    <label className="label">默认用户数限制</label>
-                    <input
-                      type="number"
-                      className="input w-full"
-                      value={settings.defaultUserLimit}
-                      onChange={(e) => setSettings({ ...settings, defaultUserLimit: Number(e.target.value) })}
-                    />
-                  </div>
+                  {multiTenant && (
+                    <>
+                      <div>
+                        <label className="label">默认项目数限制</label>
+                        <input
+                          type="number"
+                          className="input w-full"
+                          value={settings.defaultProjectLimit}
+                          onChange={(e) => setSettings({ ...settings, defaultProjectLimit: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">默认用户数限制</label>
+                        <input
+                          type="number"
+                          className="input w-full"
+                          value={settings.defaultUserLimit}
+                          onChange={(e) => setSettings({ ...settings, defaultUserLimit: Number(e.target.value) })}
+                        />
+                      </div>
+                    </>
+                  )}
                   <div>
                     <label className="label">备份保留天数</label>
                     <input
@@ -287,7 +302,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="mt-6">
                   <button onClick={handleSaveSettings} disabled={saving} className="btn btn-primary">
-                    {saving ? '保存中...' : '保存平台设置'}
+                    {saving ? '保存中...' : multiTenant ? '保存平台设置' : '保存系统设置'}
                   </button>
                 </div>
               </div>

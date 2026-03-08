@@ -6,6 +6,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
+import { isMultiTenantEnabled } from '@/lib/tenant-config';
+import { toast } from '@/hooks/use-toast';
 
 interface TenantDetails {
   tenantId: string;
@@ -27,6 +29,7 @@ export default function TenantSettingsPage() {
   const router = useRouter();
   const tenantId = params.tenantId as string;
   const { currentTenant, setCurrentTenant } = useAppStore();
+  const multiTenant = isMultiTenantEnabled();
 
   const [tenant, setTenant] = useState<TenantDetails | null>(null);
   const [usage, setUsage] = useState<TenantUsage | null>(null);
@@ -66,6 +69,9 @@ export default function TenantSettingsPage() {
         if (currentTenant?.tenantId === tenantId) {
           setCurrentTenant({ ...currentTenant, name: res.data.name });
         }
+        toast({ title: '设置已保存' });
+      } else {
+        toast({ title: '保存失败', description: res.error?.message, variant: 'destructive' });
       }
     } finally {
       setSaving(false);
@@ -152,12 +158,12 @@ export default function TenantSettingsPage() {
       <div className="mb-6">
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
           <Link href={`/t/${tenantId}`} className="hover:text-foreground">
-            {currentTenant?.name || tenant.name}
+            {multiTenant ? (currentTenant?.name || tenant.name) : 'Druvia'}
           </Link>
           <span>/</span>
           <span>设置</span>
         </div>
-        <h1 className="text-2xl font-bold">租户设置</h1>
+        <h1 className="text-2xl font-bold">{multiTenant ? '租户设置' : '工作区设置'}</h1>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -284,36 +290,38 @@ export default function TenantSettingsPage() {
           </div>
         </div>
 
-        {/* 危险操作 */}
-        <div className="card lg:col-span-2 border-red-200">
-          <div className="card-header bg-red-50">
-            <h2 className="font-semibold text-red-600">危险操作</h2>
-          </div>
-          <div className="card-body">
-            <p className="text-gray-600 mb-4">
-              删除租户将永久删除所有项目、数据表和备份。此操作不可恢复。
-            </p>
-            <div className="space-y-4">
-              <div>
-                <label className="label">输入租户别名 <span className="font-mono">{tenant.alias}</span> 以确认删除</label>
-                <input
-                  type="text"
-                  className="input w-full max-w-md"
-                  placeholder={tenant.alias}
-                  value={deleteConfirm}
-                  onChange={(e) => setDeleteConfirm(e.target.value)}
-                />
+        {/* 危险操作 - 仅多租户模式显示 */}
+        {multiTenant && (
+          <div className="card lg:col-span-2 border-red-200">
+            <div className="card-header bg-red-50">
+              <h2 className="font-semibold text-red-600">危险操作</h2>
+            </div>
+            <div className="card-body">
+              <p className="text-gray-600 mb-4">
+                删除租户将永久删除所有项目、数据表和备份。此操作不可恢复。
+              </p>
+              <div className="space-y-4">
+                <div>
+                  <label className="label">输入租户别名 <span className="font-mono">{tenant.alias}</span> 以确认删除</label>
+                  <input
+                    type="text"
+                    className="input w-full max-w-md"
+                    placeholder={tenant.alias}
+                    value={deleteConfirm}
+                    onChange={(e) => setDeleteConfirm(e.target.value)}
+                  />
+                </div>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteConfirm !== tenant.alias || deleting}
+                  className="btn bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {deleting ? '删除中...' : '删除租户'}
+                </button>
               </div>
-              <button
-                onClick={handleDelete}
-                disabled={deleteConfirm !== tenant.alias || deleting}
-                className="btn bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-              >
-                {deleting ? '删除中...' : '删除租户'}
-              </button>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </DashboardLayout>
   );
