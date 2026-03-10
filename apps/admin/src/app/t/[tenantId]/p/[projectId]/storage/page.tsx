@@ -233,7 +233,7 @@ export default function StoragePage() {
   };
 
   return (
-    <DashboardLayout>
+    <DashboardLayout isProjectLevel={true}>
       <div className="flex items-center justify-between mb-6">
         <div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
@@ -249,7 +249,10 @@ export default function StoragePage() {
           </div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">文件存储</h1>
-            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-md">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
               项目级别
             </span>
           </div>
