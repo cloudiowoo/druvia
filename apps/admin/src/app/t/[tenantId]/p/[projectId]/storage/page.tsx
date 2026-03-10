@@ -247,7 +247,15 @@ export default function StoragePage() {
             <span>/</span>
             <span>存储</span>
           </div>
-          <h1 className="text-2xl font-bold">文件存储</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">文件存储</h1>
+            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
+              项目级别
+            </span>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">
+            存储桶在所有环境中共享
+          </p>
         </div>
         <Dialog open={createBucketOpen} onOpenChange={setCreateBucketOpen}>
           <DialogTrigger asChild>

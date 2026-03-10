@@ -85,7 +85,10 @@ export default function RealtimePage() {
   const params = useParams();
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
-  const { currentProject, currentTenant } = useAppStore();
+  const { currentProject, currentTenant, currentEnv } = useAppStore();
+
+  // 获取当前环境名称
+  const envName = currentEnv?.envName;
 
   // State
   const [subscriptions, setSubscriptions] = useState<TableSubscription[]>([]);
@@ -107,22 +110,22 @@ export default function RealtimePage() {
 
   // Fetch subscriptions
   const fetchSubscriptions = useCallback(async () => {
-    const res = await api.listRealtimeSubscriptions(projectId);
+    const res = await api.listRealtimeSubscriptions(projectId, envName);
     if (res.success && res.data) {
       setSubscriptions(res.data.subscriptions);
       setStats(res.data.stats);
     }
     setLoading(false);
-  }, [projectId]);
+  }, [projectId, envName]);
 
   // Fetch config
   const fetchConfig = useCallback(async () => {
-    const res = await api.getRealtimeConfig(projectId);
+    const res = await api.getRealtimeConfig(projectId, envName);
     if (res.success && res.data) {
       setConfig(res.data);
     }
     setConfigLoading(false);
-  }, [projectId]);
+  }, [projectId, envName]);
 
   useEffect(() => {
     fetchSubscriptions();
@@ -132,7 +135,7 @@ export default function RealtimePage() {
   // Toggle subscription
   const handleToggleSubscription = async (tableName: string, enabled: boolean) => {
     setUpdatingTable(tableName);
-    const res = await api.configureRealtimeSubscription(projectId, tableName, { enabled });
+    const res = await api.configureRealtimeSubscription(projectId, tableName, { enabled }, envName);
     if (res.success) {
       setSubscriptions((prev) =>
         prev.map((s) => (s.tableName === tableName ? { ...s, enabled } : s))
@@ -148,7 +151,7 @@ export default function RealtimePage() {
   const handleGetExample = async (tableName: string) => {
     setSelectedTable(tableName);
     setExampleLoading(true);
-    const res = await api.getSubscriptionExample(projectId, tableName);
+    const res = await api.getSubscriptionExample(projectId, tableName, undefined, envName);
     if (res.success && res.data) {
       setCodeExamples(res.data);
     }
@@ -196,7 +199,14 @@ export default function RealtimePage() {
             <span>/</span>
             <span>实时订阅</span>
           </div>
-          <h1 className="text-2xl font-bold">Realtime</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">Realtime</h1>
+            {currentEnv && currentEnv.envName !== 'prod' && (
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                {currentEnv.envName}
+              </span>
+            )}
+          </div>
         </div>
         <Button variant="outline" onClick={() => { fetchSubscriptions(); fetchConfig(); }}>
           <RefreshCw className="h-4 w-4 mr-2" />

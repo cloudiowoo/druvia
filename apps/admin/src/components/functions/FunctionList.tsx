@@ -30,7 +30,10 @@ export function FunctionList({
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b">
-        <h2 className="font-semibold text-gray-700">Functions</h2>
+        <div>
+          <h2 className="font-semibold text-gray-700">Functions</h2>
+          <span className="text-xs text-gray-500">项目级别</span>
+        </div>
         <button
           onClick={onCreate}
           className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
