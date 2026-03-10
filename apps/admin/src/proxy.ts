@@ -1,4 +1,4 @@
-// apps/admin/src/middleware.ts
+// apps/admin/src/proxy.ts
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
@@ -6,10 +6,10 @@ import type { NextRequest } from 'next/server';
 const isMultiTenantEnabled = process.env.NEXT_PUBLIC_MULTI_TENANT_ENABLED === 'true';
 const defaultTenantId = process.env.NEXT_PUBLIC_DEFAULT_TENANT_ID || 'default';
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Skip middleware for static files and API routes
+  // Skip proxy for static files and API routes
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||

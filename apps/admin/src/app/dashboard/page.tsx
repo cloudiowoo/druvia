@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { api } from '@/lib/api';
 import {
@@ -320,15 +321,15 @@ export default function DashboardPage() {
           <h2 className="font-semibold">快速操作</h2>
         </div>
         <div className="card-body flex gap-3">
-          <a href="/tenants/new" className="btn btn-primary">
+          <Link href="/tenants/new" className="btn btn-primary">
             创建新租户
-          </a>
-          <a href="/tenants" className="btn btn-secondary">
+          </Link>
+          <Link href="/tenants" className="btn btn-secondary">
             管理租户
-          </a>
-          <a href="/backups" className="btn btn-secondary">
+          </Link>
+          <Link href="/backups" className="btn btn-secondary">
             备份管理
-          </a>
+          </Link>
         </div>
       </div>
     </DashboardLayout>

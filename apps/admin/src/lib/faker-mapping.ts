@@ -1,9 +1,10 @@
 // apps/admin/src/lib/faker-mapping.ts
+import type { Faker } from '@faker-js/faker';
 
 export interface FakerRule {
   type: string;
   label: string;
-  generate: (faker: any) => unknown;
+  generate: (faker: Faker) => unknown;
 }
 
 export const FAKER_RULES: Record<string, FakerRule> = {

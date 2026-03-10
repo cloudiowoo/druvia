@@ -6,6 +6,16 @@ import { useParams, useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface ProjectDetails {
   projectId: string;
@@ -26,8 +36,10 @@ export default function ProjectSettingsPage() {
   const [project, setProject] = useState<ProjectDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const [formData, setFormData] = useState({ name: '' });
 
@@ -46,6 +58,7 @@ export default function ProjectSettingsPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setSaveSuccess(false);
     try {
       const res = await api.updateProject(projectId, { name: formData.name });
       if (res.success && res.data) {
@@ -53,14 +66,20 @@ export default function ProjectSettingsPage() {
         if (currentProject?.projectId === projectId) {
           setCurrentProject({ ...currentProject, name: res.data.name });
         }
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 3000);
       }
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async () => {
+  const handleDeleteClick = () => {
     if (deleteConfirm !== project?.alias) return;
+    setShowDeleteDialog(true);
+  };
+
+  const handleDeleteConfirm = async () => {
     setDeleting(true);
     try {
       const res = await api.deleteProject(projectId);
@@ -69,6 +88,7 @@ export default function ProjectSettingsPage() {
       }
     } finally {
       setDeleting(false);
+      setShowDeleteDialog(false);
     }
   };
 
@@ -149,9 +169,14 @@ export default function ProjectSettingsPage() {
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               />
             </div>
-            <button type="submit" disabled={saving} className="btn btn-primary">
-              {saving ? '保存中...' : '保存'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button type="submit" disabled={saving} className="btn btn-primary">
+                {saving ? '保存中...' : '保存'}
+              </button>
+              {saveSuccess && (
+                <span className="text-green-600 text-sm">保存成功</span>
+              )}
+            </div>
           </form>
         </div>
 
@@ -197,7 +222,7 @@ export default function ProjectSettingsPage() {
                 />
               </div>
               <button
-                onClick={handleDelete}
+                onClick={handleDeleteClick}
                 disabled={deleteConfirm !== project.alias || deleting}
                 className="btn bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
               >
@@ -207,6 +232,27 @@ export default function ProjectSettingsPage() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除项目</AlertDialogTitle>
+            <AlertDialogDescription>
+              您确定要删除项目 <span className="font-semibold">{project.name}</span> 吗？
+              此操作将永久删除所有数据表和备份，且不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleting ? '删除中...' : '确认删除'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 }
