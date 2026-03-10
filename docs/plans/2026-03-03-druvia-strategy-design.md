@@ -9,6 +9,7 @@
 
 ### 相关文档
 
+- [商业化战略文档](./2026-03-10-commercialization-strategy.md) - 商业化方向和差异化定位
 - [开发者体验增强设计](./2026-03-02-developer-experience-design.md) - Phase 1/2 详细设计
 - [Phase 1 实施计划](./2026-03-02-phase1-implementation.md) - ✅ 已完成
 - [Phase 2 综合实施计划](./2026-03-03-phase2-comprehensive-plan.md) - 🆕 MVP 完整实施计划
@@ -137,11 +138,13 @@ services:
 | M1: 表数据 CRUD | ✅ 已完成 | SVAR DataGrid |
 | M2: 快速建表模板 | ✅ 已完成 | 5 种模板 |
 | M3: SQL 编辑器增强 | ✅ 已完成 | 多标签、语法高亮、自动完成 |
+| M4: CSV 导入 | ✅ 已完成 | papaparse + 列映射 |
 | M7: ER 图可视化 | ✅ 已完成 | reactflow + dagre 自动布局 |
 | M11: 外键关系配置 | ✅ 已完成 | 建表/编辑表时配置外键 |
 | M12: 侧边栏表列表 | ✅ 已完成 | 快速切换表、搜索过滤 |
 | M13: JSON 单元格编辑器 | ✅ 已完成 | 语法高亮、格式化、弹窗编辑 |
 | M14: 记录详情表单 | ✅ 已完成 | 字段类型适配、外键下拉 |
+| M16: MCP 集成 | ✅ 已完成 | @druvia/mcp-server + API Key |
 | M17: Authentication 管理界面 | ✅ 已完成 | OAuth 配置、用户管理 |
 | M18: Storage 管理界面 | ✅ 已完成 | Buckets、文件管理、访问控制 |
 | M19: Edge Functions | ✅ 已完成 | Deno Worker + 管理 UI |
@@ -303,9 +306,11 @@ services:
 │ ├── M19: Edge Functions (Deno Worker)                        │
 │ └── M20: Realtime 管理界面                                   │
 ├─────────────────────────────────────────────────────────────┤
-│ Phase 4 (远期):                                              │
+│ Phase 4: 开发者体验 ✅ 已完成                                 │
 │ ├── M4: CSV 导入                                             │
-│ ├── M16: MCP 集成                                            │
+│ └── M16: MCP 集成                                            │
+├─────────────────────────────────────────────────────────────┤
+│ Phase 5 (远期):                                              │
 │ ├── Client SDK (@druvia/sdk)                                 │
 │ └── 多租户企业版                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -321,6 +326,8 @@ services:
 | 4 | M3: SQL 编辑器 | ✅ 已完成 |
 | 5 | M19: Edge Functions | ✅ 已完成 |
 | 6 | M7: ER 图 | ✅ 已完成 |
+| 7 | M4: CSV 导入 | ✅ 已完成 |
+| 8 | M16: MCP 集成 | ✅ 已完成 |
 
 ---
 
@@ -537,6 +544,6 @@ CREATE INDEX idx_storage_objects_created ON druvia_storage_objects(created_at DE
 
 ---
 
-**更新日期**: 2026-03-06
+**更新日期**: 2026-03-10
 **审查状态**: MVP 已完成
-**当前状态**: Phase 1-3 全部完成，进入 Phase 4 远期规划阶段
+**当前状态**: Phase 1-4 全部完成，进入 Phase 5 远期规划阶段
