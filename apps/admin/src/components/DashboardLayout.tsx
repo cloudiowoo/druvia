@@ -39,7 +39,7 @@ function EnvironmentSwitcher({ disabled = false }: EnvironmentSwitcherProps) {
         id: 0,
         projectId: projectId!,
         envName: 'prod',
-        schemaName: currentProject!.schemaName,
+        schemaName: currentProject!.schemaName ?? '',
         createdAt: '',
       };
 
@@ -53,7 +53,7 @@ function EnvironmentSwitcher({ disabled = false }: EnvironmentSwitcherProps) {
         if (!currentEnv) {
           setCurrentEnv({
             envName: 'prod',
-            schemaName: currentProject!.schemaName,
+            schemaName: currentProject!.schemaName ?? '',
           });
         }
       } else {
@@ -62,7 +62,7 @@ function EnvironmentSwitcher({ disabled = false }: EnvironmentSwitcherProps) {
         if (!currentEnv) {
           setCurrentEnv({
             envName: 'prod',
-            schemaName: currentProject!.schemaName,
+            schemaName: currentProject!.schemaName ?? '',
           });
         }
       }

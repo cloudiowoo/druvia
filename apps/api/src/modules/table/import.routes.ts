@@ -67,10 +67,7 @@ export async function importRoutes(fastify: FastifyInstance) {
   }>(
     '/:schemaName/tables/:tableName/import',
     {
-      config: {
-        // 10MB body limit to match frontend validation
-        bodyLimit: 10 * 1024 * 1024,
-      },
+      bodyLimit: 10 * 1024 * 1024, // 10MB body limit to match frontend validation
       preHandler: [
         async (request: FastifyRequest, reply: FastifyReply) => {
           const params = request.params as ImportParams;

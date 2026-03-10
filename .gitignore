@@ -29,6 +29,7 @@ out/
 .env.local
 .env.*.local
 !.env.example
+apps/admin/.env
 
 # ================================
 # Logs
@@ -70,9 +71,13 @@ Desktop.ini
 # ================================
 # Docker
 # ================================
-docker/volumes/
-postgres_data/
-redis_data/
+docker/postgres_data/
+docker/redis_data/
+docker/deno_cache/
+docker/nginx/ssl/
+docker/.env
+!docker/.env.example
+!docker/.env.prod.example
 
 # ================================
 # Database

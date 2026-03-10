@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+// Use relative path (empty string) for same-origin requests in production
+// Falls back to localhost:3001 for local development without Docker
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 interface ApiResponse<T> {
   success: boolean;

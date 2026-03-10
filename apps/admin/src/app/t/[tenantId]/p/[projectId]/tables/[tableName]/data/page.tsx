@@ -59,7 +59,7 @@ export default function DataBrowserPage() {
             name: c.name,
             type: c.type,
             nullable: c.nullable,
-            primaryKey: c.isPrimaryKey,
+            primaryKey: c.primaryKey,
             defaultValue: c.defaultValue,
           })));
         }

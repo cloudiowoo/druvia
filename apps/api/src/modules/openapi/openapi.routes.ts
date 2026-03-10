@@ -35,10 +35,7 @@ export async function openapiRoutes(fastify: FastifyInstance) {
   }>(
     '/projects/:projectId/graphql',
     {
-      config: {
-        // 1MB body limit for GraphQL queries
-        bodyLimit: 1 * 1024 * 1024,
-      },
+      bodyLimit: 1 * 1024 * 1024, // 1MB body limit for GraphQL queries
       preHandler: [
         async (request: FastifyRequest, reply: FastifyReply) => {
           const { projectId } = request.params as { projectId: string };

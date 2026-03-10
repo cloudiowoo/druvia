@@ -15,8 +15,27 @@
 | `pnpm dev` | 启动开发服务 |
 | `pnpm build` | 生产构建 |
 | `pnpm test` | 运行测试 |
-| `make dev-up` | 启动 Docker 环境 (PostgreSQL/Redis/Hasura) |
-| `make dev-down` | 停止 Docker 环境 |
+| `make dev-up` | 启动 Docker 开发环境 |
+| `make dev-down` | 停止 Docker 开发环境 |
+
+### Docker 生产部署
+
+```bash
+cd docker
+docker compose -f docker-compose.prod.yml build        # 构建镜像
+docker compose -f docker-compose.prod.yml up -d        # 启动服务
+docker compose -f docker-compose.prod.yml --profile with-nginx up -d  # 含 nginx
+```
+
+### Docker 本地开发（挂载构建产物）
+
+```bash
+pnpm build
+cp -r apps/admin/public apps/admin/.next/standalone/apps/admin/
+cp -r apps/admin/.next/static apps/admin/.next/standalone/apps/admin/.next/
+cd docker && docker compose -f docker-compose.local.yml --profile with-nginx up -d
+# 修改后: pnpm build && docker compose -f docker-compose.local.yml restart api admin
+```
 
 ---
 
@@ -40,7 +59,9 @@ druvia/
 - `apps/api/src/modules/` - 业务模块（project, table, schema, sql...）
 - `apps/api/src/adapters/` - Storage/Auth 可插拔适配器
 - `packages/shared/src/types.ts` - 共享类型定义
-- `docker/docker-compose.dev.yml` - 开发环境配置
+- `docker/docker-compose.yml` - 开发环境（仅基础设施）
+- `docker/docker-compose.prod.yml` - 生产环境（完整镜像）
+- `docker/docker-compose.local.yml` - 本地开发（挂载构建产物）
 
 ---
 
@@ -90,6 +111,12 @@ druvia/
 ### 构建
 - **顺序**：`pnpm --filter @druvia/shared build` 必须先于 API
 - **合并后**：worktree 合并到 main 后需重新 `pnpm install`
+- **Next.js standalone**：构建后需复制 `public/` 和 `.next/static/` 到 standalone 目录
+
+### Docker
+- **前端 API 地址**：生产环境 `NEXT_PUBLIC_API_URL=` 为空（使用相对路径通过 nginx）
+- **数据目录**：`docker/postgres_data/`、`docker/redis_data/` 映射到主机
+- **nginx 代理**：`/api/` → API，`/v1/graphql` → Hasura，`/` → Admin
 
 ### 测试
 - **位置**：`tests/` 目录，命名 `<module>.test.ts`
@@ -122,4 +149,4 @@ druvia/
 
 ---
 
-*Last Updated: 2026-03-08*
+*Last Updated: 2026-03-11*

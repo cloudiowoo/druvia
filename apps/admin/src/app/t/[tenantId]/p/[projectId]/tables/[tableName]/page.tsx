@@ -233,7 +233,7 @@ export default function TableStructurePage() {
         defaultValue: c.defaultValue,
       }));
 
-    const res = await api.updateTableStructure(effectiveSchema, tableName, {
+    const res = await api.updateTableStructure(effectiveSchema!, tableName, {
       addColumns: addColumns.length > 0 ? addColumns : undefined,
       dropColumns: dropColumns.length > 0 ? dropColumns : undefined,
       alterColumns: alterColumns.length > 0 ? alterColumns : undefined,
@@ -241,7 +241,7 @@ export default function TableStructurePage() {
 
     if (res.success) {
       // Refresh data
-      const refreshRes = await api.getTableStructure(effectiveSchema, tableName);
+      const refreshRes = await api.getTableStructure(effectiveSchema!, tableName);
       if (refreshRes.success && refreshRes.data) {
         setColumns(refreshRes.data.columns);
         setOriginalColumns(refreshRes.data.columns);

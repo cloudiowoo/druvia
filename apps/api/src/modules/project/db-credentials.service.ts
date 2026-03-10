@@ -223,7 +223,7 @@ export async function dropProjectDbUser(projectId: string): Promise<boolean> {
         `SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I REVOKE ALL ON TABLES FROM %I', $1::text, $2::text) as sql`,
         [project.schema_name, project.db_user]
       );
-      await client.query(revokeDefTables.rows[0].sql).catch((err) => {
+      await client.query(revokeDefTables.rows[0].sql).catch((err: Error) => {
         console.warn(`Failed to revoke default table privileges: ${err.message}`);
       });
 
@@ -231,7 +231,7 @@ export async function dropProjectDbUser(projectId: string): Promise<boolean> {
         `SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I REVOKE ALL ON SEQUENCES FROM %I', $1::text, $2::text) as sql`,
         [project.schema_name, project.db_user]
       );
-      await client.query(revokeDefSeqs.rows[0].sql).catch((err) => {
+      await client.query(revokeDefSeqs.rows[0].sql).catch((err: Error) => {
         console.warn(`Failed to revoke default sequence privileges: ${err.message}`);
       });
 
@@ -239,7 +239,7 @@ export async function dropProjectDbUser(projectId: string): Promise<boolean> {
         `SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I REVOKE EXECUTE ON FUNCTIONS FROM %I', $1::text, $2::text) as sql`,
         [project.schema_name, project.db_user]
       );
-      await client.query(revokeDefFuncs.rows[0].sql).catch((err) => {
+      await client.query(revokeDefFuncs.rows[0].sql).catch((err: Error) => {
         console.warn(`Failed to revoke default function privileges: ${err.message}`);
       });
     }
@@ -249,7 +249,7 @@ export async function dropProjectDbUser(projectId: string): Promise<boolean> {
       `SELECT format('REASSIGN OWNED BY %I TO postgres', $1::text) as sql`,
       [project.db_user]
     );
-    await client.query(reassignSql.rows[0].sql).catch((err) => {
+    await client.query(reassignSql.rows[0].sql).catch((err: Error) => {
       console.warn(`Failed to reassign owned objects: ${err.message}`);
     });
 
@@ -258,7 +258,7 @@ export async function dropProjectDbUser(projectId: string): Promise<boolean> {
       `SELECT format('DROP OWNED BY %I', $1::text) as sql`,
       [project.db_user]
     );
-    await client.query(dropOwnedSql.rows[0].sql).catch((err) => {
+    await client.query(dropOwnedSql.rows[0].sql).catch((err: Error) => {
       console.warn(`Failed to drop owned objects: ${err.message}`);
     });
 
