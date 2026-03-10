@@ -16,7 +16,11 @@ interface Environment {
   createdAt: string;
 }
 
-function EnvironmentSwitcher() {
+interface EnvironmentSwitcherProps {
+  disabled?: boolean;
+}
+
+function EnvironmentSwitcher({ disabled = false }: EnvironmentSwitcherProps) {
   const params = useParams();
   const projectId = params.projectId as string | undefined;
   const { currentProject, currentEnv, setCurrentEnv } = useAppStore();
@@ -25,20 +29,40 @@ function EnvironmentSwitcher() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !currentProject) return;
 
     async function loadEnvironments() {
       setLoading(true);
       const res = await api.listEnvironments(projectId!);
+      // Always include prod environment using project's base schema
+      const prodEnv: Environment = {
+        id: 0,
+        projectId: projectId!,
+        envName: 'prod',
+        schemaName: currentProject!.schemaName,
+        createdAt: '',
+      };
+
       if (res.success && res.data) {
-        setEnvironments(res.data);
+        // Add prod if not already in the list
+        const hasProd = res.data.some((e) => e.envName === 'prod');
+        const allEnvs = hasProd ? res.data : [prodEnv, ...res.data];
+        setEnvironments(allEnvs);
+
         // Set default env if not set
-        if (!currentEnv && res.data.length > 0) {
-          const prodEnv = res.data.find((e) => e.envName === 'prod');
-          const defaultEnv = prodEnv || res.data[0];
+        if (!currentEnv) {
           setCurrentEnv({
-            envName: defaultEnv.envName,
-            schemaName: defaultEnv.schemaName,
+            envName: 'prod',
+            schemaName: currentProject!.schemaName,
+          });
+        }
+      } else {
+        // Even if API fails, show prod environment
+        setEnvironments([prodEnv]);
+        if (!currentEnv) {
+          setCurrentEnv({
+            envName: 'prod',
+            schemaName: currentProject!.schemaName,
           });
         }
       }
@@ -47,7 +71,7 @@ function EnvironmentSwitcher() {
     loadEnvironments();
     // Note: currentEnv and setCurrentEnv intentionally excluded to prevent infinite loop
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, currentProject?.schemaName]);
 
   if (!projectId || !currentProject) {
     return null;
@@ -64,16 +88,21 @@ function EnvironmentSwitcher() {
   return (
     <div className="relative">
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-1.5 text-sm bg-white border rounded-md hover:bg-gray-50 transition-colors"
-        disabled={loading}
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        className={`flex items-center gap-2 px-3 py-1.5 text-sm border rounded-md transition-colors ${
+          disabled
+            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            : 'bg-white hover:bg-gray-50'
+        }`}
+        disabled={loading || disabled}
+        title={disabled ? '此页面为项目级别，不支持环境切换' : undefined}
       >
-        <GitBranch className="h-4 w-4 text-gray-500" />
+        <GitBranch className={`h-4 w-4 ${disabled ? 'text-gray-300' : 'text-gray-500'}`} />
         <span className="font-medium">{currentEnv?.envName || 'prod'}</span>
-        <ChevronDown className="h-4 w-4 text-gray-400" />
+        <ChevronDown className={`h-4 w-4 ${disabled ? 'text-gray-300' : 'text-gray-400'}`} />
       </button>
 
-      {isOpen && environments.length > 0 && (
+      {isOpen && environments.length > 0 && !disabled && (
         <>
           <div
             className="fixed inset-0 z-10"
@@ -105,7 +134,13 @@ function EnvironmentSwitcher() {
   );
 }
 
-export function DashboardLayout({ children }: { children: React.ReactNode }) {
+export function DashboardLayout({
+  children,
+  isProjectLevel = false,
+}: {
+  children: React.ReactNode;
+  isProjectLevel?: boolean;
+}) {
   const router = useRouter();
   const params = useParams();
   const projectId = params.projectId as string | undefined;
@@ -140,7 +175,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       <main className="ml-64">
         {projectId && (
           <div className="flex justify-end px-8 pt-4">
-            <EnvironmentSwitcher />
+            <EnvironmentSwitcher disabled={isProjectLevel} />
           </div>
         )}
         <div className="p-8 pt-4">{children}</div>

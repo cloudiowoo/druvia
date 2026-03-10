@@ -6,6 +6,17 @@ import { useParams, useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { GitBranch, Key, ChevronRight } from 'lucide-react';
 
 interface ProjectDetails {
   projectId: string;
@@ -26,8 +37,10 @@ export default function ProjectSettingsPage() {
   const [project, setProject] = useState<ProjectDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const [formData, setFormData] = useState({ name: '' });
 
@@ -46,6 +59,7 @@ export default function ProjectSettingsPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setSaveSuccess(false);
     try {
       const res = await api.updateProject(projectId, { name: formData.name });
       if (res.success && res.data) {
@@ -53,14 +67,20 @@ export default function ProjectSettingsPage() {
         if (currentProject?.projectId === projectId) {
           setCurrentProject({ ...currentProject, name: res.data.name });
         }
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 3000);
       }
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async () => {
+  const handleDeleteClick = () => {
     if (deleteConfirm !== project?.alias) return;
+    setShowDeleteDialog(true);
+  };
+
+  const handleDeleteConfirm = async () => {
     setDeleting(true);
     try {
       const res = await api.deleteProject(projectId);
@@ -69,6 +89,7 @@ export default function ProjectSettingsPage() {
       }
     } finally {
       setDeleting(false);
+      setShowDeleteDialog(false);
     }
   };
 
@@ -107,7 +128,7 @@ export default function ProjectSettingsPage() {
   }
 
   return (
-    <DashboardLayout>
+    <DashboardLayout isProjectLevel={true}>
       <div className="mb-6">
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
           <Link href={`/t/${tenantId}`} className="hover:text-foreground">
@@ -120,7 +141,15 @@ export default function ProjectSettingsPage() {
           <span>/</span>
           <span>设置</span>
         </div>
-        <h1 className="text-2xl font-bold">项目设置</h1>
+        <div className="flex items-center gap-3 mb-2">
+          <h1 className="text-2xl font-bold">项目设置</h1>
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-md">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            项目级别
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -149,9 +178,14 @@ export default function ProjectSettingsPage() {
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               />
             </div>
-            <button type="submit" disabled={saving} className="btn btn-primary">
-              {saving ? '保存中...' : '保存'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button type="submit" disabled={saving} className="btn btn-primary">
+                {saving ? '保存中...' : '保存'}
+              </button>
+              {saveSuccess && (
+                <span className="text-green-600 text-sm">保存成功</span>
+              )}
+            </div>
           </form>
         </div>
 
@@ -176,6 +210,41 @@ export default function ProjectSettingsPage() {
           </div>
         </div>
 
+        {/* 更多设置 */}
+        <div className="card lg:col-span-2">
+          <div className="card-header">
+            <h2 className="font-semibold">更多设置</h2>
+          </div>
+          <div className="card-body p-0">
+            <Link
+              href={`/t/${tenantId}/p/${projectId}/settings/environments`}
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 border-b"
+            >
+              <div className="flex items-center gap-3">
+                <GitBranch className="h-5 w-5 text-gray-400" />
+                <div>
+                  <div className="font-medium">环境管理</div>
+                  <div className="text-sm text-gray-500">管理开发、测试和生产环境</div>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-gray-400" />
+            </Link>
+            <Link
+              href={`/t/${tenantId}/p/${projectId}/settings/api-keys`}
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50"
+            >
+              <div className="flex items-center gap-3">
+                <Key className="h-5 w-5 text-gray-400" />
+                <div>
+                  <div className="font-medium">API 密钥</div>
+                  <div className="text-sm text-gray-500">管理项目的 API 访问密钥</div>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-gray-400" />
+            </Link>
+          </div>
+        </div>
+
         {/* 危险操作 */}
         <div className="card lg:col-span-2 border-red-200">
           <div className="card-header bg-red-50">
@@ -197,7 +266,7 @@ export default function ProjectSettingsPage() {
                 />
               </div>
               <button
-                onClick={handleDelete}
+                onClick={handleDeleteClick}
                 disabled={deleteConfirm !== project.alias || deleting}
                 className="btn bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
               >
@@ -207,6 +276,27 @@ export default function ProjectSettingsPage() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除项目</AlertDialogTitle>
+            <AlertDialogDescription>
+              您确定要删除项目 <span className="font-semibold">{project.name}</span> 吗？
+              此操作将永久删除所有数据表和备份，且不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleting ? '删除中...' : '确认删除'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 }

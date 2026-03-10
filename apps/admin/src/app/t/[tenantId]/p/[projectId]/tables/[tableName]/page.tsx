@@ -77,8 +77,11 @@ export default function TableStructurePage() {
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
   const tableName = params.tableName as string;
-  const { currentProject, currentTenant } = useAppStore();
+  const { currentProject, currentTenant, currentEnv } = useAppStore();
   const { toast } = useToast();
+
+  // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
+  const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
 
   const [columns, setColumns] = useState<Column[]>([]);
   const [originalColumns, setOriginalColumns] = useState<Column[]>([]);
@@ -114,11 +117,11 @@ export default function TableStructurePage() {
   // 加载表结构和外键
   useEffect(() => {
     async function fetchData() {
-      if (!currentProject?.schemaName) return;
+      if (!effectiveSchema) return;
 
       const [structureRes, fkRes] = await Promise.all([
-        api.getTableStructure(currentProject.schemaName, tableName),
-        api.getTableForeignKeys(currentProject.schemaName, tableName),
+        api.getTableStructure(effectiveSchema, tableName),
+        api.getTableForeignKeys(effectiveSchema, tableName),
       ]);
 
       if (structureRes.success && structureRes.data) {
@@ -146,12 +149,12 @@ export default function TableStructurePage() {
     onDelete: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
     onUpdate: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
   }) => {
-    if (!currentProject?.schemaName) return;
+    if (!effectiveSchema) return;
 
-    const res = await api.addForeignKey(currentProject.schemaName, tableName, config);
+    const res = await api.addForeignKey(effectiveSchema, tableName, config);
     if (res.success) {
       // 刷新外键列表
-      const fkRes = await api.getTableForeignKeys(currentProject.schemaName, tableName);
+      const fkRes = await api.getTableForeignKeys(effectiveSchema, tableName);
       if (fkRes.success && fkRes.data) {
         setForeignKeys(fkRes.data);
       }
@@ -163,9 +166,9 @@ export default function TableStructurePage() {
 
   // 删除外键
   const handleRemoveForeignKey = async (constraintName: string) => {
-    if (!currentProject?.schemaName) return;
+    if (!effectiveSchema) return;
 
-    const res = await api.dropForeignKey(currentProject.schemaName, tableName, constraintName);
+    const res = await api.dropForeignKey(effectiveSchema, tableName, constraintName);
     if (res.success) {
       setForeignKeys(foreignKeys.filter(fk => fk.constraintName !== constraintName));
       toast({ title: '外键删除成功' });
@@ -230,7 +233,7 @@ export default function TableStructurePage() {
         defaultValue: c.defaultValue,
       }));
 
-    const res = await api.updateTableStructure(currentProject.schemaName, tableName, {
+    const res = await api.updateTableStructure(effectiveSchema, tableName, {
       addColumns: addColumns.length > 0 ? addColumns : undefined,
       dropColumns: dropColumns.length > 0 ? dropColumns : undefined,
       alterColumns: alterColumns.length > 0 ? alterColumns : undefined,
@@ -238,7 +241,7 @@ export default function TableStructurePage() {
 
     if (res.success) {
       // Refresh data
-      const refreshRes = await api.getTableStructure(currentProject.schemaName, tableName);
+      const refreshRes = await api.getTableStructure(effectiveSchema, tableName);
       if (refreshRes.success && refreshRes.data) {
         setColumns(refreshRes.data.columns);
         setOriginalColumns(refreshRes.data.columns);
@@ -248,9 +251,9 @@ export default function TableStructurePage() {
   };
 
   const handleDelete = async () => {
-    if (!currentProject?.schemaName) return;
+    if (!effectiveSchema) return;
     setDeleting(true);
-    const res = await api.dropTable(currentProject.schemaName, tableName);
+    const res = await api.dropTable(effectiveSchema, tableName);
     if (res.success) {
       router.push(`/t/${tenantId}/p/${projectId}/tables`);
     }
@@ -411,9 +414,9 @@ export default function TableStructurePage() {
                       />
                     </TableCell>
                     <TableCell className="text-center">
-                      {!column.isNew && currentProject?.schemaName && (
+                      {!column.isNew && effectiveSchema && (
                         <ForeignKeyPopover
-                          schemaName={currentProject.schemaName}
+                          schemaName={effectiveSchema}
                           columnName={column.name}
                           columnType={column.type}
                           existingFk={fk ? {

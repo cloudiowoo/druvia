@@ -33,18 +33,17 @@ const HASURA_METADATA_URL = `${config.hasura.endpoint}/v1/metadata`;
 const HASURA_GRAPHQL_URL = `${config.hasura.endpoint}/v1/graphql`;
 
 interface HasuraMetadataResponse {
-  metadata?: {
-    sources?: Array<{
-      name: string;
-      tables?: Array<{
-        table: { schema: string; name: string };
-        select_permissions?: Array<{
-          role: string;
-          permission: Record<string, unknown>;
-        }>;
+  version?: number;
+  sources?: Array<{
+    name: string;
+    tables?: Array<{
+      table: { schema: string; name: string };
+      select_permissions?: Array<{
+        role: string;
+        permission: Record<string, unknown>;
       }>;
     }>;
-  };
+  }>;
 }
 
 interface HasuraTable {
@@ -110,7 +109,7 @@ export async function getTableSubscriptions(schemaName: string): Promise<TableSu
       version: 2,
     });
 
-    const source = metadata.metadata?.sources?.find((s) => s.name === 'default');
+    const source = metadata.sources?.find((s) => s.name === 'default');
     if (source?.tables) {
       for (const t of source.tables) {
         if (t.table.schema === schemaName) {
@@ -202,7 +201,7 @@ export async function configureTableSubscription(
     } catch (error) {
       // 如果权限已存在，忽略错误
       const errorMsg = error instanceof Error ? error.message : String(error);
-      if (!errorMsg.includes('already exists')) {
+      if (!errorMsg.includes('already exists') && !errorMsg.includes('already defined')) {
         throw error;
       }
     }

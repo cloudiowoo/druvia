@@ -26,44 +26,53 @@ export default function DataBrowserPage() {
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
   const tableName = params.tableName as string;
-  const { currentProject } = useAppStore();
+  const { currentProject, currentEnv } = useAppStore();
+
+  // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
+  const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
   const { toast } = useToast();
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
-  const [columns, setColumns] = useState<Array<{ name: string; type: string }>>([]);
+  const [columns, setColumns] = useState<Array<{ name: string; type: string; nullable?: boolean; primaryKey?: boolean; defaultValue?: string | null }>>([]);
   const [tables, setTables] = useState<Array<{ tableName: string; rowCount: number }>>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [gridKey, setGridKey] = useState(Date.now()); // Key to force grid refresh
 
   // 加载表列表
   useEffect(() => {
-    if (currentProject?.schemaName) {
-      api.listTables(currentProject.schemaName).then(res => {
+    if (effectiveSchema) {
+      api.listTables(effectiveSchema).then(res => {
         if (res.success && res.data) {
           setTables(res.data);
         }
       });
     }
-  }, [currentProject?.schemaName]);
+  }, [effectiveSchema]);
 
   // 加载表结构（用于 CSV 导入列映射）
   useEffect(() => {
-    if (currentProject?.schemaName && tableName) {
-      api.getTableStructure(currentProject.schemaName, tableName).then(res => {
+    if (effectiveSchema && tableName) {
+      api.getTableStructure(effectiveSchema, tableName).then(res => {
         if (res.success && res.data) {
-          setColumns(res.data.columns.map(c => ({ name: c.name, type: c.type })));
+          setColumns(res.data.columns.map(c => ({
+            name: c.name,
+            type: c.type,
+            nullable: c.nullable,
+            primaryKey: c.isPrimaryKey,
+            defaultValue: c.defaultValue,
+          })));
         }
       });
     }
-  }, [currentProject?.schemaName, tableName]);
+  }, [effectiveSchema, tableName]);
 
   const handleExport = async (format: 'csv' | 'json') => {
-    if (!currentProject?.schemaName) return;
+    if (!effectiveSchema) return;
 
     setExporting(true);
     try {
-      const blob = await api.exportData(currentProject.schemaName, tableName, format);
+      const blob = await api.exportData(effectiveSchema, tableName, format);
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -92,7 +101,7 @@ export default function DataBrowserPage() {
     });
   };
 
-  if (!currentProject?.schemaName) {
+  if (!effectiveSchema) {
     return (
       <DashboardLayout>
         <div className="p-4 text-center text-muted-foreground">加载中...</div>
@@ -151,7 +160,7 @@ export default function DataBrowserPage() {
 
           <SvarDataGrid
             key={gridKey}
-            schemaName={currentProject.schemaName}
+            schemaName={effectiveSchema}
             tableName={tableName}
             primaryKeyColumn="id"
             pageSize={50}
@@ -161,7 +170,7 @@ export default function DataBrowserPage() {
           <CsvImportDialog
             open={importOpen}
             onOpenChange={setImportOpen}
-            schemaName={currentProject.schemaName}
+            schemaName={effectiveSchema}
             tableName={tableName}
             columns={columns}
             onSuccess={() => {
@@ -176,7 +185,7 @@ export default function DataBrowserPage() {
           <DataGeneratorDialog
             open={generatorOpen}
             onOpenChange={setGeneratorOpen}
-            schemaName={currentProject.schemaName}
+            schemaName={effectiveSchema}
             tableName={tableName}
             columns={columns}
             onSuccess={() => {

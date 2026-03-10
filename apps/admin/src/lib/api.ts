@@ -1049,7 +1049,8 @@ class ApiClient {
   // Realtime
   // ============================================
 
-  async listRealtimeSubscriptions(projectId: string) {
+  async listRealtimeSubscriptions(projectId: string, envName?: string) {
+    const params = envName && envName !== 'prod' ? `?env=${envName}` : '';
     return this.request<{
       subscriptions: Array<{
         tableName: string;
@@ -1063,34 +1064,40 @@ class ApiClient {
         enabledTables: number;
         disabledTables: number;
       };
-    }>('GET', `/api/v1/projects/${projectId}/realtime/subscriptions`);
+    }>('GET', `/api/v1/projects/${projectId}/realtime/subscriptions${params}`);
   }
 
   async configureRealtimeSubscription(
     projectId: string,
     tableName: string,
-    data: { enabled: boolean; role?: string }
+    data: { enabled: boolean; role?: string },
+    envName?: string
   ) {
+    const params = envName && envName !== 'prod' ? `?env=${envName}` : '';
     return this.request<{
       tableName: string;
       schemaName: string;
       enabled: boolean;
       operations: ('INSERT' | 'UPDATE' | 'DELETE')[];
       hasSelectPermission: boolean;
-    }>('POST', `/api/v1/projects/${projectId}/realtime/subscriptions/${tableName}`, data);
+    }>('POST', `/api/v1/projects/${projectId}/realtime/subscriptions/${tableName}${params}`, data);
   }
 
-  async getRealtimeConfig(projectId: string) {
+  async getRealtimeConfig(projectId: string, envName?: string) {
+    const params = envName && envName !== 'prod' ? `?env=${envName}` : '';
     return this.request<{
       schemaName: string;
       websocketEndpoint: string;
       graphqlEndpoint: string;
       hasuraConnected: boolean;
-    }>('GET', `/api/v1/projects/${projectId}/realtime/config`);
+    }>('GET', `/api/v1/projects/${projectId}/realtime/config${params}`);
   }
 
-  async getSubscriptionExample(projectId: string, tableName: string, operation?: string) {
-    const params = operation ? `?operation=${operation}` : '';
+  async getSubscriptionExample(projectId: string, tableName: string, operation?: string, envName?: string) {
+    const queryParams: string[] = [];
+    if (operation) queryParams.push(`operation=${operation}`);
+    if (envName && envName !== 'prod') queryParams.push(`env=${envName}`);
+    const params = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
     return this.request<Array<{
       language: 'javascript' | 'graphql';
       code: string;
@@ -1098,11 +1105,12 @@ class ApiClient {
     }>>('GET', `/api/v1/projects/${projectId}/realtime/subscriptions/${tableName}/example${params}`);
   }
 
-  async listRealtimeTables(projectId: string) {
+  async listRealtimeTables(projectId: string, envName?: string) {
+    const params = envName && envName !== 'prod' ? `?env=${envName}` : '';
     return this.request<Array<{
       tableName: string;
       schemaName: string;
-    }>>('GET', `/api/v1/projects/${projectId}/realtime/tables`);
+    }>>('GET', `/api/v1/projects/${projectId}/realtime/tables${params}`);
   }
 
   // ============================================

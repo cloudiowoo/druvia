@@ -53,7 +53,21 @@ async function verifyProjectAccess(
 // Helper: Get Schema Name
 // ============================================
 
-async function getProjectSchema(projectId: string): Promise<string | null> {
+async function getProjectSchema(projectId: string, envName?: string): Promise<string | null> {
+  // 如果指定了环境且不是 prod，从环境表获取 schema
+  if (envName && envName !== 'prod') {
+    const env = await queryOne<{ schema_name: string }>(
+      'SELECT schema_name FROM druvia_project_environments WHERE project_id = $1 AND env_name = $2',
+      [projectId, envName]
+    );
+    if (env) {
+      return env.schema_name;
+    }
+    // 环境不存在，返回 null
+    return null;
+  }
+
+  // 默认返回项目基础 schema (prod)
   const project = await queryOne<{ schema_name: string }>(
     'SELECT schema_name FROM druvia_projects WHERE project_id = $1',
     [projectId]
@@ -69,19 +83,20 @@ async function getProjectSchema(projectId: string): Promise<string | null> {
  * 获取项目的所有表订阅配置
  */
 export async function listSubscriptions(
-  request: FastifyRequest<{ Params: ProjectParams }>,
+  request: FastifyRequest<{ Params: ProjectParams; Querystring: { env?: string } }>,
   reply: FastifyReply
 ) {
   if (!(await verifyProjectAccess(request, reply))) return;
 
   const { projectId } = request.params;
+  const envName = request.query.env;
 
   // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId);
+  const schemaName = await getProjectSchema(projectId, envName);
   if (!schemaName) {
     return reply.status(404).send({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Project not found' },
+      error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
     });
   }
 
@@ -112,6 +127,7 @@ export async function configureSubscription(
   request: FastifyRequest<{
     Params: TableParams;
     Body: ConfigureSubscriptionBody;
+    Querystring: { env?: string };
   }>,
   reply: FastifyReply
 ) {
@@ -119,13 +135,14 @@ export async function configureSubscription(
 
   const { projectId, tableName } = request.params;
   const { enabled, role } = request.body;
+  const envName = request.query.env;
 
   // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId);
+  const schemaName = await getProjectSchema(projectId, envName);
   if (!schemaName) {
     return reply.status(404).send({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Project not found' },
+      error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
     });
   }
 
@@ -154,19 +171,20 @@ export async function configureSubscription(
  * 获取实时配置信息
  */
 export async function getConfig(
-  request: FastifyRequest<{ Params: ProjectParams }>,
+  request: FastifyRequest<{ Params: ProjectParams; Querystring: { env?: string } }>,
   reply: FastifyReply
 ) {
   if (!(await verifyProjectAccess(request, reply))) return;
 
   const { projectId } = request.params;
+  const envName = request.query.env;
 
   // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId);
+  const schemaName = await getProjectSchema(projectId, envName);
   if (!schemaName) {
     return reply.status(404).send({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Project not found' },
+      error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
     });
   }
 
@@ -196,7 +214,7 @@ export async function getConfig(
 export async function getSubscriptionExample(
   request: FastifyRequest<{
     Params: TableParams;
-    Querystring: { operation?: string };
+    Querystring: { operation?: string; env?: string };
   }>,
   reply: FastifyReply
 ) {
@@ -208,13 +226,14 @@ export async function getSubscriptionExample(
     | 'UPDATE'
     | 'DELETE'
     | 'ALL';
+  const envName = request.query.env;
 
   // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId);
+  const schemaName = await getProjectSchema(projectId, envName);
   if (!schemaName) {
     return reply.status(404).send({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Project not found' },
+      error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
     });
   }
 
@@ -242,19 +261,20 @@ export async function getSubscriptionExample(
  * 获取 schema 下的所有表
  */
 export async function listTables(
-  request: FastifyRequest<{ Params: ProjectParams }>,
+  request: FastifyRequest<{ Params: ProjectParams; Querystring: { env?: string } }>,
   reply: FastifyReply
 ) {
   if (!(await verifyProjectAccess(request, reply))) return;
 
   const { projectId } = request.params;
+  const envName = request.query.env;
 
   // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId);
+  const schemaName = await getProjectSchema(projectId, envName);
   if (!schemaName) {
     return reply.status(404).send({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Project not found' },
+      error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
     });
   }
 

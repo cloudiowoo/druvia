@@ -110,7 +110,7 @@ export default function FunctionsPage() {
 
   if (loading) {
     return (
-      <DashboardLayout>
+      <DashboardLayout isProjectLevel={true}>
         <div className="flex items-center justify-center h-96">
           <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
         </div>
@@ -119,7 +119,7 @@ export default function FunctionsPage() {
   }
 
   return (
-    <DashboardLayout>
+    <DashboardLayout isProjectLevel={true}>
       <div className="h-[calc(100vh-120px)] flex">
         {/* Left Sidebar - Function List */}
         <div className="w-64 border-r bg-white flex-shrink-0">

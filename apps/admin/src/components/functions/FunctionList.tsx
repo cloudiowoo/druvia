@@ -30,7 +30,17 @@ export function FunctionList({
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b">
-        <h2 className="font-semibold text-gray-700">Functions</h2>
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-gray-700">Functions</h2>
+            <span className="inline-flex items-center gap-1 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-md">
+              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              项目级别
+            </span>
+          </div>
+        </div>
         <button
           onClick={onCreate}
           className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"

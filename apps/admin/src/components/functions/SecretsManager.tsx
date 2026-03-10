@@ -209,7 +209,7 @@ export function SecretsManager({ projectId }: SecretsManagerProps) {
 
       {/* Usage hint */}
       <div className="px-4 py-2 border-t bg-gray-50 text-xs text-gray-500">
-        在函数中使用: <code className="bg-gray-200 px-1 rounded">Deno.env.get("KEY")</code>
+        在函数中使用: <code className="bg-gray-200 px-1 rounded">Deno.env.get(&quot;KEY&quot;)</code>
       </div>
     </div>
   );

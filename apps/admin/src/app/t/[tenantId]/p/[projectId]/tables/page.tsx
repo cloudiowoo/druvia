@@ -52,7 +52,11 @@ export default function TablesPage() {
   const router = useRouter();
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
-  const { currentProject, currentTenant } = useAppStore();
+  const { currentProject, currentTenant, currentEnv } = useAppStore();
+
+  // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
+  const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
+
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -64,8 +68,8 @@ export default function TablesPage() {
   const [erLoaded, setErLoaded] = useState(false);
 
   const fetchTables = async () => {
-    if (!currentProject?.schemaName) return;
-    const res = await api.listTables(currentProject.schemaName);
+    if (!effectiveSchema) return;
+    const res = await api.listTables(effectiveSchema);
     if (res.success && res.data) {
       setTables(res.data);
     }
@@ -73,10 +77,10 @@ export default function TablesPage() {
   };
 
   const fetchERData = async () => {
-    if (!currentProject?.schemaName) return;
+    if (!effectiveSchema) return;
     setErLoading(true);
     setErError(null);
-    const res = await api.getSchemaRelations(currentProject.schemaName);
+    const res = await api.getSchemaRelations(effectiveSchema);
     if (res.success && res.data) {
       setTablesWithColumns(res.data.tables);
       setForeignKeys(res.data.foreignKeys);
@@ -89,7 +93,7 @@ export default function TablesPage() {
 
   useEffect(() => {
     fetchTables();
-  }, [currentProject?.schemaName]);
+  }, [effectiveSchema]);
 
   const handleTabChange = (value: string) => {
     if (value === 'er' && !erLoaded && !erLoading) {
@@ -121,9 +125,9 @@ export default function TablesPage() {
           </div>
           <h1 className="text-2xl font-bold">数据表</h1>
         </div>
-        {currentProject?.schemaName && (
+        {effectiveSchema && (
           <CreateTableDialog
-            schemaName={currentProject.schemaName}
+            schemaName={effectiveSchema}
             onSuccess={fetchTables}
           />
         )}
@@ -152,9 +156,9 @@ export default function TablesPage() {
             ) : tables.length === 0 ? (
               <div className="p-12 text-center">
                 <p className="text-muted-foreground mb-4">暂无数据表</p>
-                {currentProject?.schemaName && (
+                {effectiveSchema && (
                   <CreateTableDialog
-                    schemaName={currentProject.schemaName}
+                    schemaName={effectiveSchema}
                     onSuccess={fetchTables}
                     trigger={
                       <Button>
