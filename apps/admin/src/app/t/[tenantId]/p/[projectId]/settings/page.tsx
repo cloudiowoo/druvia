@@ -128,7 +128,7 @@ export default function ProjectSettingsPage() {
   }
 
   return (
-    <DashboardLayout>
+    <DashboardLayout isProjectLevel={true}>
       <div className="mb-6">
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
           <Link href={`/t/${tenantId}`} className="hover:text-foreground">
@@ -141,7 +141,15 @@ export default function ProjectSettingsPage() {
           <span>/</span>
           <span>设置</span>
         </div>
-        <h1 className="text-2xl font-bold">项目设置</h1>
+        <div className="flex items-center gap-3 mb-2">
+          <h1 className="text-2xl font-bold">项目设置</h1>
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-md">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            项目级别
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

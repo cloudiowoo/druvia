@@ -3,6 +3,9 @@ import { generateProjectId } from '@druvia/shared';
 import type { Project, CreateProjectInput, UpdateProjectInput } from '@druvia/shared';
 import * as schemaService from '../schema/schema.service.js';
 import * as tenantService from '../tenant/tenant.service.js';
+import * as environmentService from '../environment/environment.service.js';
+import * as dbCredentialsService from './db-credentials.service.js';
+import { hasuraMetadataRequest } from '../realtime/realtime.service.js';
 import { validateAlias } from '../../lib/validation.js';
 
 // Database row type (snake_case)
@@ -136,18 +139,71 @@ export async function deleteProject(projectId: string): Promise<boolean> {
     return false;
   }
 
-  // 删除项目 Schema（如果存在）
-  if (project.schemaName) {
-    await schemaService.dropSchema(project.schemaName);
+  try {
+    // 1. 获取所有环境（包括 prod）
+    const environments = await environmentService.listEnvironments(projectId);
+
+    // 2. 从 Hasura 中 untrack 所有环境的表
+    for (const env of environments) {
+      await untrackSchemaTablesFromHasura(env.schemaName);
+    }
+
+    // 3. 删除所有环境的 Schema
+    for (const env of environments) {
+      await schemaService.dropSchema(env.schemaName);
+    }
+
+    // 4. 删除项目数据库用户（如果存在）
+    try {
+      await dbCredentialsService.dropProjectDbUser(projectId);
+    } catch (error) {
+      // 如果用户不存在或删除失败，记录警告但继续删除项目
+      console.warn(`Failed to drop database user for project ${projectId}:`, error);
+    }
+
+    // 5. 删除项目记录（会级联删除 API 密钥和环境记录）
+    const rows = await query<{ project_id: string }>(
+      'DELETE FROM druvia_projects WHERE project_id = $1 RETURNING project_id',
+      [projectId]
+    );
+
+    return rows.length > 0;
+  } catch (error) {
+    console.error(`Failed to delete project ${projectId}:`, error);
+    throw error;
   }
+}
 
-  // 删除项目记录
-  const rows = await query<{ project_id: string }>(
-    'DELETE FROM druvia_projects WHERE project_id = $1 RETURNING project_id',
-    [projectId]
-  );
+// 从 Hasura 中 untrack Schema 的所有表
+async function untrackSchemaTablesFromHasura(schemaName: string): Promise<void> {
+  try {
+    // 获取 Schema 中的所有表
+    const tablesResult = await query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = $1 AND table_type = 'BASE TABLE'
+       AND table_name NOT LIKE '_meta_%'`,
+      [schemaName]
+    );
 
-  return rows.length > 0;
+    // Untrack 每个表
+    for (const row of tablesResult) {
+      try {
+        await hasuraMetadataRequest('pg_untrack_table', {
+          source: 'default',
+          table: { schema: schemaName, name: row.table_name },
+          cascade: true,
+        });
+      } catch (error) {
+        // 忽略表未被追踪的错误
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (!errorMsg.includes('not tracked') && !errorMsg.includes('does not exist')) {
+          console.warn(`Failed to untrack table ${schemaName}.${row.table_name}:`, errorMsg);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(`Failed to untrack tables from schema ${schemaName}:`, error);
+  }
 }
 
 export interface QueryResult {

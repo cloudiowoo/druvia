@@ -1,6 +1,7 @@
 // apps/api/src/modules/environment/environment.service.ts
 import { pool } from '../../db/index.js';
 import { trackTableInHasura } from '../table/table.service.js';
+import { hasuraMetadataRequest } from '../realtime/realtime.service.js';
 import format from 'pg-format';
 
 export interface ProjectEnvironment {
@@ -280,6 +281,9 @@ export async function deleteEnvironment(projectId: string, envName: string): Pro
 
     const schemaName = envResult.rows[0].schema_name;
 
+    // Untrack all tables from Hasura before dropping schema
+    await untrackSchemaTablesFromHasura(schemaName);
+
     // Drop schema (use pg-format for safe identifier interpolation)
     await client.query(format('DROP SCHEMA IF EXISTS %I CASCADE', schemaName));
 
@@ -296,5 +300,37 @@ export async function deleteEnvironment(projectId: string, envName: string): Pro
     throw error;
   } finally {
     client.release();
+  }
+}
+
+// 从 Hasura 中 untrack Schema 的所有表
+async function untrackSchemaTablesFromHasura(schemaName: string): Promise<void> {
+  try {
+    // 获取 Schema 中的所有表
+    const tablesResult = await pool.query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = $1 AND table_type = 'BASE TABLE'
+       AND table_name NOT LIKE '_meta_%'`,
+      [schemaName]
+    );
+
+    // Untrack 每个表
+    for (const row of tablesResult.rows) {
+      try {
+        await hasuraMetadataRequest('pg_untrack_table', {
+          source: 'default',
+          table: { schema: schemaName, name: row.table_name },
+          cascade: true,
+        });
+      } catch (error) {
+        // 忽略表未被追踪的错误
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (!errorMsg.includes('not tracked') && !errorMsg.includes('does not exist')) {
+          console.warn(`Failed to untrack table ${schemaName}.${row.table_name}:`, errorMsg);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(`Failed to untrack tables from schema ${schemaName}:`, error);
   }
 }

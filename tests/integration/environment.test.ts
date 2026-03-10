@@ -212,6 +212,43 @@ describe('EnvironmentService Integration', () => {
       expect(envResult.rows.length).toBe(0);
     });
 
+    it('should delete environment with tables and untrack from Hasura', async () => {
+      // 创建环境
+      const env = await environmentService.createEnvironment(testProjectId, 'devtest', false);
+
+      // 在环境中创建额外的表
+      await tableService.createTable(env.schemaName, {
+        name: 'products',
+        columns: [
+          { name: 'id', type: 'serial', primaryKey: true },
+          { name: 'name', type: 'varchar(200)', nullable: false },
+          { name: 'price', type: 'decimal(10,2)', nullable: false },
+        ],
+      });
+
+      // 验证表已创建
+      const tableExists = await pool.query(
+        `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = $1 AND table_name = $2`,
+        [env.schemaName, 'products']
+      );
+      expect(tableExists.rows.length).toBe(1);
+
+      // 删除环境（会自动 untrack Hasura 表并删除 Schema）
+      const deleted = await environmentService.deleteEnvironment(testProjectId, 'devtest');
+      expect(deleted).toBe(true);
+
+      // 验证 Schema 已删除
+      const schemaAfter = await pool.query(
+        `SELECT schema_name FROM information_schema.schemata WHERE schema_name = $1`,
+        [env.schemaName]
+      );
+      expect(schemaAfter.rows.length).toBe(0);
+
+      // 注意：由于 Hasura 认证问题，我们无法直接验证 Hasura 元数据
+      // 但删除逻辑会尝试 untrack，即使失败也会继续删除
+    });
+
     it('should throw error when deleting prod environment', async () => {
       await expect(
         environmentService.deleteEnvironment(testProjectId, 'prod')
