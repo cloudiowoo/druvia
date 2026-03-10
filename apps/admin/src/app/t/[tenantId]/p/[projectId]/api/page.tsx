@@ -52,7 +52,10 @@ export default function ProjectApiPage() {
   const params = useParams();
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
-  const { currentTenant, currentProject } = useAppStore();
+  const { currentTenant, currentProject, currentEnv } = useAppStore();
+
+  // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
+  const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
 
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [showDbPassword, setShowDbPassword] = useState(false);
@@ -65,8 +68,8 @@ export default function ProjectApiPage() {
   const [error, setError] = useState<string | null>(null);
 
   const graphqlEndpoint = `${HASURA_URL}/v1/graphql`;
-  const restEndpoint = currentProject?.schemaName
-    ? `${API_URL}/api/v1/schemas/${currentProject.schemaName}`
+  const restEndpoint = effectiveSchema
+    ? `${API_URL}/api/v1/schemas/${effectiveSchema}`
     : `${API_URL}/api/v1/schemas/<schema>`;
 
   // Hasura URL for GraphQL playground (credentials handled server-side via proxy)
@@ -358,7 +361,7 @@ export default function ProjectApiPage() {
 
         {/* REST Tab */}
         <TabsContent value="rest" className="h-[calc(100vh-220px)] min-h-[500px]">
-          <RestClient openApiUrl={`${API_URL}/api/v1/projects/${projectId}/openapi`} />
+          <RestClient projectId={projectId} />
         </TabsContent>
 
         {/* 文档 Tab */}

@@ -23,7 +23,10 @@ export default function ProjectDatabasePage() {
   const params = useParams();
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
-  const { currentTenant, currentProject } = useAppStore();
+  const { currentTenant, currentProject, currentEnv } = useAppStore();
+
+  // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
+  const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
 
   const [history, setHistory] = useState<QueryHistory[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -41,8 +44,8 @@ export default function ProjectDatabasePage() {
   // 加载 Schema 元数据（用于自动完成）
   useEffect(() => {
     async function loadMetadata() {
-      if (!currentProject?.schemaName) return;
-      const res = await api.getSchemaMetadata(currentProject.schemaName);
+      if (!effectiveSchema) return;
+      const res = await api.getSchemaMetadata(effectiveSchema);
       if (res.success && res.data) {
         setSchemaMetadata(res.data);
       }
@@ -103,8 +106,8 @@ export default function ProjectDatabasePage() {
             projectId={projectId}
             onImportComplete={() => {
               // 刷新 schema metadata
-              if (currentProject?.schemaName) {
-                api.getSchemaMetadata(currentProject.schemaName).then(res => {
+              if (effectiveSchema) {
+                api.getSchemaMetadata(effectiveSchema).then(res => {
                   if (res.success && res.data) {
                     setSchemaMetadata(res.data);
                   }

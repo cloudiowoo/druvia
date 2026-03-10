@@ -202,7 +202,7 @@ export async function configureTableSubscription(
     } catch (error) {
       // 如果权限已存在，忽略错误
       const errorMsg = error instanceof Error ? error.message : String(error);
-      if (!errorMsg.includes('already exists')) {
+      if (!errorMsg.includes('already exists') && !errorMsg.includes('already defined')) {
         throw error;
       }
     }

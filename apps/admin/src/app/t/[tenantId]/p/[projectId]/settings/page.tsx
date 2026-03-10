@@ -16,6 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { GitBranch, Key, ChevronRight } from 'lucide-react';
 
 interface ProjectDetails {
   projectId: string;
@@ -198,6 +199,41 @@ export default function ProjectSettingsPage() {
               <span className="text-gray-500">项目 ID</span>
               <span className="font-mono text-sm">{project.projectId}</span>
             </div>
+          </div>
+        </div>
+
+        {/* 更多设置 */}
+        <div className="card lg:col-span-2">
+          <div className="card-header">
+            <h2 className="font-semibold">更多设置</h2>
+          </div>
+          <div className="card-body p-0">
+            <Link
+              href={`/t/${tenantId}/p/${projectId}/settings/environments`}
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 border-b"
+            >
+              <div className="flex items-center gap-3">
+                <GitBranch className="h-5 w-5 text-gray-400" />
+                <div>
+                  <div className="font-medium">环境管理</div>
+                  <div className="text-sm text-gray-500">管理开发、测试和生产环境</div>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-gray-400" />
+            </Link>
+            <Link
+              href={`/t/${tenantId}/p/${projectId}/settings/api-keys`}
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50"
+            >
+              <div className="flex items-center gap-3">
+                <Key className="h-5 w-5 text-gray-400" />
+                <div>
+                  <div className="font-medium">API 密钥</div>
+                  <div className="text-sm text-gray-500">管理项目的 API 访问密钥</div>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-gray-400" />
+            </Link>
           </div>
         </div>
 
