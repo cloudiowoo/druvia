@@ -9,7 +9,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "migrate": "pnpm --filter @druvia/api exec tsx src/cli/migrate.ts"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.10",
