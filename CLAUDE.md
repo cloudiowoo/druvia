@@ -17,6 +17,7 @@
 | `pnpm test` | 运行测试 |
 | `make dev-up` | 启动 Docker 开发环境 |
 | `make dev-down` | 停止 Docker 开发环境 |
+| `pnpm migrate <up\|down\|status\|bootstrap>` | 数据库迁移管理 |
 
 ### Docker 生产部署
 
@@ -47,9 +48,11 @@ druvia/
 ├── apps/admin/        # Next.js 管理界面 (port 3000)
 ├── packages/shared/   # 共享类型/工具
 ├── docker/            # Docker Compose 配置
-├── migrations/        # SQL 迁移脚本
+├── migrations/        # SQL 迁移脚本（.up.sql / .down.sql）
+├── apps/api/src/cli/  # CLI 工具（migrate）
 ├── tests/             # 测试目录 (unit/integration/e2e)
-└── docs/plans/        # 设计文档
+├── docs/plans/        # 设计文档
+└── docs/migration/    # 迁移兼容性文档
 ```
 
 ---
@@ -62,6 +65,9 @@ druvia/
 - `docker/docker-compose.yml` - 开发环境（仅基础设施）
 - `docker/docker-compose.prod.yml` - 生产环境（完整镜像）
 - `docker/docker-compose.local.yml` - 本地开发（挂载构建产物）
+- `apps/api/src/cli/migrate.ts` - 数据库迁移 CLI（up/down/status/bootstrap）
+- `docs/migration/supabase-compat.md` - Supabase → Druvia 兼容性对照
+- `docs/003-version-release-guide.md` - 版本发布与迁移操作手册
 
 ---
 
@@ -95,7 +101,9 @@ druvia/
 - **外键引用需 schema 前缀**：`REFERENCES "schema"."table"("column")` 而非 `REFERENCES "table"("column")`
 - **Hasura 表追踪**：创建表后需调用 `trackTableInHasura()` 才能在 GraphQL 中使用
 - **Schema 克隆外键问题**：`CREATE TABLE ... LIKE ... INCLUDING ALL` 会复制外键但不更新 schema 引用，需手动重建
-- **迁移文件编号**：新建前先 `ls migrations/*.sql` 检查现有编号，避免冲突
+- **迁移文件格式**：`NNN_name.up.sql` + `NNN_name.down.sql`，新建前先 `ls migrations/*.up.sql` 检查编号
+- **迁移并发保护**：CLI 使用 `pg_advisory_lock`，勿用 `process.exit()` 跳过 finally 块
+- **Bootstrap 双重检测**：`tableChecks` 检查表存在性，`dataChecks` 检查数据行（如 010 默认租户），新增纯数据迁移需在 `dataChecks` 中添加查询
 - **druvia_users 表结构**：用 `username` 而非 `name`，必须提供 `user_id`
 
 ### 前端
@@ -149,4 +157,4 @@ druvia/
 
 ---
 
-*Last Updated: 2026-03-11*
+*Last Updated: 2026-03-16*

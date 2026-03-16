@@ -189,9 +189,14 @@ async function bootstrap(): Promise<void> {
     7: 'druvia_storage_buckets',
     8: 'druvia_project_auth_providers',
     9: 'druvia_functions',
-    // 010 仅插入数据，无法通过表存在性检测，跳过
+    // 010 通过数据行检查，见下方 dataChecks
     11: 'druvia_api_keys',
     12: 'druvia_project_environments',
+  };
+
+  // 纯数据迁移：通过查询数据行判断是否已应用
+  const dataChecks: Record<number, string> = {
+    10: `SELECT EXISTS (SELECT 1 FROM druvia_tenants WHERE tenant_id = 'default') as exists`,
   };
 
   const result = await pool.query(`
@@ -208,15 +213,27 @@ async function bootstrap(): Promise<void> {
   const migrations = scanMigrations('up').filter(m => m.version > 0);
   let count = 0;
   for (const m of migrations) {
+    let applied = false;
+
     const checkTable = tableChecks[m.version];
-    if (checkTable && existingTables.has(checkTable)) {
+    if (checkTable) {
+      applied = existingTables.has(checkTable);
+    }
+
+    const dataQuery = dataChecks[m.version];
+    if (dataQuery) {
+      const r = await pool.query(dataQuery);
+      applied = r.rows[0].exists;
+    }
+
+    if (applied) {
       await pool.query(
         'INSERT INTO druvia_schema_versions (version, name) VALUES ($1, $2) ON CONFLICT DO NOTHING',
         [m.version, m.name]
       );
       count++;
     } else {
-      console.log(`  ○ ${String(m.version).padStart(3, '0')} ${m.name} (table not found, skipped)`);
+      console.log(`  ○ ${String(m.version).padStart(3, '0')} ${m.name} (not detected, skipped)`);
     }
   }
   console.log(`Bootstrapped ${count} existing migration(s).`);
