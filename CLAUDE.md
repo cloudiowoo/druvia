@@ -4,6 +4,8 @@
 
 **Stack**: Node.js 22 + Fastify 5 + PostgreSQL 17 + Hasura CE 2.48 + Redis 7
 
+**版本**: v0.1.0 | Phase 1–5 P2 已完成 | Next.js 16 已升级（webpack 模式，Turbopack 因 Docker 兼容问题未启用）
+
 ---
 
 ## Commands
@@ -55,6 +57,30 @@ druvia/
 └── docs/migration/    # 迁移兼容性文档
 ```
 
+### 功能状态（v0.1.0）
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| Auth（注册/登录/OAuth） | ✅ | 微信小程序+网页+OIDC；钉钉/飞书 adapter 未实现 |
+| Database CRUD | ✅ | Hasura GraphQL，建表自动 track+权限 |
+| Storage | ✅ | R2/S3/Local 适配器，上传/下载/签名URL |
+| Realtime | ✅ | Hasura 原生 WebSocket 订阅，API 层管理配置 |
+| Edge Functions | ⚠️ | API 层完整，依赖外部 Deno worker（`DENO_WORKER_URL`），worker 不在本仓库 |
+| Hasura Actions | ⚠️ | 仅 4 个内置（register/login/me/create-tenant），无通用用户自定义 RPC |
+| RLS | ❌ | Hasura 权限 filter 当前全开 `{}`，需手动配行级规则 |
+| Image transformations | ❌ | Storage 层无图片处理 |
+| Broadcast / Presence | ❌ | Hasura 不提供 |
+| Client SDK | ❌ | `@druvia/sdk` 未开始 |
+| MCP Server | ✅ | `packages/mcp-server/`，5 个工具，生产可用 |
+
+### Supabase 迁移判断
+
+- **可迁移**：仅用 Auth + CRUD + Storage + Realtime 的应用
+- **需改写**：用了 `supabase.rpc()` → 改为 GraphQL mutation 或 Hasura Action
+- **需部署 Deno worker**：用了 Edge Functions
+- **需手动配权限**：依赖 RLS 行级隔离的应用
+- **暂不可迁**：依赖 Broadcast/Presence/图片变换的应用
+
 ---
 
 ## Key Files
@@ -68,6 +94,7 @@ druvia/
 - `apps/api/src/cli/migrate.ts` - 数据库迁移 CLI（up/down/status/bootstrap）
 - `docs/migration/supabase-compat.md` - Supabase → Druvia 兼容性对照
 - `docs/003-version-release-guide.md` - 版本发布与迁移操作手册
+- `packages/mcp-server/` - MCP Server 包（list_tables/query_data/insert_row/execute_sql）
 
 ---
 
@@ -157,4 +184,4 @@ druvia/
 
 ---
 
-*Last Updated: 2026-03-16*
+*Last Updated: 2026-03-17*
