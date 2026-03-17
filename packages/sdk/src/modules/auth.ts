@@ -76,6 +76,7 @@ export class DruviaAuth {
     try {
       const response = await this.fetchFn(`${this.baseUrl}${path}`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
       const json = await response.json()

@@ -49,6 +49,7 @@ druvia/
 ├── apps/api/          # Fastify 管理层 (port 3001)
 ├── apps/admin/        # Next.js 管理界面 (port 3000)
 ├── packages/shared/   # 共享类型/工具
+├── packages/sdk/      # Client SDK (@druvia/sdk)
 ├── docker/            # Docker Compose 配置
 ├── migrations/        # SQL 迁移脚本（.up.sql / .down.sql）
 ├── apps/api/src/cli/  # CLI 工具（migrate）
@@ -70,7 +71,7 @@ druvia/
 | RLS | ❌ | Hasura 权限 filter 当前全开 `{}`，需手动配行级规则 |
 | Image transformations | ❌ | Storage 层无图片处理 |
 | Broadcast / Presence | ❌ | Hasura 不提供 |
-| Client SDK | ❌ | `@druvia/sdk` 未开始 |
+| Client SDK | ⚠️ | `@druvia/sdk` Auth/CRUD/Storage/Realtime/RPC/Functions 已实现，缺 RPC 代理端点 |
 | MCP Server | ✅ | `packages/mcp-server/`，5 个工具，生产可用 |
 
 ### Supabase 迁移判断

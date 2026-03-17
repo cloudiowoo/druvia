@@ -228,8 +228,9 @@ export class QueryBuilder<T = unknown> {
       } else {
         throw new Error(`Cannot resolve fields for table "${this.table}".`)
       }
-    } catch {
-      throw new Error(`@druvia/sdk: Introspection failed for table "${this.table}". Specify fields explicitly: .select('id, name, ...')`)
+    } catch (err) {
+      const cause = err instanceof Error ? err.message : String(err)
+      throw new Error(`@druvia/sdk: Introspection failed for table "${this.table}": ${cause}. Specify fields explicitly: .select('id, name, ...')`)
     }
   }
 

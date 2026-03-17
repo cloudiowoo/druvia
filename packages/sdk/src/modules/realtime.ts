@@ -39,7 +39,7 @@ export class RealtimeChannel {
   }
 
   subscribe(): Subscription {
-    this.ws = this.wsFactory(this.wsUrl, ['graphql-ws'])
+    this.ws = this.wsFactory(this.wsUrl, ['graphql-transport-ws'])
 
     this.ws.onOpen(() => {
       this.ws!.send(JSON.stringify({ type: 'connection_init', payload: {} }))
@@ -55,12 +55,12 @@ export class RealtimeChannel {
           const fields = config.fields ?? 'id'
           const filterClause = config.filter ? `(where: {${this.parseFilter(config.filter)}})` : ''
           const query = `subscription { ${config.table}${filterClause} { ${fields} } }`
-          this.ws!.send(JSON.stringify({ id, type: 'start', payload: { query } }))
+          this.ws!.send(JSON.stringify({ id, type: 'subscribe', payload: { query } }))
         }
         return
       }
 
-      if (msg.type === 'data' && msg.payload?.data) {
+      if (msg.type === 'next' && msg.payload?.data) {
         const tableName = Object.keys(msg.payload.data)[0]
         const newRows: Record<string, unknown>[] = msg.payload.data[tableName] ?? []
         const oldRows = this.snapshot.get(tableName) ?? null
@@ -80,6 +80,9 @@ export class RealtimeChannel {
 
     return {
       unsubscribe: () => {
+        for (let i = 1; i <= this.subIdCounter; i++) {
+          this.ws?.send(JSON.stringify({ id: String(i), type: 'complete' }))
+        }
         this.ws?.close()
         this.ws = null
         this.snapshot.clear()

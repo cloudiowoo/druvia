@@ -50,11 +50,11 @@ describe('DruviaRealtime', () => {
     ws._trigger('open')
     ws._trigger('message', JSON.stringify({ type: 'connection_ack' }))
     ws._trigger('message', JSON.stringify({
-      type: 'data', id: '1',
+      type: 'next', id: '1',
       payload: { data: { items: [{ id: 1, name: 'A' }] } }
     }))
     ws._trigger('message', JSON.stringify({
-      type: 'data', id: '1',
+      type: 'next', id: '1',
       payload: { data: { items: [{ id: 1, name: 'A' }, { id: 2, name: 'B' }] } }
     }))
 
@@ -74,11 +74,11 @@ describe('DruviaRealtime', () => {
     ws._trigger('open')
     ws._trigger('message', JSON.stringify({ type: 'connection_ack' }))
     ws._trigger('message', JSON.stringify({
-      type: 'data', id: '1',
+      type: 'next', id: '1',
       payload: { data: { items: [{ id: 1, name: 'A' }] } }
     }))
     ws._trigger('message', JSON.stringify({
-      type: 'data', id: '1',
+      type: 'next', id: '1',
       payload: { data: { items: [{ id: 1, name: 'A_updated' }] } }
     }))
 
@@ -98,11 +98,11 @@ describe('DruviaRealtime', () => {
     ws._trigger('open')
     ws._trigger('message', JSON.stringify({ type: 'connection_ack' }))
     ws._trigger('message', JSON.stringify({
-      type: 'data', id: '1',
+      type: 'next', id: '1',
       payload: { data: { items: [{ id: 1, name: 'A' }] } }
     }))
     ws._trigger('message', JSON.stringify({
-      type: 'data', id: '1',
+      type: 'next', id: '1',
       payload: { data: { items: [] } }
     }))
 
