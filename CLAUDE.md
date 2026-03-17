@@ -53,7 +53,7 @@ druvia/
 ├── migrations/        # SQL 迁移脚本（.up.sql / .down.sql）
 ├── apps/api/src/cli/  # CLI 工具（migrate）
 ├── tests/             # 测试目录 (unit/integration/e2e)
-├── docs/plans/        # 设计文档
+├── docs/plans/        # 设计文档 + 实施计划（命名：*-design.md / *-impl.md）
 └── docs/migration/    # 迁移兼容性文档
 ```
 
@@ -65,7 +65,7 @@ druvia/
 | Database CRUD | ✅ | Hasura GraphQL，建表自动 track+权限 |
 | Storage | ✅ | R2/S3/Local 适配器，上传/下载/签名URL |
 | Realtime | ✅ | Hasura 原生 WebSocket 订阅，API 层管理配置 |
-| Edge Functions | ⚠️ | API 层完整，依赖外部 Deno worker（`DENO_WORKER_URL`），worker 不在本仓库 |
+| Edge Functions | ⚠️ | API 层完整，Deno Worker 在 `docker/deno-worker/`（main.ts + executor.ts） |
 | Hasura Actions | ⚠️ | 仅 4 个内置（register/login/me/create-tenant），无通用用户自定义 RPC |
 | RLS | ❌ | Hasura 权限 filter 当前全开 `{}`，需手动配行级规则 |
 | Image transformations | ❌ | Storage 层无图片处理 |
@@ -93,6 +93,7 @@ druvia/
 - `docker/docker-compose.local.yml` - 本地开发（挂载构建产物）
 - `apps/api/src/cli/migrate.ts` - 数据库迁移 CLI（up/down/status/bootstrap）
 - `docs/migration/supabase-compat.md` - Supabase → Druvia 兼容性对照
+- `docker/deno-worker/` - Edge Functions Deno Worker（main.ts 服务端 + executor.ts 隔离执行）
 - `docs/003-version-release-guide.md` - 版本发布与迁移操作手册
 - `packages/mcp-server/` - MCP Server 包（list_tables/query_data/insert_row/execute_sql）
 
@@ -113,13 +114,15 @@ druvia/
 ## Gotchas
 
 ### Git
-- **禁止自动提交**：使用 `/commit` 生成信息，由用户手动提交
+- **禁止自动提交**：设计/实施文档和代码均由用户确认后手动提交，使用 `/commit` 生成信息
 - **Worktree 目录**：`.worktrees/`
 
 ### API
 - **POST 空 body**：必须发送 `{}` 而非空 body，否则 `FST_ERR_CTP_EMPTY_JSON_BODY`
 - **multipart/JSON 双模式**：先检查 `Content-Type` 再调用 `request.file()`
 - **权限检查**：使用 `verifyProjectAccess(request, reply)` helper
+- **verifyProjectAccess 模式**：每个 controller 内部定义，非共享 helper；import `checkProjectAccess` from `../../lib/access.js`
+- **路由前缀**：所有路由注册在 `{ prefix: '/api/v1' }`，GraphQL 代理在 `openapi.routes.ts`
 
 ### 数据库
 - **BigInt 返回字符串**：用 `Number()` 或 `parseInt()` 转换
@@ -132,6 +135,8 @@ druvia/
 - **迁移并发保护**：CLI 使用 `pg_advisory_lock`，勿用 `process.exit()` 跳过 finally 块
 - **Bootstrap 双重检测**：`tableChecks` 检查表存在性，`dataChecks` 检查数据行（如 010 默认租户），新增纯数据迁移需在 `dataChecks` 中添加查询
 - **druvia_users 表结构**：用 `username` 而非 `name`，必须提供 `user_id`
+- **Project 对象字段**：`schema_name`（snake_case），非 `schemaName`
+- **Hasura introspection 类型名**：格式为 `<schema>_<table>`（如 `dru_taroapp_users`），非简单表名
 
 ### 前端
 - **CodeMirror 快捷键**：自定义 keymap 用 `Prec.highest()` 包装
@@ -152,6 +157,7 @@ druvia/
 - **前端 API 地址**：生产环境 `NEXT_PUBLIC_API_URL=` 为空（使用相对路径通过 nginx）
 - **数据目录**：`docker/postgres_data/`、`docker/redis_data/` 映射到主机
 - **nginx 代理**：`/api/` → API，`/v1/graphql` → Hasura，`/` → Admin
+- **Hasura WebSocket**：直连 `:8080/v1/graphql`，nginx 代理 `/v1/graphql` 和 `/v1/graphql/ws`，API `:3001` 不代理 WS
 
 ### 测试
 - **位置**：`tests/` 目录，命名 `<module>.test.ts`
