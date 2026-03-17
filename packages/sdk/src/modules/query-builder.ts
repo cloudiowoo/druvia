@@ -5,7 +5,7 @@ type PendingOp =
   | { type: 'select' }
   | { type: 'insert'; data: Record<string, unknown> | Record<string, unknown>[] }
   | { type: 'update'; data: Record<string, unknown> }
-  | { type: 'upsert'; data: Record<string, unknown> | Record<string, unknown>[] }
+  | { type: 'upsert'; data: Record<string, unknown> | Record<string, unknown>[]; constraint?: string }
   | { type: 'delete' }
 
 export class QueryBuilder<T = unknown> {
@@ -39,19 +39,19 @@ export class QueryBuilder<T = unknown> {
     return this.makeThenable()
   }
 
-  update(data: Record<string, unknown>): this {
+  update(data: Record<string, unknown>): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
     this.pendingOp = { type: 'update', data }
-    return this
-  }
-
-  upsert(data: Record<string, unknown> | Record<string, unknown>[]): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
-    this.pendingOp = { type: 'upsert', data }
     return this.makeThenable()
   }
 
-  delete(): this {
+  upsert(data: Record<string, unknown> | Record<string, unknown>[], opts?: { onConflict?: string }): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+    this.pendingOp = { type: 'upsert', data, constraint: opts?.onConflict }
+    return this.makeThenable()
+  }
+
+  delete(): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
     this.pendingOp = { type: 'delete' }
-    return this
+    return this.makeThenable()
   }
 
   // --- Filters ---
@@ -130,7 +130,7 @@ export class QueryBuilder<T = unknown> {
       } else if (op.type === 'insert' || op.type === 'upsert') {
         const objects = Array.isArray(op.data) ? op.data : [op.data]
         const onConflict = op.type === 'upsert'
-          ? `, on_conflict: {constraint: ${this.table}_pkey, update_columns: [${Object.keys(objects[0]).filter(k => k !== 'id').join(', ')}]}`
+          ? `, on_conflict: {constraint: ${op.constraint ?? this.table + '_pkey'}, update_columns: [${Object.keys(objects[0]).filter(k => k !== 'id').join(', ')}]}`
           : ''
         query = buildMutation(this.table, 'insert', {
           objects,
@@ -200,8 +200,12 @@ export class QueryBuilder<T = unknown> {
   // --- Introspection for select('*') ---
   private static fieldCache = new Map<string, string[]>()
 
+  private get cacheKey(): string {
+    return this.schema ? `${this.schema}.${this.table}` : this.table
+  }
+
   private async resolveWildcardFields(): Promise<void> {
-    const cached = QueryBuilder.fieldCache.get(this.table)
+    const cached = QueryBuilder.fieldCache.get(this.cacheKey)
     if (cached) {
       this.selectStr = this.selectStr.replace('*', cached.join(', '))
       return
@@ -219,7 +223,7 @@ export class QueryBuilder<T = unknown> {
       const fields = json.data?.__type?.fields?.map((f: { name: string }) => f.name)
       if (fields && fields.length > 0) {
         const filtered = fields.filter((f: string) => !f.startsWith('__'))
-        QueryBuilder.fieldCache.set(this.table, filtered)
+        QueryBuilder.fieldCache.set(this.cacheKey, filtered)
         this.selectStr = this.selectStr.replace('*', filtered.join(', '))
       } else {
         throw new Error(`Cannot resolve fields for table "${this.table}".`)

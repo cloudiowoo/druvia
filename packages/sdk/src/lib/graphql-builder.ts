@@ -35,8 +35,12 @@ function parseSelectFields(fields: string): string {
     .join('\n    ')
 }
 
+function escapeGraphQLString(str: string): string {
+  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r')
+}
+
 function serializeValue(value: unknown): string {
-  if (typeof value === 'string') return `"${value}"`
+  if (typeof value === 'string') return `"${escapeGraphQLString(value)}"`
   if (Array.isArray(value)) return `[${value.map(serializeValue).join(', ')}]`
   if (value === null) return 'null'
   if (typeof value === 'boolean') return String(value)
