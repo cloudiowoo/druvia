@@ -14,7 +14,108 @@
 
 **Target repo:** `/Users/cloudio/Developer/RN/TestRn-Cursor/taro/taro-app`
 
+**Druvia baseline:** v0.2.0 (`f34c7cd`)
+
 ---
+
+## 版本管理与迁移策略
+
+### 原则
+
+Supabase 版本和 Druvia 版本是两套独立系统（独立数据库、独立后端），迁移完成后 Supabase 版本仅保留不合并。因此采用 **tag 保留 + main 直接迁移** 策略。
+
+### 代码版本管理
+
+```
+taro-app/
+  main ──●── v1.0-supabase (tag，Supabase 最终版本)
+          \●── 开始迁移（本文档 Chunk 1–3）
+           ●── Auth 迁移
+           ●── CRUD 迁移
+           ●── Storage / Realtime / RPC 迁移
+           ●── 验证通过
+           ●── v2.0-druvia (tag，Druvia 首个版本)
+```
+
+**操作步骤：**
+
+1. 在 taro-app 项目中，先将当前 Supabase 版本打 tag：
+   ```bash
+   cd /Users/cloudio/Developer/RN/TestRn-Cursor/taro/taro-app
+   git tag -a v1.0-supabase -m "v1.0-supabase - Supabase 最终版本，迁移前基线"
+   git push origin v1.0-supabase
+   ```
+2. 直接在 main 上进行迁移开发
+3. 迁移期间如需紧急修复 Supabase 版本，从 tag 拉分支：
+   ```bash
+   git checkout -b hotfix/supabase v1.0-supabase
+   ```
+4. 全部迁移完成并验证通过后，打 Druvia 版本 tag：
+   ```bash
+   git tag -a v2.0-druvia -m "v2.0-druvia - 完成 Supabase → Druvia 迁移"
+   git push origin v2.0-druvia
+   ```
+
+### 数据库版本管理
+
+Supabase 和 Druvia 是两套完全独立的 PostgreSQL 数据库，不存在"同一数据库结构变化"的问题。
+
+| 维度 | Supabase（保留） | Druvia（新建） |
+|------|-----------------|---------------|
+| 数据库 | Supabase 云端 PostgreSQL | 自托管 PostgreSQL（druvia-postgres） |
+| Schema | `public` | `dru_taroapp`（Schema-per-Tenant） |
+| 数据 | 原样保留，不动 | 从 Supabase 导出 → 转换 → 导入 |
+| 函数 | `public.function_name` | `dru_taroapp.function_name` |
+| GraphQL | 无（REST API） | Hasura CE 自动生成 |
+| 关停时机 | 确认 Druvia 稳定运行后再关停 | — |
+
+**数据库迁移产物纳入版本管理：**
+
+在 taro-app 项目中创建 `migration/` 目录，保存所有迁移脚本：
+
+```
+taro-app/
+├── migration/
+│   ├── README.md                      # 迁移步骤说明 + 执行记录
+│   ├── 01-supabase-schema.sql         # Supabase 原始表结构快照
+│   ├── 02-supabase-functions.sql      # Supabase PG 函数定义快照
+│   ├── 03-supabase-data.sql           # Supabase 数据导出（可选，大文件用 .gitignore）
+│   ├── 04-druvia-schema.sql           # 适配后的 Druvia 目标结构（schema 替换后）
+│   ├── 05-druvia-functions.sql        # 适配后的 PG 函数
+│   ├── 06-transform-data.sql          # 数据转换脚本（字段映射、类型调整）
+│   ├── 07-reset-sequences.sql         # 序列重置脚本
+│   └── 08-hasura-track.sh             # Hasura 表追踪脚本
+├── src/
+└── ...
+```
+
+**迁移脚本提交规范：**
+
+```bash
+# 导出 Supabase 快照时提交
+git add migration/01-supabase-schema.sql migration/02-supabase-functions.sql
+git commit -m "chore(migration): Supabase 结构快照"
+
+# 适配 Druvia 后提交
+git add migration/04-druvia-schema.sql migration/05-druvia-functions.sql
+git commit -m "chore(migration): Druvia 目标结构（dru_taroapp schema）"
+
+# 数据转换脚本提交
+git add migration/06-transform-data.sql
+git commit -m "chore(migration): 数据转换脚本"
+```
+
+### 本文档使用方式
+
+本文档作为迁移参照，复制到 taro-app 项目中使用：
+
+```bash
+# 将本文档复制到 taro-app 项目
+cp docs/plans/2026-03-17-taro-migration-impl.md \
+   /Users/cloudio/Developer/RN/TestRn-Cursor/taro/taro-app/migration/MIGRATION-PLAN.md
+```
+
+在 taro-app 项目中按 Chunk 顺序执行，完成一项勾选一项。
 
 ## 前置条件
 
