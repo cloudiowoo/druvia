@@ -7,6 +7,8 @@ export type {
   DruviaError,
   Session,
   UserInfo,
+  UserResponse,
+  SessionResponse,
   FetchFn,
   StorageAdapter,
   WebSocketLike,

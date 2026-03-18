@@ -72,6 +72,13 @@ export class DruviaClient {
     }
     return this.realtime.channel(name)
   }
+
+  removeChannel(channel: RealtimeChannel): void {
+    if (!this.realtime) {
+      throw new Error('@druvia/sdk: No WebSocket available.')
+    }
+    this.realtime.removeChannel(channel)
+  }
 }
 
 export function createClient(baseUrl: string, apiKey: string, options: DruviaClientOptions): DruviaClient {

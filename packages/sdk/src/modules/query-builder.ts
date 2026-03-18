@@ -1,4 +1,4 @@
-import { buildQuery, buildMutation, type QueryState, type FilterItem, type OrderByItem } from '../lib/graphql-builder.js'
+import { buildQuery, buildMutation, type QueryState, type FilterItem, type WhereItem, type OrFilter, type OrderByItem } from '../lib/graphql-builder.js'
 import type { FetchFn, DruviaResponse } from '../types.js'
 
 type PendingOp =
@@ -14,7 +14,7 @@ export class QueryBuilder<T = unknown> {
   private graphqlUrl: string
   private fetchFn: FetchFn
   private selectStr = '*'
-  private filters: FilterItem[] = []
+  private filters: WhereItem[] = []
   private orderByItems: OrderByItem[] = []
   private offsetVal: number | undefined
   private limitVal: number | undefined
@@ -98,6 +98,61 @@ export class QueryBuilder<T = unknown> {
   single(): PromiseLike<DruviaResponse<T>> {
     this.singleFlag = true
     return { then: (resolve: any, reject: any) => this.execute().then(resolve, reject) } as PromiseLike<DruviaResponse<T>>
+  }
+
+  maybeSingle(): PromiseLike<DruviaResponse<T | null>> {
+    this.singleFlag = true
+    return {
+      then: (resolve: any, reject: any) =>
+        this.execute().then((result) => {
+          if (result.error?.code === 'PGRST116') {
+            return { data: null, error: null }
+          }
+          return result
+        }).then(resolve, reject)
+    } as PromiseLike<DruviaResponse<T | null>>
+  }
+
+  or(filterString: string): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+    const conditions: FilterItem[] = filterString.split(',').map(part => {
+      const [column, op, ...rest] = part.trim().split('.')
+      const value = rest.join('.')
+      if (op === 'is' && value === 'null') {
+        return { column, op: '_is_null', value: true }
+      }
+      const hasuraOp = `_${op}`
+      let parsed: unknown = value
+      if (value === 'true') parsed = true
+      else if (value === 'false') parsed = false
+      else if (/^\d+(\.\d+)?$/.test(value)) parsed = Number(value)
+      return { column, op: hasuraOp, value: parsed }
+    })
+    this.filters.push({ type: 'or', conditions } as OrFilter)
+    return this.makeThenable()
+  }
+
+  not(column: string, operator: string, value: unknown): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+    const negationMap: Record<string, string> = {
+      eq: '_neq',
+      neq: '_eq',
+      gt: '_lte',
+      gte: '_lt',
+      lt: '_gte',
+      lte: '_gt',
+      like: '_nlike',
+      ilike: '_nilike',
+      is: '_is_null',
+    }
+    const hasuraOp = negationMap[operator]
+    if (!hasuraOp) {
+      throw new Error(`@druvia/sdk: Unsupported not() operator: "${operator}"`)
+    }
+    if (operator === 'is' && value === null) {
+      this.filters.push({ column, op: '_is_null', value: false })
+    } else {
+      this.filters.push({ column, op: hasuraOp, value })
+    }
+    return this.makeThenable()
   }
 
   // --- Execution ---
@@ -192,7 +247,12 @@ export class QueryBuilder<T = unknown> {
   private buildWhereObject(): Record<string, unknown> {
     const where: Record<string, unknown> = {}
     for (const f of this.filters) {
-      where[f.column] = { [f.op]: f.value }
+      if ('type' in f && f.type === 'or') {
+        where._or = (f as OrFilter).conditions.map(c => ({ [c.column]: { [c.op]: c.value } }))
+      } else {
+        const fi = f as FilterItem
+        where[fi.column] = { [fi.op]: fi.value }
+      }
     }
     return where
   }

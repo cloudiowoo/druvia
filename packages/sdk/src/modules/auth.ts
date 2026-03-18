@@ -1,4 +1,4 @@
-import type { FetchFn, StorageAdapter, DruviaResponse, Session, UserInfo } from '../types.js'
+import type { FetchFn, StorageAdapter, DruviaResponse, Session, UserInfo, UserResponse, SessionResponse } from '../types.js'
 
 const SESSION_KEY = 'druvia.session'
 
@@ -39,32 +39,79 @@ export class DruviaAuth {
     this.notify('SIGNED_OUT', null)
   }
 
-  async getUser(): Promise<DruviaResponse<UserInfo>> {
+  async getUser(): Promise<UserResponse> {
     try {
       const response = await this.fetchFn(`${this.baseUrl}/users/me`, { method: 'GET' })
       const json = await response.json()
       if (!response.ok) {
-        return { data: null, error: json.error ?? { code: 'AUTH_ERROR', message: 'Failed to get user' } }
+        return { data: { user: null }, error: json.error ?? { code: 'AUTH_ERROR', message: 'Failed to get user' } }
       }
-      return { data: json.data ?? json, error: null }
+      return { data: { user: json.data ?? json }, error: null }
     } catch (err) {
-      return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
+      return { data: { user: null }, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
     }
   }
 
-  async getSession(): Promise<DruviaResponse<Session>> {
+  async getSession(): Promise<SessionResponse> {
     const raw = await this.storage.getItem(SESSION_KEY)
-    if (!raw) return { data: null, error: null }
+    if (!raw) return { data: { session: null }, error: null }
     try {
-      return { data: JSON.parse(raw), error: null }
+      return { data: { session: JSON.parse(raw) }, error: null }
     } catch {
-      return { data: null, error: null }
+      return { data: { session: null }, error: null }
     }
   }
 
   async getToken(): Promise<string | null> {
     const { data } = await this.getSession()
-    return data?.accessToken ?? null
+    return data.session?.accessToken ?? null
+  }
+
+  async updateUser(params: { data: Record<string, unknown> }): Promise<UserResponse> {
+    try {
+      const body: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(params.data)) {
+        const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+        body[camelKey] = value
+      }
+      const response = await this.fetchFn(`${this.baseUrl}/users/me`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await response.json()
+      if (!response.ok) {
+        return { data: { user: null }, error: json.error ?? { code: 'UPDATE_ERROR', message: 'Failed to update user' } }
+      }
+      return { data: { user: json.data ?? json }, error: null }
+    } catch (err) {
+      return { data: { user: null }, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
+    }
+  }
+
+  async refreshSession(params: { refresh_token: string }): Promise<SessionResponse> {
+    try {
+      const response = await this.fetchFn(`${this.baseUrl}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: params.refresh_token }),
+      })
+      const json = await response.json()
+      if (!response.ok || json.success === false) {
+        return { data: { session: null }, error: json.error ?? { code: 'REFRESH_FAILED', message: 'Failed to refresh session' } }
+      }
+      const sessionData = json.data ?? json
+      const session: Session = {
+        accessToken: sessionData.token,
+        refreshToken: sessionData.refreshToken,
+        user: sessionData.user,
+      }
+      await this.storage.setItem(SESSION_KEY, JSON.stringify(session))
+      this.notify('SIGNED_IN', session)
+      return { data: { session }, error: null }
+    } catch (err) {
+      return { data: { session: null }, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
+    }
   }
 
   onAuthStateChange(callback: AuthChangeCallback): { unsubscribe: () => void } {
@@ -86,6 +133,7 @@ export class DruviaAuth {
       const sessionData = json.data ?? json
       const session: Session = {
         accessToken: sessionData.token,
+        refreshToken: sessionData.refreshToken,
         user: sessionData.user,
       }
       await this.storage.setItem(SESSION_KEY, JSON.stringify(session))

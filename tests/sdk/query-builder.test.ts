@@ -139,4 +139,70 @@ describe('QueryBuilder', () => {
     expect(result.data).toBeNull()
     expect(result.error!.code).toBe('NETWORK_ERROR')
   })
+
+  it('maybeSingle() returns single object when found', async () => {
+    const fetch = mockFetch({ data: { users: [{ id: 1, name: 'Alice' }] } })
+    const qb = new QueryBuilder('users', '/graphql', fetch)
+    const result = await qb.select('id, name').eq('id', 1).maybeSingle()
+
+    expect(result.data).toEqual({ id: 1, name: 'Alice' })
+    expect(result.error).toBeNull()
+  })
+
+  it('maybeSingle() returns null without error when no rows', async () => {
+    const fetch = mockFetch({ data: { users: [] } })
+    const qb = new QueryBuilder('users', '/graphql', fetch)
+    const result = await qb.select('id, name').eq('id', 999).maybeSingle()
+
+    expect(result.data).toBeNull()
+    expect(result.error).toBeNull()
+  })
+
+  it('or() generates _or where clause', async () => {
+    const fetch = mockFetch({ data: { activities: [{ id: 1 }] } })
+    const qb = new QueryBuilder('activities', '/graphql', fetch)
+    const result = await qb
+      .select('id')
+      .or('is_demo.eq.true,is_creator_demo.eq.true')
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('_or')
+    expect(body.query).toContain('is_demo')
+    expect(body.query).toContain('is_creator_demo')
+    expect(body.query).toContain('_eq')
+    expect(result.error).toBeNull()
+  })
+
+  it('or() combines with existing eq filters', async () => {
+    const fetch = mockFetch({ data: { activities: [] } })
+    const qb = new QueryBuilder('activities', '/graphql', fetch)
+    await qb
+      .select('id')
+      .eq('status', 'active')
+      .or('is_demo.eq.true,is_creator_demo.eq.true')
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('status')
+    expect(body.query).toContain('_or')
+  })
+
+  it('not() negates a filter condition', async () => {
+    const fetch = mockFetch({ data: { users: [{ id: 1, display_name: 'Alice' }] } })
+    const qb = new QueryBuilder('users', '/graphql', fetch)
+    const result = await qb.select('id, display_name').not('display_name', 'is', null)
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('display_name')
+    expect(body.query).toContain('_is_null: false')
+    expect(result.error).toBeNull()
+  })
+
+  it('not() with eq operator', async () => {
+    const fetch = mockFetch({ data: { users: [] } })
+    const qb = new QueryBuilder('users', '/graphql', fetch)
+    await qb.select('id').not('status', 'eq', 'deleted')
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('_neq')
+  })
 })

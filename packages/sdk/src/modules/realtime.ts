@@ -96,6 +96,19 @@ export class RealtimeChannel {
     }
   }
 
+  /** Close WebSocket and clean up resources */
+  unsubscribeAll(): void {
+    if (this.ws) {
+      for (let i = 1; i <= this.subIdCounter; i++) {
+        this.ws.send(JSON.stringify({ id: String(i), type: 'complete' }))
+      }
+      this.ws.close()
+      this.ws = null
+    }
+    this.snapshot.clear()
+    this.configs = []
+  }
+
   private diffAndEmit(
     oldRows: Record<string, unknown>[],
     newRows: Record<string, unknown>[],
@@ -144,6 +157,7 @@ export class RealtimeChannel {
 export class DruviaRealtime {
   private wsUrl: string
   private wsFactory: WebSocketFactory
+  private channels: Set<RealtimeChannel> = new Set()
 
   constructor(wsUrl: string, wsFactory: WebSocketFactory) {
     this.wsUrl = wsUrl
@@ -151,6 +165,13 @@ export class DruviaRealtime {
   }
 
   channel(_name: string): RealtimeChannel {
-    return new RealtimeChannel(this.wsUrl, this.wsFactory)
+    const ch = new RealtimeChannel(this.wsUrl, this.wsFactory)
+    this.channels.add(ch)
+    return ch
+  }
+
+  removeChannel(channel: RealtimeChannel): void {
+    channel.unsubscribeAll()
+    this.channels.delete(channel)
   }
 }

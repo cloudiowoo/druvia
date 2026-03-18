@@ -6,6 +6,7 @@ export async function userRoutes(app: FastifyInstance) {
   // Public routes
   app.post('/auth/register', controller.register);
   app.post('/auth/login', controller.login);
+  app.post('/auth/refresh', controller.refreshToken as never);
 
   // Protected routes (current user)
   app.get('/users/me', { preHandler: authenticate }, controller.getProfile);

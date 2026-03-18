@@ -21,21 +21,23 @@ function createMockStorage(): StorageAdapter {
 
 describe('DruviaAuth', () => {
   it('signUp calls register endpoint', async () => {
-    const fetch = createMockFetch({ success: true, data: { user: { id: 1, email: 'a@b.com' }, token: 'tok123' } })
+    const fetch = createMockFetch({ success: true, data: { user: { id: 1, email: 'a@b.com' }, token: 'tok123', refreshToken: 'ref123' } })
     const storage = createMockStorage()
     const auth = new DruviaAuth('/api/v1', fetch, storage)
     const result = await auth.signUp({ email: 'a@b.com', password: '12345678' })
     expect(result.error).toBeNull()
     expect(result.data?.user.email).toBe('a@b.com')
+    expect(result.data?.refreshToken).toBe('ref123')
     expect(fetch).toHaveBeenCalledWith('/api/v1/auth/register', expect.objectContaining({ method: 'POST' }))
   })
 
   it('signIn with email calls login endpoint', async () => {
-    const fetch = createMockFetch({ success: true, data: { user: { id: 1, email: 'a@b.com' }, token: 'tok123' } })
+    const fetch = createMockFetch({ success: true, data: { user: { id: 1, email: 'a@b.com' }, token: 'tok123', refreshToken: 'ref456' } })
     const storage = createMockStorage()
     const auth = new DruviaAuth('/api/v1', fetch, storage)
     const result = await auth.signIn({ email: 'a@b.com', password: '12345678' })
     expect(result.error).toBeNull()
+    expect(result.data?.refreshToken).toBe('ref456')
     expect(storage.setItem).toHaveBeenCalled()
   })
 
@@ -56,22 +58,34 @@ describe('DruviaAuth', () => {
     expect(storage.removeItem).toHaveBeenCalledWith('druvia.session')
   })
 
-  it('getUser returns current user', async () => {
+  it('getUser returns { data: { user } } structure', async () => {
     const fetch = createMockFetch({ success: true, data: { id: 1, email: 'a@b.com', username: 'admin', role: 'admin' } })
     const storage = createMockStorage()
-    await storage.setItem('druvia.session', JSON.stringify({ accessToken: 'tok', user: { id: 1 } }))
     const auth = new DruviaAuth('/api/v1', fetch, storage)
     const result = await auth.getUser()
-    expect(result.data).toBeTruthy()
-    expect(fetch).toHaveBeenCalledWith('/api/v1/users/me', expect.objectContaining({ method: 'GET' }))
+    expect(result.data.user).toBeTruthy()
+    expect(result.data.user?.email).toBe('a@b.com')
+    expect(result.error).toBeNull()
   })
 
-  it('getSession returns null when no session stored', async () => {
+  it('getSession returns { data: { session: null } } when no session stored', async () => {
     const fetch = createMockFetch({})
     const storage = createMockStorage()
     const auth = new DruviaAuth('/api/v1', fetch, storage)
     const result = await auth.getSession()
-    expect(result.data).toBeNull()
+    expect(result.data.session).toBeNull()
+    expect(result.error).toBeNull()
+  })
+
+  it('getSession returns { data: { session } } when session exists', async () => {
+    const fetch = createMockFetch({})
+    const storage = createMockStorage()
+    const session = { accessToken: 'tok', user: { id: 1, email: 'a@b.com' } }
+    await storage.setItem('druvia.session', JSON.stringify(session))
+    const auth = new DruviaAuth('/api/v1', fetch, storage)
+    const result = await auth.getSession()
+    expect(result.data.session).toEqual(session)
+    expect(result.data.session?.accessToken).toBe('tok')
   })
 
   it('handles login failure', async () => {
@@ -83,8 +97,31 @@ describe('DruviaAuth', () => {
     expect(result.error?.code).toBe('AUTH_FAILED')
   })
 
+  it('updateUser calls PATCH /users/me', async () => {
+    const updatedUser = { id: 1, email: 'a@b.com', username: 'newname', avatarUrl: 'https://img.com/a.png' }
+    const fetch = createMockFetch({ success: true, data: updatedUser })
+    const storage = createMockStorage()
+    const auth = new DruviaAuth('/api/v1', fetch, storage)
+    const result = await auth.updateUser({ data: { username: 'newname', avatar_url: 'https://img.com/a.png' } })
+    expect(result.data.user?.username).toBe('newname')
+    expect(result.error).toBeNull()
+    expect(fetch).toHaveBeenCalledWith('/api/v1/users/me', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ username: 'newname', avatarUrl: 'https://img.com/a.png' }),
+    }))
+  })
+
+  it('updateUser handles error', async () => {
+    const fetch = createMockFetch({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' } }, 401)
+    const storage = createMockStorage()
+    const auth = new DruviaAuth('/api/v1', fetch, storage)
+    const result = await auth.updateUser({ data: { username: 'x' } })
+    expect(result.data.user).toBeNull()
+    expect(result.error?.code).toBe('UNAUTHORIZED')
+  })
+
   it('onAuthStateChange fires on signIn and signOut', async () => {
-    const fetch = createMockFetch({ success: true, data: { user: { id: 1, email: 'a@b.com' }, token: 'tok123' } })
+    const fetch = createMockFetch({ success: true, data: { user: { id: 1, email: 'a@b.com' }, token: 'tok123', refreshToken: 'ref789' } })
     const storage = createMockStorage()
     const auth = new DruviaAuth('/api/v1', fetch, storage)
     const callback = vi.fn()
@@ -100,5 +137,39 @@ describe('DruviaAuth', () => {
     unsubscribe()
     await auth.signOut()
     expect(callback).not.toHaveBeenCalled()
+  })
+
+  it('refreshSession exchanges refresh_token for new session', async () => {
+    const newSession = {
+      user: { id: 1, email: 'a@b.com' },
+      token: 'new-access-tok',
+      refreshToken: 'new-refresh-tok',
+    }
+    const fetch = createMockFetch({ success: true, data: newSession })
+    const storage = createMockStorage()
+    const auth = new DruviaAuth('/api/v1', fetch, storage)
+    const result = await auth.refreshSession({ refresh_token: 'old-refresh-tok' })
+    expect(result.data?.session?.accessToken).toBe('new-access-tok')
+    expect(result.data?.session?.refreshToken).toBe('new-refresh-tok')
+    expect(result.error).toBeNull()
+    expect(fetch).toHaveBeenCalledWith('/api/v1/auth/refresh', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: 'old-refresh-tok' }),
+    }))
+    // Verify session saved with refreshToken
+    const savedSession = JSON.parse((storage.setItem as ReturnType<typeof vi.fn>).mock.calls[0][1])
+    expect(savedSession.refreshToken).toBe('new-refresh-tok')
+  })
+
+  it('refreshSession handles invalid token', async () => {
+    const fetch = createMockFetch(
+      { success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid or expired refresh token' } },
+      401
+    )
+    const storage = createMockStorage()
+    const auth = new DruviaAuth('/api/v1', fetch, storage)
+    const result = await auth.refreshSession({ refresh_token: 'bad-token' })
+    expect(result.data.session).toBeNull()
+    expect(result.error?.code).toBe('INVALID_TOKEN')
   })
 })

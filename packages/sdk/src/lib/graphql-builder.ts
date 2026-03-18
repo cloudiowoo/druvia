@@ -4,6 +4,13 @@ export interface FilterItem {
   value: unknown
 }
 
+export interface OrFilter {
+  type: 'or'
+  conditions: FilterItem[]
+}
+
+export type WhereItem = FilterItem | OrFilter
+
 export interface OrderByItem {
   column: string
   ascending: boolean
@@ -12,7 +19,7 @@ export interface OrderByItem {
 export interface QueryState {
   table: string
   selectFields: string
-  filters: FilterItem[]
+  filters: WhereItem[]
   orderBy: OrderByItem[]
   offset: number | undefined
   limit: number | undefined
@@ -47,14 +54,27 @@ function serializeValue(value: unknown): string {
   return String(value)
 }
 
-function buildWhereClause(filters: FilterItem[]): string {
+function buildWhereClause(filters: WhereItem[]): string {
   if (filters.length === 0) return ''
-  const conditions = filters.map(f => {
-    if (f.op === '_is_null') {
-      return `${f.column}: {_is_null: ${f.value ? 'true' : 'false'}}`
+  const conditions: string[] = []
+  for (const f of filters) {
+    if ('type' in f && f.type === 'or') {
+      const orConds = f.conditions.map(c => {
+        if (c.op === '_is_null') {
+          return `{${c.column}: {_is_null: ${c.value ? 'true' : 'false'}}}`
+        }
+        return `{${c.column}: {${c.op}: ${serializeValue(c.value)}}}`
+      })
+      conditions.push(`_or: [${orConds.join(', ')}]`)
+    } else {
+      const fi = f as FilterItem
+      if (fi.op === '_is_null') {
+        conditions.push(`${fi.column}: {_is_null: ${fi.value ? 'true' : 'false'}}`)
+      } else {
+        conditions.push(`${fi.column}: {${fi.op}: ${serializeValue(fi.value)}}`)
+      }
     }
-    return `${f.column}: {${f.op}: ${serializeValue(f.value)}}`
-  })
+  }
   return `where: {${conditions.join(', ')}}`
 }
 

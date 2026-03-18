@@ -43,10 +43,11 @@ export async function register(
   try {
     const user = await userService.register({ email, password, username });
     const token = signToken({ userId: user.userId, uid: user.id, role: user.role });
+    const refreshToken = await userService.createRefreshToken(user.userId);
 
     return reply.status(201).send({
       success: true,
-      data: { user, token },
+      data: { user, token, refreshToken },
     });
   } catch (error: unknown) {
     const err = error as { code?: string };
@@ -83,10 +84,11 @@ export async function login(
   }
 
   const token = signToken({ userId: user.userId, uid: user.id, role: user.role });
+  const refreshToken = await userService.createRefreshToken(user.userId);
 
   return reply.send({
     success: true,
-    data: { user, token },
+    data: { user, token, refreshToken },
   });
 }
 
@@ -394,4 +396,35 @@ export async function resetPassword(
 
   const tempPassword = await userService.resetPassword(userId);
   return reply.send({ success: true, data: { tempPassword } });
+}
+
+export async function refreshToken(
+  request: FastifyRequest<{ Body: { refresh_token: string } }>,
+  reply: FastifyReply
+) {
+  const { refresh_token } = request.body;
+
+  if (!refresh_token) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_INPUT', message: 'refresh_token is required' },
+    });
+  }
+
+  const user = await userService.consumeRefreshToken(refresh_token);
+
+  if (!user) {
+    return reply.status(401).send({
+      success: false,
+      error: { code: 'INVALID_TOKEN', message: 'Invalid or expired refresh token' },
+    });
+  }
+
+  const token = signToken({ userId: user.userId, uid: user.id, role: user.role });
+  const newRefreshToken = await userService.createRefreshToken(user.userId);
+
+  return reply.send({
+    success: true,
+    data: { user, token, refreshToken: newRefreshToken },
+  });
 }

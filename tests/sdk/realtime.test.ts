@@ -120,4 +120,15 @@ describe('DruviaRealtime', () => {
     sub.unsubscribe()
     expect(ws.close).toHaveBeenCalled()
   })
+
+  it('removeChannel() closes and removes the channel', () => {
+    const { factory, ws } = createMockWsFactory()
+    const rt = new DruviaRealtime('ws://localhost:8080/v1/graphql', factory)
+    const ch = rt.channel('test')
+    ch.on('postgres_changes', { event: '*', table: 'items' }, vi.fn())
+    ch.subscribe()
+
+    rt.removeChannel(ch)
+    expect(ws.close).toHaveBeenCalled()
+  })
 })

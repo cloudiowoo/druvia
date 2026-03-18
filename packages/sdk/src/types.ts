@@ -49,7 +49,21 @@ export interface Session {
 
 export interface UserInfo {
   id: number
+  userId?: string
   email?: string
   username?: string
+  avatarUrl?: string
   role?: string
+}
+
+/** Supabase-compatible nested response for getUser() */
+export interface UserResponse {
+  data: { user: UserInfo | null }
+  error: DruviaError | null
+}
+
+/** Supabase-compatible nested response for getSession() */
+export interface SessionResponse {
+  data: { session: Session | null }
+  error: DruviaError | null
 }

@@ -142,6 +142,9 @@ export async function changePassword(userId: string, newPassword: string): Promi
     'UPDATE druvia_users SET password_hash = $1 WHERE user_id = $2 RETURNING user_id',
     [passwordHash, userId]
   );
+  if (rows.length > 0) {
+    await revokeUserRefreshTokens(userId);
+  }
   return rows.length > 0;
 }
 
@@ -183,6 +186,9 @@ export async function updateUserStatus(
     'UPDATE druvia_users SET status = $1 WHERE user_id = $2 RETURNING *',
     [status, userId]
   );
+  if (row && status !== 'active') {
+    await revokeUserRefreshTokens(userId);
+  }
   return row ? toUser(row) : null;
 }
 
@@ -264,4 +270,52 @@ export async function resetPassword(userId: string): Promise<string> {
   );
 
   return tempPassword;
+}
+
+// ── Refresh Token ──
+
+const REFRESH_TOKEN_EXPIRES = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
+
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+export async function createRefreshToken(userId: string): Promise<string> {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = hashToken(token);
+  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRES);
+
+  await query(
+    `INSERT INTO druvia_refresh_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
+    [tokenHash, userId, expiresAt]
+  );
+
+  return token;
+}
+
+export async function consumeRefreshToken(token: string): Promise<User | null> {
+  const tokenHash = hashToken(token);
+
+  // Atomic: find valid token and mark as revoked (token rotation)
+  const row = await queryOne<{ user_id: string }>(
+    `UPDATE druvia_refresh_tokens
+     SET revoked = true
+     WHERE token_hash = $1 AND revoked = false AND expires_at > NOW()
+     RETURNING user_id`,
+    [tokenHash]
+  );
+
+  if (!row) return null;
+
+  // Check user is still active (suspended/inactive users cannot refresh)
+  const user = await getUserById(row.user_id);
+  if (!user || user.status !== 'active') return null;
+  return user;
+}
+
+export async function revokeUserRefreshTokens(userId: string): Promise<void> {
+  await query(
+    `UPDATE druvia_refresh_tokens SET revoked = true WHERE user_id = $1 AND revoked = false`,
+    [userId]
+  );
 }
