@@ -4,7 +4,7 @@
 
 **Stack**: Node.js 22 + Fastify 5 + PostgreSQL 17 + Hasura CE 2.48 + Redis 7
 
-**版本**: v0.1.0 | Phase 1–5 P2 已完成 | Next.js 16 已升级（webpack 模式，Turbopack 因 Docker 兼容问题未启用）
+**版本**: v0.2.0 | Phase 1 SDK 已完成 | Next.js 16 已升级（webpack 模式，Turbopack 因 Docker 兼容问题未启用）
 
 ---
 
@@ -58,7 +58,7 @@ druvia/
 └── docs/migration/    # 迁移兼容性文档
 ```
 
-### 功能状态（v0.1.0）
+### 功能状态（v0.2.0）
 
 | 能力 | 状态 | 说明 |
 |------|------|------|
