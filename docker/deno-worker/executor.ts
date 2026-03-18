@@ -8,9 +8,11 @@ interface ExecuteMessage {
   payload?: unknown;
 }
 
-/** 检测代码是否使用 Deno.serve() 模式 */
+/** 检测代码是否使用 Deno.serve() 模式（排除注释中的匹配） */
 function isServeMode(code: string): boolean {
-  return /Deno\s*\.\s*serve\s*\(/.test(code);
+  // 移除单行注释和多行注释后再检测
+  const stripped = code.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  return /Deno\s*\.\s*serve\s*\(/.test(stripped);
 }
 
 self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {

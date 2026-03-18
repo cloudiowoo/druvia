@@ -47,7 +47,12 @@ export class RealtimeChannel {
     })
 
     this.ws.onMessage((raw: string) => {
-      const msg = JSON.parse(raw)
+      let msg: Record<string, unknown>
+      try {
+        msg = JSON.parse(raw)
+      } catch {
+        return // ignore non-JSON frames (ping, partial, etc.)
+      }
 
       if (msg.type === 'connection_ack') {
         for (const { config } of this.configs) {
