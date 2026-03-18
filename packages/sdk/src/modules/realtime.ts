@@ -66,9 +66,11 @@ export class RealtimeChannel {
         return
       }
 
-      if (msg.type === 'next' && msg.payload?.data) {
-        const tableName = Object.keys(msg.payload.data)[0]
-        const newRows: Record<string, unknown>[] = msg.payload.data[tableName] ?? []
+      if (msg.type === 'next' && (msg.payload as Record<string, unknown>)?.data) {
+        const payload = msg.payload as Record<string, unknown>
+        const data = payload.data as Record<string, unknown>
+        const tableName = Object.keys(data)[0]
+        const newRows: Record<string, unknown>[] = (data[tableName] as Record<string, unknown>[]) ?? []
         const oldRows = this.snapshot.get(tableName) ?? null
 
         if (oldRows === null) {
