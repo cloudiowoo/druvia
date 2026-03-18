@@ -140,7 +140,7 @@ export async function deleteProject(projectId: string): Promise<boolean> {
   }
 
   try {
-    // 1. 获取所有环境（包括 prod）
+    // 1. 获取所有环境（不含主 schema）
     const environments = await environmentService.listEnvironments(projectId);
 
     // 2. 从 Hasura 中 untrack 所有环境的表
@@ -153,7 +153,13 @@ export async function deleteProject(projectId: string): Promise<boolean> {
       await schemaService.dropSchema(env.schemaName);
     }
 
-    // 4. 删除项目数据库用户（如果存在）
+    // 4. 删除项目主 Schema（不在 environments 表中）
+    if (project.schemaName) {
+      await untrackSchemaTablesFromHasura(project.schemaName);
+      await schemaService.dropSchema(project.schemaName);
+    }
+
+    // 5. 删除项目数据库用户（如果存在）
     try {
       await dbCredentialsService.dropProjectDbUser(projectId);
     } catch (error) {
