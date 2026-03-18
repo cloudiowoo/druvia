@@ -35,7 +35,7 @@ function parseSelectFields(fields: string): string {
     .join('\n    ')
 }
 
-function escapeGraphQLString(str: string): string {
+export function escapeGraphQLString(str: string): string {
   return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r')
 }
 

@@ -1,4 +1,5 @@
 import type { WebSocketFactory, WebSocketLike } from '../types.js'
+import { escapeGraphQLString } from '../lib/graphql-builder.js'
 
 interface SubscriptionConfig {
   event: '*' | 'INSERT' | 'UPDATE' | 'DELETE'
@@ -129,7 +130,7 @@ export class RealtimeChannel {
   private parseFilter(filter: string): string {
     const match = filter.match(/^(\w+)=eq\.(.+)$/)
     if (match) {
-      return `${match[1]}: {_eq: "${match[2]}"}`
+      return `${match[1]}: {_eq: "${escapeGraphQLString(match[2])}"}`
     }
     return filter
   }

@@ -71,7 +71,7 @@ druvia/
 | RLS | ❌ | Hasura 权限 filter 当前全开 `{}`，需手动配行级规则 |
 | Image transformations | ❌ | Storage 层无图片处理 |
 | Broadcast / Presence | ❌ | Hasura 不提供 |
-| Client SDK | ⚠️ | `@druvia/sdk` Auth/CRUD/Storage/Realtime/RPC/Functions 已实现，缺 RPC 代理端点 |
+| Client SDK | ⚠️ | `@druvia/sdk` Auth/CRUD/Storage/Realtime/RPC/Functions + API 层 RPC 代理已实现 |
 | MCP Server | ✅ | `packages/mcp-server/`，5 个工具，生产可用 |
 
 ### Supabase 迁移判断
