@@ -315,6 +315,15 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  packages/sdk:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.34
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
   packages/shared:
     devDependencies:
       '@types/node':
