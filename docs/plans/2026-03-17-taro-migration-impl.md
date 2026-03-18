@@ -117,11 +117,72 @@ cp docs/plans/2026-03-17-taro-migration-impl.md \
 
 在 taro-app 项目中按 Chunk 顺序执行，完成一项勾选一项。
 
+## Druvia 环境初始化（迁移前必做）
+
+迁移前需确保 Druvia 环境处于干净的基线状态，保证迁移过程中的数据库变更可追溯。
+
+### 清理与重置
+
+```bash
+# 1. 确认当前迁移状态
+pnpm migrate status
+# Expected: 001-012 全部 ✓，当前版本 = 12
+
+# 2. 如有测试脏数据，重置数据库
+pnpm migrate down --to 0   # 回滚所有迁移
+pnpm migrate up             # 重新执行全部迁移
+
+# 3. 验证基线一致
+pnpm migrate status
+# Expected: 001-012 全部 ✓，当前版本 = 12
+```
+
+### 初始化 taro-app 项目
+
+```bash
+# 4. 启动 Druvia 开发环境
+make dev-up && pnpm dev
+
+# 5. 通过 Admin 界面或 API 创建项目
+curl -X POST http://localhost:3001/api/v1/projects \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "taro-app", "displayName": "Taro 小程序"}'
+# API 自动创建 dru_taroapp schema
+
+# 6. 确认 schema 已创建
+psql -h localhost -p 5432 -U postgres -d druvia -c \
+  "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'dru_taroapp';"
+```
+
+### 迁移过程中的数据库变更管理
+
+迁移过程中 Druvia 侧如需新增系统表或改结构，按现有迁移系统走：
+
+```
+migrations/
+  001_users.up.sql              ← 基线 v0.2.0 (001-012)
+  ...
+  012_project_environments.up.sql
+  013_xxx.up.sql                 ← 迁移过程中新增
+```
+
+两类表的管理方式不同：
+
+| 类型 | 位置 | 管理方式 | 示例 |
+|------|------|----------|------|
+| Druvia 系统表 | `public` schema | `migrations/` 迁移文件 | `druvia_users`, `druvia_projects` |
+| Taro 业务表 | `dru_taroapp` schema | API 建表接口 + Hasura track | `activities`, `users`, `teams` |
+
+Druvia 迁移系统只管 `public` schema 的系统表。Taro 业务表在租户 schema `dru_taroapp` 中，通过 Chunk 1 的数据导入创建，互不干扰。
+
+---
+
 ## 前置条件
 
 - [ ] Plan 1 (@druvia/sdk) 已实施，`@druvia/sdk` 包可用
 - [ ] Plan 2 (RPC + Edge Functions) 已实施，RPC 代理 + Deno.serve() handler 可用
-- [ ] Druvia 开发环境已启动（`make dev-up && pnpm dev`）
+- [ ] Druvia 环境已初始化（上述"Druvia 环境初始化"步骤已完成）
 - [ ] 已在 Druvia Admin 中创建项目（如 `taro-app`），schema 为 `dru_taroapp`
 
 ---
