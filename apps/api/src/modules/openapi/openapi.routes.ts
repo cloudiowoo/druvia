@@ -4,10 +4,11 @@ import { authenticate } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import { createRateLimiter } from '../../middleware/ratelimit.js';
 import { pool } from '../../db/index.js';
+import { config } from '../../config/index.js';
 import YAML from 'yaml';
 
-const HASURA_URL = process.env.HASURA_URL || 'http://localhost:8080';
-const HASURA_ADMIN_SECRET = process.env.HASURA_ADMIN_SECRET || 'druvia-secret';
+const HASURA_URL = config.hasura.endpoint;
+const HASURA_ADMIN_SECRET = config.hasura.adminSecret;
 
 // Rate limiter for OpenAPI generation (10 requests per minute)
 const openapiRateLimiter = createRateLimiter({

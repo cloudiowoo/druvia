@@ -47,7 +47,7 @@ export class DruviaClient {
     if (wsFactory) {
       const wsUrl = options.realtimeUrl
         ? options.realtimeUrl.replace(/\/+$/, '') + '/v1/graphql'
-        : baseUrl.replace(/^http/, 'ws').replace(/(:\d+)(?=\/|$)/, ':8080') + '/v1/graphql'
+        : baseUrl.replace(/^http/, 'ws') + '/v1/graphql'
       this.realtime = new DruviaRealtime(wsUrl, wsFactory)
     } else {
       this.realtime = null
