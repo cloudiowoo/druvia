@@ -1,6 +1,7 @@
 // apps/api/src/modules/api-keys/api-keys.routes.ts
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authenticate } from '../../middleware/auth.js';
+import type { JwtPayload } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import * as apiKeysService from './api-keys.service.js';
 
@@ -18,7 +19,7 @@ async function verifyProjectAccess(
   request: FastifyRequest<{ Params: { projectId: string } }>,
   reply: FastifyReply
 ): Promise<boolean> {
-  const userId = request.user?.userId;
+  const userId = (request.user as JwtPayload | undefined)?.userId;
   if (!userId) {
     reply.status(401).send({
       success: false,

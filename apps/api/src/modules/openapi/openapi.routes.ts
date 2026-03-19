@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { generateProjectOpenApi } from './openapi.service.js';
-import { authenticate } from '../../middleware/auth.js';
+import { authenticate, isJwtUser } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import { createRateLimiter } from '../../middleware/ratelimit.js';
 import { pool } from '../../db/index.js';
@@ -40,11 +40,22 @@ export async function openapiRoutes(fastify: FastifyInstance) {
       preHandler: [
         async (request: FastifyRequest, reply: FastifyReply) => {
           const { projectId } = request.params as { projectId: string };
-          const userId = (request as any).user?.userId;
-          if (!userId) {
+          const user = request.user;
+
+          if (!user) {
             return reply.status(401).send({ error: 'Unauthorized' });
           }
-          const hasAccess = await checkProjectAccess(userId, projectId);
+
+          // apikey 认证：验证 projectId 匹配
+          if (!isJwtUser(user)) {
+            if (user.projectId !== projectId) {
+              return reply.status(403).send({ error: 'API key does not match project' });
+            }
+            return;
+          }
+
+          // JWT 认证：原有逻辑
+          const hasAccess = await checkProjectAccess(user.userId, projectId);
           if (!hasAccess) {
             return reply.status(403).send({ error: 'Access denied' });
           }
@@ -69,13 +80,20 @@ export async function openapiRoutes(fastify: FastifyInstance) {
       const schemaName = projectResult.rows[0].schema_name;
 
       try {
+        const hasuraHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
+          'x-hasura-default-schema': schemaName,
+        };
+
+        // 匿名用户设置 anonymous role
+        if (!isJwtUser(request.user!)) {
+          hasuraHeaders['x-hasura-role'] = 'anonymous';
+        }
+
         const response = await fetch(`${HASURA_URL}/v1/graphql`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
-            'x-hasura-default-schema': schemaName,
-          },
+          headers: hasuraHeaders,
           body: JSON.stringify({ query, variables, operationName }),
         });
 

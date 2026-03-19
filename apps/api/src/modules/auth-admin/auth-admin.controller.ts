@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { JwtPayload } from '../../middleware/auth.js';
 import * as authService from './auth-admin.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import { queryOne } from '../../db/index.js';
@@ -61,7 +62,7 @@ async function verifyProjectAccess(
   request: FastifyRequest<{ Params: ProjectParams }>,
   reply: FastifyReply
 ): Promise<boolean> {
-  const userId = request.user?.userId;
+  const userId = (request.user as JwtPayload | undefined)?.userId;
   if (!userId) {
     reply.status(401).send({
       success: false,

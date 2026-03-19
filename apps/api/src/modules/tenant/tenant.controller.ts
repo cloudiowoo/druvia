@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { JwtPayload } from '../../middleware/auth.js';
 import * as tenantService from './tenant.service.js';
 import type { CreateTenantInput, UpdateTenantInput } from '@druvia/shared';
 
@@ -19,7 +20,7 @@ export async function createTenant(
   try {
     const tenant = await tenantService.createTenant({
       ...request.body,
-      ownerUid: request.user!.uid,
+      ownerUid: (request.user as JwtPayload).uid,
     });
     return reply.status(201).send({ success: true, data: tenant });
   } catch (error: unknown) {

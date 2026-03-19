@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { JwtPayload } from './auth.js';
 import { redis } from '../lib/redis.js';
 
 export interface RateLimitConfig {
@@ -29,7 +30,7 @@ export function createRateLimiter(config: Partial<RateLimitConfig> = {}) {
     reply: FastifyReply
   ): Promise<void> {
     // Get identifier (user ID, tenant ID, or IP)
-    const identifier = request.user?.userId || request.ip;
+    const identifier = (request.user as JwtPayload | undefined)?.userId || request.ip;
     const key = getRateLimitKey(keyPrefix!, identifier);
 
     try {
@@ -80,7 +81,7 @@ export function createTenantRateLimiter(config: Partial<RateLimitConfig> = {}) {
     reply: FastifyReply
   ): Promise<void> {
     // Get tenant ID from params or user context
-    const tenantId = (request.params as { tenantId?: string })?.tenantId || request.user?.tenantId;
+    const tenantId = (request.params as { tenantId?: string })?.tenantId || (request.user as JwtPayload | undefined)?.tenantId;
 
     if (!tenantId) {
       return; // Skip if no tenant context

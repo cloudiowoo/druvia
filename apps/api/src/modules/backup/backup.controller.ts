@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { JwtPayload } from '../../middleware/auth.js';
 import * as backupService from './backup.service.js';
 
 interface TenantParams {
@@ -34,7 +35,7 @@ export async function createBackup(
       tenantId,
       schemaName,
       projectId,
-      request.user?.uid
+      (request.user as JwtPayload | undefined)?.uid
     );
     return reply.status(202).send({ success: true, data: backup });
   } catch (error) {

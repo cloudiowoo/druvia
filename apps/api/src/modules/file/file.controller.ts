@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { JwtPayload } from '../../middleware/auth.js';
 import type { MultipartFile } from '@fastify/multipart';
 import * as fileService from './file.service.js';
 
@@ -49,7 +50,7 @@ export async function uploadFile(
       bucket,
       filename: data.filename,
       contentType: data.mimetype,
-      createdBy: request.user?.uid,
+      createdBy: (request.user as JwtPayload | undefined)?.uid,
     });
 
     return reply.status(201).send({ success: true, data: file });

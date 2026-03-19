@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { JwtPayload } from '../../middleware/auth.js';
 import * as oauthService from './oauth.service.js';
 
 interface OAuthParams {
@@ -97,7 +98,7 @@ export async function bindProvider(
   }
 
   try {
-    await oauthService.bindOAuthProvider(request.user.userId, tenantId, provider, code);
+    await oauthService.bindOAuthProvider((request.user as JwtPayload).userId, tenantId, provider, code);
     return reply.send({ success: true, message: 'Provider bound successfully' });
   } catch (error) {
     const err = error as Error;
@@ -120,7 +121,7 @@ export async function listProviders(
     });
   }
 
-  const providers = await oauthService.listUserProviders(request.user.userId);
+  const providers = await oauthService.listUserProviders((request.user as JwtPayload).userId);
   return reply.send({ success: true, data: providers });
 }
 
@@ -136,7 +137,7 @@ export async function unbindProvider(
     });
   }
 
-  const unbound = await oauthService.unbindProvider(request.user.userId, request.params.provider);
+  const unbound = await oauthService.unbindProvider((request.user as JwtPayload).userId, request.params.provider);
 
   if (!unbound) {
     return reply.status(404).send({

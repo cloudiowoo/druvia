@@ -3,6 +3,7 @@ import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/index.js';
 import { checkSchemaAccess } from '../lib/access.js';
+import { validateApiKey } from '../modules/api-keys/api-keys.service.js';
 
 // JWT Payload 类型
 export interface JwtPayload {
@@ -14,10 +15,22 @@ export interface JwtPayload {
   exp?: number;
 }
 
+// API Key 匿名身份
+export interface ApiKeyIdentity {
+  projectId: string;
+  role: 'anon';
+}
+
+export type RequestUser = JwtPayload | ApiKeyIdentity;
+
+export function isJwtUser(user: RequestUser): user is JwtPayload {
+  return 'userId' in user;
+}
+
 // 扩展 FastifyRequest
 declare module 'fastify' {
   interface FastifyRequest {
-    user?: JwtPayload;
+    user?: RequestUser;
   }
 }
 
@@ -42,25 +55,40 @@ export async function authenticate(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
+  // 1. 优先 Bearer token
   const authHeader = request.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    try {
+      request.user = verifyToken(token);
+      return;
+    } catch {
+      return reply.status(401).send({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' },
+      });
+    }
+  }
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  // 2. Fallback: apikey 头
+  const apiKey = request.headers.apikey as string | undefined;
+  if (apiKey) {
+    const result = await validateApiKey(apiKey);
+    if (result.valid && result.projectId) {
+      request.user = { projectId: result.projectId, role: 'anon' };
+      return;
+    }
     return reply.status(401).send({
       success: false,
-      error: { code: 'UNAUTHORIZED', message: 'Missing or invalid authorization header' },
+      error: { code: 'UNAUTHORIZED', message: 'Invalid API key' },
     });
   }
 
-  const token = authHeader.slice(7);
-
-  try {
-    request.user = verifyToken(token);
-  } catch (error) {
-    return reply.status(401).send({
-      success: false,
-      error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' },
-    });
-  }
+  // 3. 都没有
+  return reply.status(401).send({
+    success: false,
+    error: { code: 'UNAUTHORIZED', message: 'Missing authorization' },
+  });
 }
 
 // 可选认证中间件 - 有 token 则解析，无 token 则跳过
@@ -69,17 +97,20 @@ export async function optionalAuth(
   _reply: FastifyReply
 ): Promise<void> {
   const authHeader = request.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    try {
+      request.user = verifyToken(token);
+    } catch { /* 忽略 */ }
     return;
   }
 
-  const token = authHeader.slice(7);
-
-  try {
-    request.user = verifyToken(token);
-  } catch {
-    // 忽略无效 token，继续处理请求
+  const apiKey = request.headers.apikey as string | undefined;
+  if (apiKey) {
+    const result = await validateApiKey(apiKey);
+    if (result.valid && result.projectId) {
+      request.user = { projectId: result.projectId, role: 'anon' };
+    }
   }
 }
 
@@ -89,7 +120,7 @@ export async function verifySchemaAccess(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
-  const userId = request.user?.userId;
+  const userId = (request.user as JwtPayload | undefined)?.userId;
   if (!userId) {
     return reply.status(401).send({
       success: false,

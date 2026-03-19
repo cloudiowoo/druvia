@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as userService from './user.service.js';
 import { signToken } from '../../middleware/auth.js';
+import type { JwtPayload } from '../../middleware/auth.js';
 import type { UserRole } from '@druvia/shared';
 
 interface RegisterBody {
@@ -103,7 +104,7 @@ export async function getProfile(
     });
   }
 
-  const user = await userService.getUserById(request.user.userId);
+  const user = await userService.getUserById((request.user as JwtPayload).userId);
 
   if (!user) {
     return reply.status(404).send({
@@ -126,7 +127,7 @@ export async function updateProfile(
     });
   }
 
-  const user = await userService.updateUser(request.user.userId, request.body);
+  const user = await userService.updateUser((request.user as JwtPayload).userId, request.body);
 
   if (!user) {
     return reply.status(404).send({
@@ -166,7 +167,7 @@ export async function changePassword(
   }
 
   // 获取用户信息
-  const user = await userService.getUserById(request.user.userId);
+  const user = await userService.getUserById((request.user as JwtPayload).userId);
   if (!user || !user.email) {
     return reply.status(400).send({
       success: false,
@@ -183,7 +184,7 @@ export async function changePassword(
     });
   }
 
-  await userService.changePassword(request.user.userId, newPassword);
+  await userService.changePassword((request.user as JwtPayload).userId, newPassword);
 
   return reply.send({ success: true, message: 'Password changed successfully' });
 }
@@ -227,7 +228,7 @@ export async function deleteUser(
   request: FastifyRequest<{ Params: { userId: string } }>,
   reply: FastifyReply
 ) {
-  const currentUser = request.user;
+  const currentUser = request.user as JwtPayload | undefined;
   if (!currentUser || currentUser.role !== 'super_admin') {
     return reply.status(403).send({
       success: false,
@@ -262,7 +263,7 @@ export async function updateUserStatus(
   request: FastifyRequest<{ Params: { userId: string }; Body: { status: string } }>,
   reply: FastifyReply
 ) {
-  const currentUser = request.user;
+  const currentUser = request.user as JwtPayload | undefined;
   const { userId } = request.params;
   const { status } = request.body;
 
@@ -312,7 +313,7 @@ export async function createUser(
   }>,
   reply: FastifyReply
 ) {
-  const currentUser = request.user;
+  const currentUser = request.user as JwtPayload | undefined;
   if (!currentUser || currentUser.role !== 'super_admin') {
     return reply.status(403).send({
       success: false,
@@ -350,7 +351,7 @@ export async function updateUser(
   }>,
   reply: FastifyReply
 ) {
-  const currentUser = request.user;
+  const currentUser = request.user as JwtPayload | undefined;
   if (!currentUser || currentUser.role !== 'super_admin') {
     return reply.status(403).send({
       success: false,
@@ -376,7 +377,7 @@ export async function resetPassword(
   request: FastifyRequest<{ Params: { userId: string } }>,
   reply: FastifyReply
 ) {
-  const currentUser = request.user;
+  const currentUser = request.user as JwtPayload | undefined;
   if (!currentUser || currentUser.role !== 'super_admin') {
     return reply.status(403).send({
       success: false,
