@@ -385,3 +385,22 @@ export async function trackTableInHasura(
     });
   }
 }
+
+// Get Hasura permission status for schema
+export async function getHasuraStatus(
+  request: FastifyRequest<{ Params: SchemaParams }>,
+  reply: FastifyReply
+) {
+  const { schemaName } = request.params;
+
+  try {
+    const status = await tableService.getHasuraStatus(schemaName);
+    return reply.send({ success: true, data: status });
+  } catch (error) {
+    const err = error as Error;
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'HASURA_STATUS_FAILED', message: err.message },
+    });
+  }
+}

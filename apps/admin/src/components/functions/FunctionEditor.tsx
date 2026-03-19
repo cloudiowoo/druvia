@@ -167,7 +167,7 @@ export function FunctionEditor({ func, onSave, onInvoke }: FunctionEditorProps) 
       </div>
 
       {/* Code Editor */}
-      <div className="flex-1 h-0 overflow-hidden">
+      <div className="function-editor flex-1 h-0 overflow-hidden">
         <CodeMirror
           value={code}
           onChange={handleCodeChange}

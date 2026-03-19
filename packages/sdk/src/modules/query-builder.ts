@@ -162,9 +162,14 @@ export class QueryBuilder<T = unknown> {
     return self
   }
 
+  private get hasuraTable(): string {
+    return this.schema ? `${this.schema}_${this.table}` : this.table
+  }
+
   private async execute(): Promise<DruviaResponse<any>> {
     try {
       const op = this.pendingOp
+      const table = this.hasuraTable
 
       if (op.type === 'select' && (this.selectStr === '*' || this.selectStr.includes('*'))) {
         await this.resolveWildcardFields()
@@ -173,7 +178,7 @@ export class QueryBuilder<T = unknown> {
       let query: string
       if (op.type === 'select') {
         const state: QueryState = {
-          table: this.table,
+          table,
           selectFields: this.selectStr,
           filters: this.filters,
           orderBy: this.orderByItems,
@@ -187,21 +192,21 @@ export class QueryBuilder<T = unknown> {
         const onConflict = op.type === 'upsert'
           ? `, on_conflict: {constraint: ${op.constraint ?? this.table + '_pkey'}, update_columns: [${Object.keys(objects[0]).filter(k => k !== 'id').join(', ')}]}`
           : ''
-        query = buildMutation(this.table, 'insert', {
+        query = buildMutation(table, 'insert', {
           objects,
           returning: this.selectStr === '*' ? 'id' : this.selectStr,
           onConflict,
         })
       } else if (op.type === 'update') {
         const where = this.buildWhereObject()
-        query = buildMutation(this.table, 'update', {
+        query = buildMutation(table, 'update', {
           set: op.data,
           where,
           returning: this.selectStr === '*' ? 'id' : this.selectStr,
         })
       } else {
         const where = this.buildWhereObject()
-        query = buildMutation(this.table, 'delete', {
+        query = buildMutation(table, 'delete', {
           where,
           returning: 'id',
         })

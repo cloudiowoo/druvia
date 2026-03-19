@@ -17,15 +17,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Table2, GitBranch } from 'lucide-react';
+import { Plus, Table2, GitBranch, RefreshCw, Check, X } from 'lucide-react';
 import { CreateTableDialog } from '@/components/CreateTableDialog';
 import { ERDiagram } from '@/components/tables/ERDiagram';
+import { toast } from '@/hooks/use-toast';
 
 interface TableInfo {
   tableName: string;
   rowCount: number;
   sizeBytes: number;
 }
+
+type HasuraStatus = Record<string, { tracked: boolean; roles: string[] }>;
 
 interface TableWithColumns {
   name: string;
@@ -59,6 +62,8 @@ export default function TablesPage() {
 
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasuraStatus, setHasuraStatus] = useState<HasuraStatus>({});
+  const [syncing, setSyncing] = useState(false);
 
   // ER diagram data
   const [tablesWithColumns, setTablesWithColumns] = useState<TableWithColumns[]>([]);
@@ -69,11 +74,34 @@ export default function TablesPage() {
 
   const fetchTables = async () => {
     if (!effectiveSchema) return;
-    const res = await api.listTables(effectiveSchema);
-    if (res.success && res.data) {
-      setTables(res.data);
+    const [tablesRes, statusRes] = await Promise.all([
+      api.listTables(effectiveSchema),
+      api.getHasuraStatus(effectiveSchema),
+    ]);
+    if (tablesRes.success && tablesRes.data) {
+      setTables(tablesRes.data);
+    }
+    if (statusRes.success && statusRes.data) {
+      setHasuraStatus(statusRes.data);
     }
     setLoading(false);
+  };
+
+  const handleSyncPermissions = async () => {
+    if (!effectiveSchema) return;
+    setSyncing(true);
+    const res = await api.trackAllTablesInHasura(effectiveSchema);
+    if (res.success && res.data) {
+      toast({ title: `已同步 ${res.data.tracked.length} 张表的权限` });
+      // 刷新状态
+      const statusRes = await api.getHasuraStatus(effectiveSchema);
+      if (statusRes.success && statusRes.data) {
+        setHasuraStatus(statusRes.data);
+      }
+    } else {
+      toast({ title: '同步失败', variant: 'destructive' });
+    }
+    setSyncing(false);
   };
 
   const fetchERData = async () => {
@@ -126,10 +154,21 @@ export default function TablesPage() {
           <h1 className="text-2xl font-bold">数据表</h1>
         </div>
         {effectiveSchema && (
-          <CreateTableDialog
-            schemaName={effectiveSchema}
-            onSuccess={fetchTables}
-          />
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSyncPermissions}
+              disabled={syncing}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+              {syncing ? '同步中...' : '同步 GraphQL 权限'}
+            </Button>
+            <CreateTableDialog
+              schemaName={effectiveSchema}
+              onSuccess={fetchTables}
+            />
+          </div>
         )}
       </div>
 
@@ -174,16 +213,31 @@ export default function TablesPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>表名</TableHead>
+                    <TableHead className="text-center">GraphQL</TableHead>
                     <TableHead className="text-right">行数</TableHead>
                     <TableHead className="text-right">大小</TableHead>
                     <TableHead className="text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {tables.map((table) => (
+                  {tables.map((table) => {
+                    const status = hasuraStatus[table.tableName];
+                    const hasUser = status?.roles.includes('user');
+                    const hasAnon = status?.roles.includes('anonymous');
+                    const allGood = status?.tracked && hasUser && hasAnon;
+                    return (
                     <TableRow key={table.tableName}>
                       <TableCell className="font-medium font-mono">
                         {table.tableName}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {allGood ? (
+                          <Check className="h-4 w-4 text-green-600 inline-block" />
+                        ) : status?.tracked ? (
+                          <span className="text-xs text-amber-600">部分权限</span>
+                        ) : (
+                          <X className="h-4 w-4 text-muted-foreground inline-block" />
+                        )}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">
                         {table.rowCount.toLocaleString()}
@@ -201,7 +255,8 @@ export default function TablesPage() {
                         </Button>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}

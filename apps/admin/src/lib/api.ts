@@ -260,6 +260,14 @@ class ApiClient {
     }>>('GET', `/api/v1/schemas/${schemaName}/tables`);
   }
 
+  async getHasuraStatus(schemaName: string) {
+    return this.request<Record<string, { tracked: boolean; roles: string[] }>>('GET', `/api/v1/schemas/${schemaName}/hasura/status`);
+  }
+
+  async trackAllTablesInHasura(schemaName: string) {
+    return this.request<{ tracked: string[]; failed: string[] }>('POST', `/api/v1/schemas/${schemaName}/hasura/track-all`);
+  }
+
   async createTable(schemaName: string, table: {
     name: string;
     columns: Array<{

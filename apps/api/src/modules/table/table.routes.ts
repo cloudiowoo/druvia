@@ -56,6 +56,9 @@ export async function tableRoutes(app: FastifyInstance) {
   // Track single table in Hasura
   app.post('/schemas/:schemaName/tables/:tableName/hasura/track', controller.trackTableInHasura as never);
 
+  // Get Hasura permission status for schema
+  app.get('/schemas/:schemaName/hasura/status', controller.getHasuraStatus as never);
+
   // Register import routes
   app.register(importRoutes, { prefix: '/schemas' });
 }

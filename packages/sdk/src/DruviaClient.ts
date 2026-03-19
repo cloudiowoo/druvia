@@ -24,7 +24,11 @@ export class DruviaClient {
     const rawFetch = options.fetch ?? getDefaultFetch()
     const storageAdapter = options.storage ?? getDefaultStorage()
     const apiBase = baseUrl.replace(/\/+$/, '')
-    const schema = options.schema ?? `dru_${options.projectId.replace(/-/g, '_')}`
+    const schema = options.schema
+
+    if (!schema) {
+      console.warn('@druvia/sdk: No schema provided. Use createClient with { schema } option or call DruviaClient.create() for auto-detection.')
+    }
 
     let cachedToken: string | null = null
     this.auth = new DruviaAuth(apiBase, rawFetch, storageAdapter)
@@ -78,6 +82,29 @@ export class DruviaClient {
       throw new Error('@druvia/sdk: No WebSocket available.')
     }
     this.realtime.removeChannel(channel)
+  }
+
+  /** Async factory — auto-detects schema via API key validation */
+  static async create(baseUrl: string, apiKey: string, options: DruviaClientOptions): Promise<DruviaClient> {
+    if (options.schema) {
+      return new DruviaClient(baseUrl, apiKey, options)
+    }
+
+    const apiBase = baseUrl.replace(/\/+$/, '')
+    const rawFetch = options.fetch ?? getDefaultFetch()
+    try {
+      const res = await rawFetch(`${apiBase}/api-keys/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: apiKey }),
+      })
+      const json = await res.json()
+      if (json.success && json.data?.schemaName) {
+        return new DruviaClient(baseUrl, apiKey, { ...options, schema: json.data.schemaName })
+      }
+    } catch { /* fallback to no schema */ }
+
+    return new DruviaClient(baseUrl, apiKey, options)
   }
 }
 

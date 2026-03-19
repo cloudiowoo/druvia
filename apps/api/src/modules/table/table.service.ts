@@ -149,76 +149,32 @@ export async function trackTableInHasura(schemaName: string, tableName: string):
     }
   }
 
-  try {
-    // 2. Add select permission for 'user' role
-    await hasuraMetadataRequest('pg_create_select_permission', {
-      source: 'default',
-      table: { schema: schemaName, name: tableName },
-      role: 'user',
-      permission: {
-        columns: '*',
-        filter: {},
-        allow_aggregations: true,
-      },
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    if (!errorMsg.includes('already exists')) {
-      console.warn(`Failed to create select permission for ${schemaName}.${tableName}:`, errorMsg);
-    }
-  }
+  // 2. Add permissions for 'user' and 'anonymous' roles
+  const roles = ['user', 'anonymous'];
+  const table = { schema: schemaName, name: tableName };
 
-  try {
-    // 3. Add insert permission for 'user' role
-    await hasuraMetadataRequest('pg_create_insert_permission', {
-      source: 'default',
-      table: { schema: schemaName, name: tableName },
-      role: 'user',
-      permission: {
-        columns: '*',
-        check: {},
-      },
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    if (!errorMsg.includes('already exists')) {
-      console.warn(`Failed to create insert permission for ${schemaName}.${tableName}:`, errorMsg);
-    }
-  }
+  for (const role of roles) {
+    const permissionOps = [
+      { type: 'pg_create_select_permission', permission: { columns: '*', filter: {}, allow_aggregations: true } },
+      { type: 'pg_create_insert_permission', permission: { columns: '*', check: {} } },
+      { type: 'pg_create_update_permission', permission: { columns: '*', filter: {}, check: {} } },
+      { type: 'pg_create_delete_permission', permission: { filter: {} } },
+    ];
 
-  try {
-    // 4. Add update permission for 'user' role
-    await hasuraMetadataRequest('pg_create_update_permission', {
-      source: 'default',
-      table: { schema: schemaName, name: tableName },
-      role: 'user',
-      permission: {
-        columns: '*',
-        filter: {},
-        check: {},
-      },
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    if (!errorMsg.includes('already exists')) {
-      console.warn(`Failed to create update permission for ${schemaName}.${tableName}:`, errorMsg);
-    }
-  }
-
-  try {
-    // 5. Add delete permission for 'user' role
-    await hasuraMetadataRequest('pg_create_delete_permission', {
-      source: 'default',
-      table: { schema: schemaName, name: tableName },
-      role: 'user',
-      permission: {
-        filter: {},
-      },
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    if (!errorMsg.includes('already exists')) {
-      console.warn(`Failed to create delete permission for ${schemaName}.${tableName}:`, errorMsg);
+    for (const op of permissionOps) {
+      try {
+        await hasuraMetadataRequest(op.type, {
+          source: 'default',
+          table,
+          role,
+          permission: op.permission,
+        });
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (!errorMsg.includes('already exists')) {
+          console.warn(`Failed to create ${op.type} for ${role} on ${schemaName}.${tableName}:`, errorMsg);
+        }
+      }
     }
   }
 }
@@ -636,4 +592,26 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
   }
 
   return { tracked, failed };
+}
+
+// Get Hasura permission status for all tables in schema
+export async function getHasuraStatus(schemaName: string): Promise<Record<string, { tracked: boolean; roles: string[] }>> {
+  const metadata = await hasuraMetadataRequest('export_metadata', {}) as {
+    sources?: Array<{ tables?: Array<{ table: { schema: string; name: string }; select_permissions?: Array<{ role: string }> }> }>;
+  };
+
+  const result: Record<string, { tracked: boolean; roles: string[] }> = {};
+  const source = metadata.sources?.[0];
+  if (!source?.tables) return result;
+
+  for (const t of source.tables) {
+    if (t.table.schema === schemaName) {
+      result[t.table.name] = {
+        tracked: true,
+        roles: t.select_permissions?.map(p => p.role) ?? [],
+      };
+    }
+  }
+
+  return result;
 }
