@@ -265,7 +265,7 @@ class ApiClient {
   }
 
   async trackAllTablesInHasura(schemaName: string) {
-    return this.request<{ tracked: string[]; failed: string[] }>('POST', `/api/v1/schemas/${schemaName}/hasura/track-all`);
+    return this.request<{ tracked: string[]; failed: string[]; relationships: number; untracked: number }>('POST', `/api/v1/schemas/${schemaName}/hasura/track-all`);
   }
 
   async createTable(schemaName: string, table: {

@@ -72,6 +72,7 @@ druvia/
 | Image transformations | ❌ | Storage 层无图片处理 |
 | Broadcast / Presence | ❌ | Hasura 不提供 |
 | Client SDK | ⚠️ | `@druvia/sdk` Auth/CRUD/Storage/Realtime/RPC/Functions + API 层 RPC 代理已实现 |
+| API Key Auth | ✅ | authenticate 中间件支持 apikey fallback，匿名用户 anonymous role |
 | Refresh Token | ✅ | JWT + refresh token rotation，密码修改/停用自动撤销 |
 | MCP Server | ✅ | `packages/mcp-server/`，5 个工具，生产可用 |
 
@@ -129,6 +130,8 @@ druvia/
 - **Refresh Token 撤销**：修改密码、停用账户时必须调用 `revokeUserRefreshTokens()`；`consumeRefreshToken` 需检查 `user.status === 'active'`
 - **Fastify multipart filename 截断**：`data.filename` 只返回文件名不含目录；需通过 `?path=` query 参数传递完整路径
 - **Storage 上传路由**：`POST /objects`（无通配符），文件路径通过 `?path=` 传递，非 URL path
+- **Hasura inconsistent metadata**：删表后残留 metadata 会阻塞所有操作，需先 `drop_inconsistent_metadata` 或 `replace_metadata` 清理
+- **Hasura relationship 命名冲突**：`field with name already exists`（列名冲突，需重命名）和 `already exists`（关系已存在，可跳过）是不同错误
 
 ### 数据库
 - **BigInt 返回字符串**：用 `Number()` 或 `parseInt()` 转换
@@ -144,6 +147,7 @@ druvia/
 - **druvia_users 表结构**：用 `username` 而非 `name`，必须提供 `user_id`
 - **Project 对象字段**：`schema_name`（snake_case），非 `schemaName`
 - **Hasura introspection 类型名**：格式为 `<schema>_<table>`（如 `dru_taroapp_users`），非简单表名
+- **Hasura relationship**：不像 Supabase 自动推断外键关系，需显式通过 `pg_create_object/array_relationship` 配置；"同步 GraphQL 权限"按钮会自动处理
 
 ### 前端
 - **CodeMirror 快捷键**：自定义 keymap 用 `Prec.highest()` 包装
@@ -162,6 +166,7 @@ druvia/
 - **合并后**：worktree 合并到 main 后需重新 `pnpm install`
 - **Next.js standalone**：构建后需复制 `public/` 和 `.next/static/` 到 standalone 目录
 - **SDK 导出**：`packages/sdk/src/` 下任何文件新增公开类型/类后必须同步更新 `packages/sdk/src/index.ts` 导出
+- **SDK schema 名**：不能从 projectId 推导（`dru_${projectId}` 是错的），需通过 `validateApiKey` 或显式传入
 
 ### Docker
 - **前端 API 地址**：生产环境 `NEXT_PUBLIC_API_URL=` 为空（使用相对路径通过 nginx）

@@ -269,33 +269,97 @@ export class QueryBuilder<T = unknown> {
     return this.schema ? `${this.schema}.${this.table}` : this.table
   }
 
+  /** Resolve * in select string, including nested relations */
   private async resolveWildcardFields(): Promise<void> {
-    const cached = QueryBuilder.fieldCache.get(this.cacheKey)
-    if (cached) {
-      this.selectStr = this.selectStr.replace('*', cached.join(', '))
-      return
+    this.selectStr = await this.resolveSelectStr(this.selectStr, this.hasuraTable)
+  }
+
+  /** Recursively resolve * wildcards in a select string for a given Hasura type */
+  private async resolveSelectStr(selectStr: string, typeName: string): Promise<string> {
+    // Parse into top-level segments (respecting parentheses)
+    const segments = this.splitSelectSegments(selectStr)
+    const resolved: string[] = []
+
+    for (const seg of segments) {
+      const trimmed = seg.trim()
+
+      // Nested relation: "rel(*)" or "alias:rel(*)" or "rel(field1, field2)"
+      const nestedMatch = trimmed.match(/^(?:(\w+):)?(\w+)\((.+)\)$/)
+      if (nestedMatch) {
+        const [, alias, rel, subFields] = nestedMatch
+        const relName = alias ? `${alias}: ${rel}` : rel
+        // Resolve nested * if present
+        if (subFields.includes('*')) {
+          // Try introspection for the nested type
+          const nestedType = this.schema ? `${this.schema}_${rel}` : rel
+          const resolvedSub = await this.resolveSelectStr(subFields, nestedType)
+          resolved.push(`${relName} { ${resolvedSub} }`)
+        } else {
+          resolved.push(`${relName} { ${subFields} }`)
+        }
+        continue
+      }
+
+      // Top-level wildcard
+      if (trimmed === '*') {
+        const fields = await this.introspectFields(typeName)
+        // Only include scalar fields (exclude relationship fields that would need sub-selection)
+        resolved.push(fields.join(', '))
+        continue
+      }
+
+      // Plain field
+      resolved.push(trimmed)
     }
 
-    const typeName = this.schema ? `${this.schema}_${this.table}` : this.table
+    return resolved.join('\n    ')
+  }
+
+  /** Split select string into segments, respecting parentheses */
+  private splitSelectSegments(str: string): string[] {
+    const segments: string[] = []
+    let depth = 0
+    let current = ''
+    for (const ch of str) {
+      if (ch === '(') depth++
+      if (ch === ')') depth--
+      if (ch === ',' && depth === 0) {
+        segments.push(current.trim())
+        current = ''
+      } else {
+        current += ch
+      }
+    }
+    if (current.trim()) segments.push(current.trim())
+    return segments
+  }
+
+  /** Fetch field names for a Hasura type via introspection, with caching */
+  private async introspectFields(typeName: string): Promise<string[]> {
+    const cached = QueryBuilder.fieldCache.get(typeName)
+    if (cached) return cached
+
     try {
       const response = await this.fetchFn(this.graphqlUrl, {
         method: 'POST',
         body: JSON.stringify({
-          query: `query { __type(name: "${typeName}") { fields { name } } }`
+          query: `query { __type(name: "${typeName}") { fields { name type { kind } } } }`
         }),
       })
       const json = await response.json()
-      const fields = json.data?.__type?.fields?.map((f: { name: string }) => f.name)
-      if (fields && fields.length > 0) {
-        const filtered = fields.filter((f: string) => !f.startsWith('__'))
-        QueryBuilder.fieldCache.set(this.cacheKey, filtered)
-        this.selectStr = this.selectStr.replace('*', filtered.join(', '))
-      } else {
-        throw new Error(`Cannot resolve fields for table "${this.table}".`)
+      const rawFields = json.data?.__type?.fields as Array<{ name: string; type: { kind: string } }> | undefined
+      if (rawFields && rawFields.length > 0) {
+        // Only scalar/enum fields — exclude OBJECT/LIST (relationships need sub-selection)
+        const scalars = rawFields
+          .filter(f => !f.name.startsWith('__') && f.type.kind !== 'OBJECT' && f.type.kind !== 'LIST')
+          .map(f => f.name)
+        QueryBuilder.fieldCache.set(typeName, scalars)
+        return scalars
       }
+      throw new Error(`No fields found`)
     } catch (err) {
       const cause = err instanceof Error ? err.message : String(err)
-      throw new Error(`@druvia/sdk: Introspection failed for table "${this.table}": ${cause}. Specify fields explicitly: .select('id, name, ...')`)
+      throw new Error(`@druvia/sdk: Introspection failed for type "${typeName}": ${cause}. Specify fields explicitly.`)
     }
   }
 

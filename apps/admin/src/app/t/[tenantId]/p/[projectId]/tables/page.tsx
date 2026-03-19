@@ -92,7 +92,11 @@ export default function TablesPage() {
     setSyncing(true);
     const res = await api.trackAllTablesInHasura(effectiveSchema);
     if (res.success && res.data) {
-      toast({ title: `已同步 ${res.data.tracked.length} 张表的权限` });
+      const d = res.data;
+      const parts = [`已同步 ${d.tracked.length} 张表`];
+      if (d.relationships) parts.push(`${d.relationships} 个关系`);
+      if (d.untracked) parts.push(`清理 ${d.untracked} 个残留`);
+      toast({ title: parts.join('，') });
       // 刷新状态
       const statusRes = await api.getHasuraStatus(effectiveSchema);
       if (statusRes.success && statusRes.data) {

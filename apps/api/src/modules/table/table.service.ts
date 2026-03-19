@@ -572,15 +572,19 @@ export async function dropForeignKey(
   );
 }
 
-// Track all existing tables in schema to Hasura
+// Track all existing tables in schema to Hasura (permissions + relationships)
 export async function trackAllTablesInHasura(schemaName: string): Promise<{
   tracked: string[];
   failed: string[];
+  relationships: number;
+  untracked: number;
 }> {
   const tables = await listTables(schemaName);
   const tracked: string[] = [];
   const failed: string[] = [];
+  let relationships = 0;
 
+  // 1. Track tables + permissions
   for (const table of tables) {
     try {
       await trackTableInHasura(schemaName, table.tableName);
@@ -591,7 +595,105 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
     }
   }
 
-  return { tracked, failed };
+  // 2. Create relationships based on foreign keys
+  for (const table of tables) {
+    try {
+      const fks = await getTableForeignKeys(schemaName, table.tableName);
+      for (const fk of fks) {
+        // Object relationship on source table (many-to-one)
+        let relName = fk.fromColumn.replace(/_id$/, '');
+        try {
+          await hasuraMetadataRequest('pg_create_object_relationship', {
+            source: 'default',
+            table: { schema: schemaName, name: table.tableName },
+            name: relName,
+            using: { foreign_key_constraint_on: fk.fromColumn },
+          });
+          relationships++;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          // "relationship already exists" → skip; "field with name already exists" → retry with suffix
+          if (msg.includes('field with name')) {
+            try {
+              await hasuraMetadataRequest('pg_create_object_relationship', {
+                source: 'default',
+                table: { schema: schemaName, name: table.tableName },
+                name: `${relName}_rel`,
+                using: { foreign_key_constraint_on: fk.fromColumn },
+              });
+              relationships++;
+            } catch { /* ignore */ }
+          }
+        }
+
+        // Array relationship on target table (one-to-many)
+        try {
+          await hasuraMetadataRequest('pg_create_array_relationship', {
+            source: 'default',
+            table: { schema: schemaName, name: fk.toTable },
+            name: table.tableName,
+            using: { foreign_key_constraint_on: { table: { schema: schemaName, name: table.tableName }, column: fk.fromColumn } },
+          });
+          relationships++;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes('field with name')) {
+            try {
+              await hasuraMetadataRequest('pg_create_array_relationship', {
+                source: 'default',
+                table: { schema: schemaName, name: fk.toTable },
+                name: `${table.tableName}_by_${fk.fromColumn.replace(/_id$/, '')}`,
+                using: { foreign_key_constraint_on: { table: { schema: schemaName, name: table.tableName }, column: fk.fromColumn } },
+              });
+              relationships++;
+            } catch { /* ignore */ }
+          }
+        }
+      }
+    } catch { /* ignore FK fetch errors */ }
+  }
+
+  // 3. Untrack tables that exist in Hasura but not in PostgreSQL
+  const existingTableNames = new Set(tables.map(t => t.tableName));
+  let untracked = 0;
+  try {
+    // Drop inconsistent metadata first (stale references block all operations)
+    await hasuraMetadataRequest('drop_inconsistent_metadata', {});
+
+    const status = await getHasuraStatus(schemaName);
+    const staleNames = Object.keys(status).filter(t => !existingTableNames.has(t));
+
+    if (staleNames.length > 0) {
+      // Use replace_metadata to remove stale tables (pg_untrack_table fails when references exist)
+      const metadata = await hasuraMetadataRequest('export_metadata', {}) as Record<string, unknown> & {
+        sources?: Array<{ tables?: Array<{ table: { schema: string; name: string } }> }>;
+      };
+      const staleSet = new Set(staleNames);
+      const source = metadata.sources?.[0];
+      if (source?.tables) {
+        // Remove stale tables
+        source.tables = source.tables.filter(
+          t => t.table.schema !== schemaName || !staleSet.has(t.table.name)
+        );
+        // Remove relationships pointing to stale tables
+        for (const t of source.tables) {
+          const tbl = t as Record<string, unknown>;
+          if (Array.isArray(tbl.array_relationships)) {
+            tbl.array_relationships = (tbl.array_relationships as Array<{ name: string }>).filter(
+              r => !staleSet.has(r.name)
+            );
+          }
+        }
+        await hasuraMetadataRequest('replace_metadata', {
+          allow_inconsistent_metadata: true,
+          metadata,
+        });
+        untracked = staleNames.length;
+      }
+    }
+  } catch { /* ignore */ }
+
+  return { tracked, failed, relationships, untracked };
 }
 
 // Get Hasura permission status for all tables in schema
