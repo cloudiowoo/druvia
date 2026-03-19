@@ -26,16 +26,35 @@ export interface QueryState {
   isSingle: boolean
 }
 
+/** Split string by commas, respecting parentheses depth */
+function splitByComma(str: string): string[] {
+  const segments: string[] = []
+  let depth = 0
+  let current = ''
+  for (const ch of str) {
+    if (ch === '(') depth++
+    if (ch === ')') depth--
+    if (ch === ',' && depth === 0) {
+      segments.push(current.trim())
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  if (current.trim()) segments.push(current.trim())
+  return segments
+}
+
 /** Parse select string into GraphQL field list */
 function parseSelectFields(fields: string): string {
-  return fields
-    .split(',')
-    .map(f => f.trim())
+  return splitByComma(fields)
     .map(f => {
-      const nestedMatch = f.match(/^(\w+)\((.+)\)$/)
+      // Support alias:rel(...) and rel(...)
+      const nestedMatch = f.match(/^(?:(\w+):)?(\w+)\((.+)\)$/s)
       if (nestedMatch) {
-        const [, rel, subFields] = nestedMatch
-        return `${rel} { ${parseSelectFields(subFields)} }`
+        const [, alias, rel, subFields] = nestedMatch
+        const name = alias ? `${alias}: ${rel}` : rel
+        return `${name} { ${parseSelectFields(subFields)} }`
       }
       return f
     })

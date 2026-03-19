@@ -343,15 +343,21 @@ export class QueryBuilder<T = unknown> {
       const response = await this.fetchFn(this.graphqlUrl, {
         method: 'POST',
         body: JSON.stringify({
-          query: `query { __type(name: "${typeName}") { fields { name type { kind } } } }`
+          query: `query { __type(name: "${typeName}") { fields { name type { kind ofType { kind } } } } }`
         }),
       })
       const json = await response.json()
-      const rawFields = json.data?.__type?.fields as Array<{ name: string; type: { kind: string } }> | undefined
+      const rawFields = json.data?.__type?.fields as Array<{ name: string; type: { kind: string; ofType?: { kind: string } } }> | undefined
       if (rawFields && rawFields.length > 0) {
-        // Only scalar/enum fields — exclude OBJECT/LIST (relationships need sub-selection)
+        // Only scalar/enum fields — unwrap NON_NULL to check inner type
+        const isScalar = (f: { type: { kind: string; ofType?: { kind: string } } }) => {
+          const kind = f.type.kind
+          const innerKind = f.type.ofType?.kind
+          return kind === 'SCALAR' || kind === 'ENUM'
+            || (kind === 'NON_NULL' && (innerKind === 'SCALAR' || innerKind === 'ENUM'))
+        }
         const scalars = rawFields
-          .filter(f => !f.name.startsWith('__') && f.type.kind !== 'OBJECT' && f.type.kind !== 'LIST')
+          .filter(f => !f.name.startsWith('__') && isScalar(f))
           .map(f => f.name)
         QueryBuilder.fieldCache.set(typeName, scalars)
         return scalars
