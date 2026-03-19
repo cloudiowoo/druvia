@@ -1,6 +1,7 @@
 export { createClient, DruviaClient } from './DruviaClient.js'
 export { RealtimeChannel } from './modules/realtime.js'
 export { QueryBuilder } from './modules/query-builder.js'
+export type { StorageObject } from './modules/storage.js'
 export type {
   DruviaClientOptions,
   DruviaResponse,

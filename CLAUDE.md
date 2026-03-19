@@ -72,6 +72,7 @@ druvia/
 | Image transformations | ❌ | Storage 层无图片处理 |
 | Broadcast / Presence | ❌ | Hasura 不提供 |
 | Client SDK | ⚠️ | `@druvia/sdk` Auth/CRUD/Storage/Realtime/RPC/Functions + API 层 RPC 代理已实现 |
+| Refresh Token | ✅ | JWT + refresh token rotation，密码修改/停用自动撤销 |
 | MCP Server | ✅ | `packages/mcp-server/`，5 个工具，生产可用 |
 
 ### Supabase 迁移判断
@@ -117,6 +118,7 @@ druvia/
 ### Git
 - **禁止自动提交**：设计/实施文档和代码均由用户确认后手动提交，使用 `/commit` 生成信息
 - **Worktree 目录**：`.worktrees/`
+- **SDK 关联检查**：API/前端功能更新后，检查 `packages/sdk/` 是否需要关联更新；如需要，设定任务告知用户，用户确认后再执行
 
 ### API
 - **POST 空 body**：必须发送 `{}` 而非空 body，否则 `FST_ERR_CTP_EMPTY_JSON_BODY`
@@ -124,6 +126,9 @@ druvia/
 - **权限检查**：使用 `verifyProjectAccess(request, reply)` helper
 - **verifyProjectAccess 模式**：每个 controller 内部定义，非共享 helper；import `checkProjectAccess` from `../../lib/access.js`
 - **路由前缀**：所有路由注册在 `{ prefix: '/api/v1' }`，GraphQL 代理在 `openapi.routes.ts`
+- **Refresh Token 撤销**：修改密码、停用账户时必须调用 `revokeUserRefreshTokens()`；`consumeRefreshToken` 需检查 `user.status === 'active'`
+- **Fastify multipart filename 截断**：`data.filename` 只返回文件名不含目录；需通过 `?path=` query 参数传递完整路径
+- **Storage 上传路由**：`POST /objects`（无通配符），文件路径通过 `?path=` 传递，非 URL path
 
 ### 数据库
 - **BigInt 返回字符串**：用 `Number()` 或 `parseInt()` 转换
@@ -133,6 +138,7 @@ druvia/
 - **Hasura 表追踪**：创建表后需调用 `trackTableInHasura()` 才能在 GraphQL 中使用
 - **Schema 克隆外键问题**：`CREATE TABLE ... LIKE ... INCLUDING ALL` 会复制外键但不更新 schema 引用，需手动重建
 - **迁移文件格式**：`NNN_name.up.sql` + `NNN_name.down.sql`，新建前先 `ls migrations/*.up.sql` 检查编号
+- **当前最新迁移**：013（refresh_tokens），新建从 014 开始
 - **迁移并发保护**：CLI 使用 `pg_advisory_lock`，勿用 `process.exit()` 跳过 finally 块
 - **Bootstrap 双重检测**：`tableChecks` 检查表存在性，`dataChecks` 检查数据行（如 010 默认租户），新增纯数据迁移需在 `dataChecks` 中添加查询
 - **druvia_users 表结构**：用 `username` 而非 `name`，必须提供 `user_id`
@@ -148,17 +154,25 @@ druvia/
 - **GraphiQL Monaco**：需先 `import('graphiql/setup-workers/webpack')` 再导入 GraphiQL，否则 `toUrl` 错误
 - **Zod 验证错误**：使用 `.issues` 而非 `.errors` 获取验证错误列表
 - **useEffect 依赖数组**：Zustand setter 函数（如 `setCurrentEnv`）放入依赖会导致无限循环，需排除并加 eslint-disable 注释
+- **SDK realtime payload 类型**：`msg.payload` 是 `unknown`，访问嵌套属性需 `as Record<string, unknown>` 断言
+- **fetch 204 响应**：DELETE 等返回 204 No Content 时不能调用 `response.json()`，需先检查 status
 
 ### 构建
 - **顺序**：`pnpm --filter @druvia/shared build` 必须先于 API
 - **合并后**：worktree 合并到 main 后需重新 `pnpm install`
 - **Next.js standalone**：构建后需复制 `public/` 和 `.next/static/` 到 standalone 目录
+- **SDK 导出**：`packages/sdk/src/` 下任何文件新增公开类型/类后必须同步更新 `packages/sdk/src/index.ts` 导出
 
 ### Docker
 - **前端 API 地址**：生产环境 `NEXT_PUBLIC_API_URL=` 为空（使用相对路径通过 nginx）
 - **数据目录**：`docker/postgres_data/`、`docker/redis_data/` 映射到主机
 - **nginx 代理**：`/api/` → API，`/v1/graphql` → Hasura，`/` → Admin
 - **Hasura WebSocket**：直连 `:8080/v1/graphql`，nginx 代理 `/v1/graphql` 和 `/v1/graphql/ws`，API `:3001` 不代理 WS
+
+### Edge Functions
+- **函数名精确匹配**：调用 `/functions/{name}/invoke` 时 name 必须与数据库 `druvia_functions.name` 完全一致
+- **执行模式**：支持 Legacy（直接执行 + payload）和 Serve（`Deno.serve()` handler）两种模式
+- **Supabase 迁移**：`import { serve } from "https://deno.land/std@..."` 改为 `Deno.serve()`
 
 ### 测试
 - **位置**：`tests/` 目录，命名 `<module>.test.ts`
@@ -191,4 +205,4 @@ druvia/
 
 ---
 
-*Last Updated: 2026-03-17*
+*Last Updated: 2026-03-19*

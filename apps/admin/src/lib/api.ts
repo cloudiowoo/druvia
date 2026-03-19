@@ -783,7 +783,7 @@ class ApiClient {
     }>>('GET', `/api/v1/projects/${projectId}/storage/buckets/${bucketName}/objects${query ? `?${query}` : ''}`);
   }
 
-  async uploadObject(projectId: string, bucketName: string, file: File): Promise<ApiResponse<{
+  async uploadObject(projectId: string, bucketName: string, file: File, fileName?: string): Promise<ApiResponse<{
     objectId: string;
     bucketId: string;
     name: string;
@@ -798,9 +798,11 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
+    const pathParam = fileName ? `?path=${encodeURIComponent(fileName)}` : '';
+
     try {
       const response = await fetch(
-        `${API_URL}/api/v1/projects/${projectId}/storage/buckets/${bucketName}/objects`,
+        `${API_URL}/api/v1/projects/${projectId}/storage/buckets/${bucketName}/objects${pathParam}`,
         {
           method: 'POST',
           headers,

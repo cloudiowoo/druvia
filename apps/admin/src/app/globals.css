@@ -75,6 +75,19 @@ body {
   @apply bg-gray-50;
 }
 
+/* CodeMirror scroll fix */
+.cm-theme-light {
+  height: 100%;
+}
+
+.cm-editor {
+  height: 100% !important;
+}
+
+.cm-editor .cm-scroller {
+  overflow: auto !important;
+}
+
 
 
 @layer base {

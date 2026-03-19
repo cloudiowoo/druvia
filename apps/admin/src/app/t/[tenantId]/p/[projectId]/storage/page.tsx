@@ -50,7 +50,9 @@ import {
   Link as LinkIcon,
   MoreHorizontal,
   FolderOpen,
+  FolderPlus,
   File,
+  Image as ImageIcon,
   ArrowLeft,
 } from 'lucide-react';
 
@@ -85,6 +87,70 @@ function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString('zh-CN');
 }
 
+function isImageMime(mimeType: string | null): boolean {
+  return !!mimeType && mimeType.startsWith('image/');
+}
+
+function groupByDirectory(objects: StorageObject[], prefix: string) {
+  const dirs = new Set<string>();
+  const files: StorageObject[] = [];
+  for (const obj of objects) {
+    const relative = obj.name.slice(prefix.length);
+    const slashIndex = relative.indexOf('/');
+    if (slashIndex >= 0) {
+      dirs.add(relative.substring(0, slashIndex + 1));
+    } else if (relative !== '.keep') {
+      files.push(obj);
+    }
+  }
+  return { dirs: Array.from(dirs).sort(), files };
+}
+
+function ObjectThumbnail({ projectId, bucket, obj }: { projectId: string; bucket: Bucket; obj: StorageObject }) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isImageMime(obj.mimeType)) return;
+
+    let revoked = false;
+    if (bucket.public) {
+      // 公开 bucket 直接用公开 URL
+      const url = `${process.env.NEXT_PUBLIC_API_URL ?? ''}/api/v1/storage/public/${projectId}/${bucket.name}/${obj.name}`;
+      setSrc(url);
+    } else {
+      // 私有 bucket 通过 fetch + blob URL
+      (async () => {
+        try {
+          const blob = await api.downloadObject(projectId, bucket.name, obj.name);
+          if (!revoked) setSrc(URL.createObjectURL(blob));
+        } catch { /* ignore */ }
+      })();
+    }
+    return () => {
+      revoked = true;
+      if (src && !bucket.public) URL.revokeObjectURL(src);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obj.objectId]);
+
+  if (!isImageMime(obj.mimeType)) {
+    return <File className="h-4 w-4 text-muted-foreground" />;
+  }
+
+  if (!src) {
+    return <ImageIcon className="h-4 w-4 text-muted-foreground" />;
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={obj.name}
+      className="h-8 w-8 rounded object-cover border"
+    />
+  );
+}
+
 export default function StoragePage() {
   const params = useParams();
   const tenantId = params.tenantId as string;
@@ -97,6 +163,7 @@ export default function StoragePage() {
   const [loading, setLoading] = useState(true);
   const [objectsLoading, setObjectsLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [currentPrefix, setCurrentPrefix] = useState('');
 
   // Dialog states
   const [createBucketOpen, setCreateBucketOpen] = useState(false);
@@ -106,6 +173,11 @@ export default function StoragePage() {
   // Delete confirmation states
   const [deleteBucketTarget, setDeleteBucketTarget] = useState<Bucket | null>(null);
   const [deleteObjectTarget, setDeleteObjectTarget] = useState<StorageObject | null>(null);
+  const [deleteFolderTarget, setDeleteFolderTarget] = useState<string | null>(null);
+
+  // Create folder states
+  const [createFolderOpen, setCreateFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -117,9 +189,9 @@ export default function StoragePage() {
     setLoading(false);
   }, [projectId]);
 
-  const fetchObjects = useCallback(async (bucket: Bucket) => {
+  const fetchObjects = useCallback(async (bucket: Bucket, prefix: string) => {
     setObjectsLoading(true);
-    const res = await api.listObjects(projectId, bucket.name);
+    const res = await api.listObjects(projectId, bucket.name, { prefix });
     if (res.success && res.data) {
       setObjects(res.data);
     }
@@ -132,9 +204,9 @@ export default function StoragePage() {
 
   useEffect(() => {
     if (selectedBucket) {
-      fetchObjects(selectedBucket);
+      fetchObjects(selectedBucket, currentPrefix);
     }
-  }, [selectedBucket, fetchObjects]);
+  }, [selectedBucket, currentPrefix, fetchObjects]);
 
   const handleCreateBucket = async () => {
     if (!newBucketName.trim()) return;
@@ -160,6 +232,7 @@ export default function StoragePage() {
       if (selectedBucket?.bucketId === deleteBucketTarget.bucketId) {
         setSelectedBucket(null);
         setObjects([]);
+        setCurrentPrefix('');
       }
       fetchBuckets();
       toast({ title: '存储桶已删除' });
@@ -180,11 +253,13 @@ export default function StoragePage() {
     setUploading(true);
     let successCount = 0;
     for (const file of Array.from(files)) {
-      const res = await api.uploadObject(projectId, selectedBucket.name, file);
+      // 在当前目录下上传：给文件名加上 prefix
+      const fileName = currentPrefix ? currentPrefix + file.name : undefined;
+      const res = await api.uploadObject(projectId, selectedBucket.name, file, fileName);
       if (res.success) successCount++;
     }
     setUploading(false);
-    fetchObjects(selectedBucket);
+    fetchObjects(selectedBucket, currentPrefix);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -224,12 +299,44 @@ export default function StoragePage() {
     if (!selectedBucket || !deleteObjectTarget) return;
     const res = await api.deleteObject(projectId, selectedBucket.name, deleteObjectTarget.name);
     if (res.success) {
-      fetchObjects(selectedBucket);
+      fetchObjects(selectedBucket, currentPrefix);
       toast({ title: '文件已删除' });
     } else {
       toast({ title: '删除失败', variant: 'destructive' });
     }
     setDeleteObjectTarget(null);
+  };
+
+  const handleCreateFolder = async () => {
+    if (!selectedBucket || !newFolderName.trim()) return;
+    const folderPath = currentPrefix + newFolderName.trim() + '/.keep';
+    const blob = new Blob([], { type: 'application/octet-stream' });
+    const res = await api.uploadObject(projectId, selectedBucket.name, blob as unknown as globalThis.File, folderPath);
+    if (res.success) {
+      setCreateFolderOpen(false);
+      setNewFolderName('');
+      fetchObjects(selectedBucket, currentPrefix);
+      toast({ title: '文件夹已创建' });
+    } else {
+      toast({ title: '创建失败', variant: 'destructive' });
+    }
+  };
+
+  const handleConfirmDeleteFolder = async () => {
+    if (!selectedBucket || !deleteFolderTarget) return;
+    const folderPrefix = currentPrefix + deleteFolderTarget;
+    // 列出该目录下所有文件
+    const res = await api.listObjects(projectId, selectedBucket.name, { prefix: folderPrefix });
+    if (res.success && res.data) {
+      for (const obj of res.data) {
+        await api.deleteObject(projectId, selectedBucket.name, obj.name);
+      }
+      fetchObjects(selectedBucket, currentPrefix);
+      toast({ title: '文件夹已删除' });
+    } else {
+      toast({ title: '删除失败', variant: 'destructive' });
+    }
+    setDeleteFolderTarget(null);
   };
 
   return (
@@ -347,6 +454,60 @@ export default function StoragePage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Delete Folder Confirmation */}
+      <AlertDialog open={!!deleteFolderTarget} onOpenChange={() => setDeleteFolderTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除文件夹</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除文件夹 &quot;{deleteFolderTarget}&quot; 及其所有内容吗？此操作不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDeleteFolder} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Create Folder Dialog */}
+      <Dialog open={createFolderOpen} onOpenChange={setCreateFolderOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>新建文件夹</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label htmlFor="folder-name" className="text-sm font-medium">
+                文件夹名称
+              </label>
+              <Input
+                id="folder-name"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="my-folder"
+                onKeyDown={(e) => { if (e.key === 'Enter' && newFolderName.trim()) handleCreateFolder(); }}
+              />
+              {currentPrefix && (
+                <p className="text-xs text-muted-foreground">
+                  将创建在 {currentPrefix} 下
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateFolderOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleCreateFolder} disabled={!newFolderName.trim()}>
+              创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Bucket List */}
         <div className="lg:col-span-1">
@@ -371,7 +532,7 @@ export default function StoragePage() {
                     className={`p-3 cursor-pointer hover:bg-muted/50 flex items-center justify-between group ${
                       selectedBucket?.bucketId === bucket.bucketId ? 'bg-muted' : ''
                     }`}
-                    onClick={() => setSelectedBucket(bucket)}
+                    onClick={() => { setSelectedBucket(bucket); setCurrentPrefix(''); }}
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <FolderOpen className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -423,14 +584,50 @@ export default function StoragePage() {
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6"
-                    onClick={() => setSelectedBucket(null)}
+                    onClick={() => {
+                      if (currentPrefix) {
+                        // 返回上级目录
+                        const parts = currentPrefix.slice(0, -1).split('/');
+                        parts.pop();
+                        setCurrentPrefix(parts.length > 0 ? parts.join('/') + '/' : '');
+                      } else {
+                        setSelectedBucket(null);
+                      }
+                    }}
                   >
                     <ArrowLeft className="h-4 w-4" />
                   </Button>
                 )}
-                <h3 className="font-medium text-sm">
-                  {selectedBucket ? selectedBucket.name : '选择一个存储桶'}
-                </h3>
+                {selectedBucket ? (
+                  <div className="flex items-center gap-1 text-sm">
+                    <button
+                      className="font-medium hover:underline"
+                      onClick={() => setCurrentPrefix('')}
+                    >
+                      {selectedBucket.name}
+                    </button>
+                    {currentPrefix && currentPrefix.split('/').filter(Boolean).map((segment, i, arr) => {
+                      const path = arr.slice(0, i + 1).join('/') + '/';
+                      return (
+                        <span key={path} className="flex items-center gap-1">
+                          <span className="text-muted-foreground">/</span>
+                          {i === arr.length - 1 ? (
+                            <span className="font-medium">{segment}</span>
+                          ) : (
+                            <button
+                              className="hover:underline"
+                              onClick={() => setCurrentPrefix(path)}
+                            >
+                              {segment}
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <h3 className="font-medium text-sm">选择一个存储桶</h3>
+                )}
               </div>
               {selectedBucket && (
                 <div className="flex gap-2">
@@ -441,6 +638,14 @@ export default function StoragePage() {
                     className="hidden"
                     onChange={handleFileSelect}
                   />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCreateFolderOpen(true)}
+                  >
+                    <FolderPlus className="h-4 w-4 mr-2" />
+                    新建文件夹
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
@@ -464,7 +669,7 @@ export default function StoragePage() {
                 <Skeleton className="h-10 w-full" />
                 <Skeleton className="h-10 w-full" />
               </div>
-            ) : objects.length === 0 ? (
+            ) : objects.length === 0 && !currentPrefix ? (
               <div className="p-12 text-center">
                 <p className="text-muted-foreground mb-4">存储桶为空</p>
                 <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
@@ -472,7 +677,17 @@ export default function StoragePage() {
                   上传第一个文件
                 </Button>
               </div>
-            ) : (
+            ) : (() => {
+              const { dirs, files } = groupByDirectory(objects, currentPrefix);
+              return dirs.length === 0 && files.length === 0 ? (
+                <div className="p-12 text-center">
+                  <p className="text-muted-foreground mb-4">当前目录为空</p>
+                  <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                    <Upload className="h-4 w-4 mr-2" />
+                    上传文件
+                  </Button>
+                </div>
+              ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -484,12 +699,55 @@ export default function StoragePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {objects.map((obj) => (
+                  {dirs.map((dir) => (
+                    <TableRow
+                      key={`dir-${dir}`}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => setCurrentPrefix(currentPrefix + dir)}
+                    >
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          <FolderOpen className="h-4 w-4 text-blue-500" />
+                          <span className="font-mono text-sm">{dir}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">—</TableCell>
+                      <TableCell className="text-right text-muted-foreground">目录</TableCell>
+                      <TableCell className="text-right text-muted-foreground">—</TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteFolderTarget(dir);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              删除文件夹
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {files.map((obj) => (
                     <TableRow key={obj.objectId}>
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
-                          <File className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-mono text-sm">{obj.name}</span>
+                          <ObjectThumbnail projectId={projectId} bucket={selectedBucket} obj={obj} />
+                          <span className="font-mono text-sm">{obj.name.slice(currentPrefix.length)}</span>
                         </div>
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">
@@ -531,7 +789,8 @@ export default function StoragePage() {
                   ))}
                 </TableBody>
               </Table>
-            )}
+              );
+            })()}
           </div>
         </div>
       </div>

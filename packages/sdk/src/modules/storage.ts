@@ -1,5 +1,14 @@
 import type { FetchFn, DruviaResponse } from '../types.js'
 
+export interface StorageObject {
+  objectId: string
+  bucketId: string
+  name: string
+  size: number
+  mimeType: string | null
+  createdAt: string
+}
+
 export class BucketClient {
   private baseUrl: string
   private projectId: string
@@ -17,20 +26,65 @@ export class BucketClient {
     return `${this.baseUrl}/projects/${this.projectId}/storage/buckets/${this.bucketName}/objects/${path}`
   }
 
+  private uploadUrl(path: string): string {
+    return `${this.baseUrl}/projects/${this.projectId}/storage/buckets/${this.bucketName}/objects?path=${encodeURIComponent(path)}`
+  }
+
   async upload(path: string, file: Blob | File | ArrayBuffer, options?: { contentType?: string }): Promise<DruviaResponse<{ path: string }>> {
     try {
-      const headers: Record<string, string> = {}
-      if (options?.contentType) headers['Content-Type'] = options.contentType
-      const response = await this.fetchFn(this.objectUrl(path), {
+      const formData = new FormData()
+      const contentType = options?.contentType
+      let blob: Blob | File
+      if (file instanceof ArrayBuffer) {
+        blob = new Blob([file], contentType ? { type: contentType } : undefined)
+      } else if (contentType && !(file instanceof File)) {
+        blob = new Blob([file], { type: contentType })
+      } else {
+        blob = file
+      }
+      formData.append('file', blob, path.split('/').pop() || 'file')
+      const response = await this.fetchFn(this.uploadUrl(path), {
         method: 'POST',
-        body: file as any,
-        headers,
+        body: formData as any,
       })
       const json = await response.json()
       if (!response.ok) {
         return { data: null, error: json.error ?? { code: 'STORAGE_ERROR', message: 'Upload failed' } }
       }
       return { data: json.data ?? { path }, error: null }
+    } catch (err) {
+      return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
+    }
+  }
+
+  async list(options?: { prefix?: string; limit?: number; offset?: number }): Promise<DruviaResponse<StorageObject[]>> {
+    try {
+      const params = new URLSearchParams()
+      if (options?.prefix) params.set('prefix', options.prefix)
+      if (options?.limit) params.set('limit', String(options.limit))
+      if (options?.offset) params.set('offset', String(options.offset))
+      const query = params.toString()
+      const url = `${this.baseUrl}/projects/${this.projectId}/storage/buckets/${this.bucketName}/objects${query ? `?${query}` : ''}`
+      const response = await this.fetchFn(url, { method: 'GET' })
+      const json = await response.json()
+      if (!response.ok) {
+        return { data: null, error: json.error ?? { code: 'STORAGE_ERROR', message: 'List failed' } }
+      }
+      return { data: json.data ?? [], error: null }
+    } catch (err) {
+      return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
+    }
+  }
+
+  async remove(path: string): Promise<DruviaResponse<null>> {
+    try {
+      const response = await this.fetchFn(this.objectUrl(path), { method: 'DELETE' })
+      if (!response.ok) {
+        const text = await response.text()
+        const error = text ? JSON.parse(text).error : { code: 'STORAGE_ERROR', message: 'Delete failed' }
+        return { data: null, error }
+      }
+      return { data: null, error: null }
     } catch (err) {
       return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
     }

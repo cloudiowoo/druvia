@@ -120,7 +120,7 @@ export default function FunctionsPage() {
 
   return (
     <DashboardLayout isProjectLevel={true}>
-      <div className="h-[calc(100vh-120px)] flex">
+      <div className="h-[calc(100vh-7rem)] flex overflow-hidden">
         {/* Left Sidebar - Function List */}
         <div className="w-64 border-r bg-white flex-shrink-0">
           <FunctionList
@@ -135,7 +135,7 @@ export default function FunctionsPage() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {selectedFunction ? (
           <>
             {/* Tabs */}
@@ -161,7 +161,7 @@ export default function FunctionsPage() {
             </div>
 
             {/* Tab Content */}
-            <div className="flex-1 overflow-hidden bg-white">
+            <div className="flex-1 overflow-hidden bg-white min-h-0">
               {activeTab === 'editor' && (
                 <FunctionEditor
                   key={selectedFunction.id}

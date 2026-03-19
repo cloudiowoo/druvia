@@ -44,7 +44,7 @@ interface SignedUrlBody {
   expiresIn?: number;
 }
 
-interface MultipartRequest extends FastifyRequest<{ Params: BucketParams }> {
+interface MultipartRequest extends FastifyRequest<{ Params: BucketParams; Querystring: { path?: string } }> {
   file(): Promise<MultipartFile | undefined>;
 }
 
@@ -283,8 +283,9 @@ export async function uploadObject(
     });
   }
 
-  // Validate filename
-  const sanitizedName = sanitizeObjectPath(data.filename);
+  // Validate filename — prefer ?path= query param, fallback to multipart filename
+  const rawName = (request.query.path || data.filename);
+  const sanitizedName = sanitizeObjectPath(rawName);
   if (!sanitizedName) {
     return reply.status(400).send({
       success: false,

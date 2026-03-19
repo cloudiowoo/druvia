@@ -113,7 +113,7 @@ export function FunctionEditor({ func, onSave, onInvoke }: FunctionEditorProps) 
   }
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
         <div className="flex items-center gap-3">
@@ -167,7 +167,7 @@ export function FunctionEditor({ func, onSave, onInvoke }: FunctionEditorProps) 
       </div>
 
       {/* Code Editor */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 h-0 overflow-hidden">
         <CodeMirror
           value={code}
           onChange={handleCodeChange}
