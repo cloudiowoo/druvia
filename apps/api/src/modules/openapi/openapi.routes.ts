@@ -86,9 +86,9 @@ export async function openapiRoutes(fastify: FastifyInstance) {
           'x-hasura-default-schema': schemaName,
         };
 
-        // 匿名用户设置 anonymous role
+        // apikey 认证使用 user 角色（项目级授权），JWT 认证通过 admin-secret 透传
         if (!isJwtUser(request.user!)) {
-          hasuraHeaders['x-hasura-role'] = 'anonymous';
+          hasuraHeaders['x-hasura-role'] = 'user';
         }
 
         const response = await fetch(`${HASURA_URL}/v1/graphql`, {
