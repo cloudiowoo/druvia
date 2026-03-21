@@ -18,7 +18,6 @@ interface TableParams extends ProjectParams {
 
 interface ConfigureSubscriptionBody {
   enabled: boolean;
-  role?: string;
 }
 
 // ============================================
@@ -135,7 +134,7 @@ export async function configureSubscription(
   if (!(await verifyProjectAccess(request, reply))) return;
 
   const { projectId, tableName } = request.params;
-  const { enabled, role } = request.body;
+  const { enabled } = request.body;
   const envName = request.query.env;
 
   // 获取项目 schema
@@ -152,7 +151,6 @@ export async function configureSubscription(
       schemaName,
       tableName,
       enabled,
-      role
     );
 
     return reply.send({

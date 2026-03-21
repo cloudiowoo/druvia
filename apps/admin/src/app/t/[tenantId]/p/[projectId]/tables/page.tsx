@@ -17,7 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Table2, GitBranch, RefreshCw, Check, X } from 'lucide-react';
+import { Plus, Table2, GitBranch, RefreshCw, Check, X, Radio } from 'lucide-react';
 import { CreateTableDialog } from '@/components/CreateTableDialog';
 import { ERDiagram } from '@/components/tables/ERDiagram';
 import { toast } from '@/hooks/use-toast';
@@ -63,6 +63,7 @@ export default function TablesPage() {
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasuraStatus, setHasuraStatus] = useState<HasuraStatus>({});
+  const [realtimeStatus, setRealtimeStatus] = useState<Record<string, boolean>>({});
   const [syncing, setSyncing] = useState(false);
 
   // ER diagram data
@@ -74,15 +75,23 @@ export default function TablesPage() {
 
   const fetchTables = async () => {
     if (!effectiveSchema) return;
-    const [tablesRes, statusRes] = await Promise.all([
+    const [tablesRes, statusRes, realtimeRes] = await Promise.all([
       api.listTables(effectiveSchema),
       api.getHasuraStatus(effectiveSchema),
+      api.listRealtimeSubscriptions(projectId, currentEnv?.name),
     ]);
     if (tablesRes.success && tablesRes.data) {
       setTables(tablesRes.data);
     }
     if (statusRes.success && statusRes.data) {
       setHasuraStatus(statusRes.data);
+    }
+    if (realtimeRes.success && realtimeRes.data) {
+      const rtMap: Record<string, boolean> = {};
+      for (const sub of realtimeRes.data.subscriptions) {
+        rtMap[sub.tableName] = sub.enabled;
+      }
+      setRealtimeStatus(rtMap);
     }
     setLoading(false);
   };
@@ -218,6 +227,7 @@ export default function TablesPage() {
                   <TableRow>
                     <TableHead>表名</TableHead>
                     <TableHead className="text-center">GraphQL</TableHead>
+                    <TableHead className="text-center">Realtime</TableHead>
                     <TableHead className="text-right">行数</TableHead>
                     <TableHead className="text-right">大小</TableHead>
                     <TableHead className="text-right">操作</TableHead>
@@ -227,8 +237,8 @@ export default function TablesPage() {
                   {tables.map((table) => {
                     const status = hasuraStatus[table.tableName];
                     const hasUser = status?.roles.includes('user');
-                    const hasAnon = status?.roles.includes('anonymous');
-                    const allGood = status?.tracked && hasUser && hasAnon;
+                    const allGood = status?.tracked && hasUser;
+                    const isRealtime = realtimeStatus[table.tableName] ?? false;
                     return (
                     <TableRow key={table.tableName}>
                       <TableCell className="font-medium font-mono">
@@ -239,6 +249,13 @@ export default function TablesPage() {
                           <Check className="h-4 w-4 text-green-600 inline-block" />
                         ) : status?.tracked ? (
                           <span className="text-xs text-amber-600">部分权限</span>
+                        ) : (
+                          <X className="h-4 w-4 text-muted-foreground inline-block" />
+                        )}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {isRealtime ? (
+                          <Radio className="h-4 w-4 text-green-600 inline-block" />
                         ) : (
                           <X className="h-4 w-4 text-muted-foreground inline-block" />
                         )}

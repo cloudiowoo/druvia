@@ -149,31 +149,51 @@ export async function trackTableInHasura(schemaName: string, tableName: string):
     }
   }
 
-  // 2. Add permissions for 'user' and 'anonymous' roles
-  const roles = ['user', 'anonymous'];
+  // 2. Add permissions for 'user' role (full CRUD)
   const table = { schema: schemaName, name: tableName };
+  const userPermissionOps = [
+    { type: 'pg_create_select_permission', permission: { columns: '*', filter: {}, allow_aggregations: true } },
+    { type: 'pg_create_insert_permission', permission: { columns: '*', check: {} } },
+    { type: 'pg_create_update_permission', permission: { columns: '*', filter: {}, check: {} } },
+    { type: 'pg_create_delete_permission', permission: { filter: {} } },
+  ];
 
-  for (const role of roles) {
-    const permissionOps = [
-      { type: 'pg_create_select_permission', permission: { columns: '*', filter: {}, allow_aggregations: true } },
-      { type: 'pg_create_insert_permission', permission: { columns: '*', check: {} } },
-      { type: 'pg_create_update_permission', permission: { columns: '*', filter: {}, check: {} } },
-      { type: 'pg_create_delete_permission', permission: { filter: {} } },
-    ];
+  for (const op of userPermissionOps) {
+    try {
+      await hasuraMetadataRequest(op.type, {
+        source: 'default',
+        table,
+        role: 'user',
+        permission: op.permission,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (!errorMsg.includes('already exists')) {
+        console.warn(`Failed to create ${op.type} for user on ${schemaName}.${tableName}:`, errorMsg);
+      }
+    }
+  }
 
-    for (const op of permissionOps) {
-      try {
-        await hasuraMetadataRequest(op.type, {
-          source: 'default',
-          table,
-          role,
-          permission: op.permission,
-        });
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        if (!errorMsg.includes('already exists')) {
-          console.warn(`Failed to create ${op.type} for ${role} on ${schemaName}.${tableName}:`, errorMsg);
-        }
+  // 3. Add permissions for 'anonymous' role (insert/update/delete only, NO select)
+  // anonymous select_permission is managed by Realtime page
+  const anonPermissionOps = [
+    { type: 'pg_create_insert_permission', permission: { columns: '*', check: {} } },
+    { type: 'pg_create_update_permission', permission: { columns: '*', filter: {}, check: {} } },
+    { type: 'pg_create_delete_permission', permission: { filter: {} } },
+  ];
+
+  for (const op of anonPermissionOps) {
+    try {
+      await hasuraMetadataRequest(op.type, {
+        source: 'default',
+        table,
+        role: 'anonymous',
+        permission: op.permission,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (!errorMsg.includes('already exists')) {
+        console.warn(`Failed to create ${op.type} for anonymous on ${schemaName}.${tableName}:`, errorMsg);
       }
     }
   }
@@ -593,6 +613,37 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
       console.error(`Failed to track ${table.tableName}:`, error);
       failed.push(table.tableName);
     }
+  }
+
+  // 1.5 Clean up anonymous select_permission for tables where realtime is disabled
+  try {
+    const metaRows = await query<{ table_name: string; realtime_enabled: boolean }>(
+      `SELECT table_name, realtime_enabled FROM "${schemaName}"._meta_tables`,
+      []
+    );
+    const realtimeEnabledSet = new Set(
+      metaRows.filter(r => r.realtime_enabled).map(r => r.table_name)
+    );
+
+    for (const table of tables) {
+      if (!realtimeEnabledSet.has(table.tableName)) {
+        // Drop anonymous select_permission if it exists (legacy cleanup)
+        try {
+          await hasuraMetadataRequest('pg_drop_select_permission', {
+            source: 'default',
+            table: { schema: schemaName, name: table.tableName },
+            role: 'anonymous',
+          });
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          if (!errorMsg.includes('does not exist')) {
+            console.warn(`Failed to drop anonymous select_permission on ${schemaName}.${table.tableName}:`, errorMsg);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to clean up anonymous select_permissions:', error);
   }
 
   // 2. Create relationships based on foreign keys

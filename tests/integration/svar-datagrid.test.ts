@@ -26,6 +26,7 @@ describe('SVAR DataGrid Integration - Row CRUD', () => {
         table_name VARCHAR(128) UNIQUE NOT NULL,
         description TEXT,
         row_count BIGINT DEFAULT 0,
+        realtime_enabled BOOLEAN NOT NULL DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )

@@ -32,28 +32,6 @@ export interface SubscriptionStats {
 const HASURA_METADATA_URL = `${config.hasura.endpoint}/v1/metadata`;
 const HASURA_GRAPHQL_URL = `${config.hasura.endpoint}/v1/graphql`;
 
-interface HasuraMetadataResponse {
-  version?: number;
-  sources?: Array<{
-    name: string;
-    tables?: Array<{
-      table: { schema: string; name: string };
-      select_permissions?: Array<{
-        role: string;
-        permission: Record<string, unknown>;
-      }>;
-    }>;
-  }>;
-}
-
-interface HasuraTable {
-  table: { schema: string; name: string };
-  select_permissions?: Array<{
-    role: string;
-    permission: Record<string, unknown>;
-  }>;
-}
-
 export async function hasuraMetadataRequest<T = unknown>(
   type: string,
   args: Record<string, unknown>
@@ -81,64 +59,31 @@ export async function hasuraMetadataRequest<T = unknown>(
 
 /**
  * 获取 schema 下所有表的订阅配置
- * 从数据库获取表列表，然后检查 Hasura 中的 track 和权限状态
+ * 从 _meta_tables 读取 realtime_enabled 标记
  */
 export async function getTableSubscriptions(schemaName: string): Promise<TableSubscription[]> {
-  // 验证 schema 名称格式
   validateSchemaName(schemaName);
 
-  // 1. 从数据库获取 schema 下的所有表（排除元数据表）
-  const dbTables = await query<{ table_name: string }>(
-    `SELECT table_name
-     FROM information_schema.tables
-     WHERE table_schema = $1
-       AND table_type = 'BASE TABLE'
-       AND table_name NOT LIKE '\\_%'
-     ORDER BY table_name`,
+  // LEFT JOIN information_schema.tables with _meta_tables to get realtime_enabled
+  // Tables not in _meta_tables default to realtime_enabled=false
+  const rows = await query<{ table_name: string; realtime_enabled: boolean }>(
+    `SELECT t.table_name, COALESCE(m.realtime_enabled, false) as realtime_enabled
+     FROM information_schema.tables t
+     LEFT JOIN "${schemaName}"._meta_tables m ON m.table_name = t.table_name
+     WHERE t.table_schema = $1
+       AND t.table_type = 'BASE TABLE'
+       AND t.table_name NOT LIKE '\\_%'
+     ORDER BY t.table_name`,
     [schemaName]
   );
 
-  if (dbTables.length === 0) {
-    return [];
-  }
-
-  // 2. 获取 Hasura 元数据，检查哪些表已 track 并有权限
-  const trackedTablesMap = new Map<string, HasuraTable>();
-  try {
-    const metadata = await hasuraMetadataRequest<HasuraMetadataResponse>('export_metadata', {
-      version: 2,
-    });
-
-    const source = metadata.sources?.find((s) => s.name === 'default');
-    if (source?.tables) {
-      for (const t of source.tables) {
-        if (t.table.schema === schemaName) {
-          trackedTablesMap.set(t.table.name, t);
-        }
-      }
-    }
-  } catch (error) {
-    // Hasura 不可用时，所有表显示为未启用
-    console.warn('Failed to fetch Hasura metadata:', error);
-  }
-
-  // 3. 合并数据库表和 Hasura 状态
-  return dbTables.map((row) => {
-    const tableName = row.table_name;
-    const hasuraTable = trackedTablesMap.get(tableName);
-    const hasSelectPermission = !!(
-      hasuraTable?.select_permissions &&
-      hasuraTable.select_permissions.length > 0
-    );
-
-    return {
-      tableName,
-      schemaName,
-      enabled: hasSelectPermission,
-      operations: ['INSERT', 'UPDATE', 'DELETE'] as const,
-      hasSelectPermission,
-    };
-  });
+  return rows.map((row) => ({
+    tableName: row.table_name,
+    schemaName,
+    enabled: row.realtime_enabled,
+    operations: ['INSERT', 'UPDATE', 'DELETE'] as const,
+    hasSelectPermission: row.realtime_enabled,
+  }));
 }
 
 /**
@@ -154,44 +99,47 @@ export async function getSubscriptionStats(schemaName: string): Promise<Subscrip
   };
 }
 
+const REALTIME_ROLE = 'anonymous';
+
 /**
- * 配置表订阅（通过 Hasura track 和权限配置）
+ * 配置表订阅（通过 _meta_tables 标记 + Hasura anonymous 角色权限）
  */
 export async function configureTableSubscription(
   schemaName: string,
   tableName: string,
   enabled: boolean,
-  role: string = 'user'
 ): Promise<TableSubscription> {
   validateSchemaName(schemaName);
   validateTableName(tableName);
 
-  // 验证角色
-  if (!validateRole(role)) {
-    throw new Error(`Invalid role: ${role}. Allowed roles: ${ALLOWED_ROLES.join(', ')}`);
-  }
+  // Upsert _meta_tables.realtime_enabled (handles tables not yet registered in _meta_tables)
+  await query(
+    `INSERT INTO "${schemaName}"._meta_tables (table_name, realtime_enabled, updated_at)
+     VALUES ($2, $1, NOW())
+     ON CONFLICT (table_name) DO UPDATE SET realtime_enabled = $1, updated_at = NOW()`,
+    [enabled, tableName]
+  );
 
   if (enabled) {
-    // 1. 先 track 表（如果尚未 track）
+    // 1. Track table if not tracked
     try {
       await hasuraMetadataRequest('pg_track_table', {
         source: 'default',
         table: { schema: schemaName, name: tableName },
       });
     } catch (error) {
-      // 如果表已经 track，忽略错误
       const errorMsg = error instanceof Error ? error.message : String(error);
       if (!errorMsg.includes('already tracked') && !errorMsg.includes('already exists')) {
         throw error;
       }
     }
 
-    // 2. 添加 select 权限以启用订阅
+    // 2. Add select permission for anonymous role to enable subscription
     try {
       await hasuraMetadataRequest('pg_create_select_permission', {
         source: 'default',
         table: { schema: schemaName, name: tableName },
-        role,
+        role: REALTIME_ROLE,
         permission: {
           columns: '*',
           filter: {},
@@ -199,28 +147,25 @@ export async function configureTableSubscription(
         },
       });
     } catch (error) {
-      // 如果权限已存在，忽略错误
       const errorMsg = error instanceof Error ? error.message : String(error);
       if (!errorMsg.includes('already exists') && !errorMsg.includes('already defined')) {
         throw error;
       }
     }
   } else {
-    // 删除权限以禁用订阅
+    // Drop anonymous select permission to disable subscription
     try {
       await hasuraMetadataRequest('pg_drop_select_permission', {
         source: 'default',
         table: { schema: schemaName, name: tableName },
-        role,
+        role: REALTIME_ROLE,
       });
     } catch (error) {
-      // 如果权限不存在，忽略错误
       const errorMsg = error instanceof Error ? error.message : String(error);
       if (!errorMsg.includes('does not exist')) {
         throw error;
       }
     }
-    // 注意：不 untrack 表，因为可能有其他角色在使用
   }
 
   return {
@@ -386,19 +331,6 @@ function validateTableName(tableName: string): void {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
     throw new Error('Invalid table name format');
   }
-}
-
-/**
- * 允许的 Hasura 角色列表
- */
-const ALLOWED_ROLES = ['user', 'anonymous', 'authenticated'] as const;
-type AllowedRole = (typeof ALLOWED_ROLES)[number];
-
-/**
- * 验证角色名称，防止权限提升
- */
-function validateRole(role: string): role is AllowedRole {
-  return ALLOWED_ROLES.includes(role as AllowedRole);
 }
 
 /**

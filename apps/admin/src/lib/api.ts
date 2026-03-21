@@ -1082,7 +1082,7 @@ class ApiClient {
   async configureRealtimeSubscription(
     projectId: string,
     tableName: string,
-    data: { enabled: boolean; role?: string },
+    data: { enabled: boolean },
     envName?: string
   ) {
     const params = envName && envName !== 'prod' ? `?env=${envName}` : '';

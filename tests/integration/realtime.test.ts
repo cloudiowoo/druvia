@@ -45,6 +45,13 @@ describe('RealtimeService Integration', () => {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
+
+    // Register test table in _meta_tables (required for realtime_enabled tracking)
+    await pool.query(`
+      INSERT INTO ${testSchemaName}._meta_tables (table_name, description)
+      VALUES ('test_realtime_table', 'Test table for realtime')
+      ON CONFLICT (table_name) DO NOTHING
+    `);
   });
 
   afterAll(async () => {
@@ -194,27 +201,80 @@ describe('RealtimeService Integration', () => {
     });
   });
 
-  describe('Role Validation', () => {
-    it('should reject invalid role in configureTableSubscription', async () => {
-      await expect(
-        realtimeService.configureTableSubscription(
-          testSchemaName,
-          'test_realtime_table',
-          true,
-          'admin' // not in allowed list
-        )
-      ).rejects.toThrow('Invalid role');
+  describe('realtime_enabled behavior', () => {
+    it('getTableSubscriptions should return enabled=false by default', async () => {
+      const subscriptions = await realtimeService.getTableSubscriptions(testSchemaName);
+      const testTable = subscriptions.find(s => s.tableName === 'test_realtime_table');
+
+      expect(testTable).toBeDefined();
+      expect(testTable!.enabled).toBe(false);
     });
 
-    it('should reject dangerous role names', async () => {
-      await expect(
-        realtimeService.configureTableSubscription(
-          testSchemaName,
-          'test_realtime_table',
-          true,
-          'hasura_admin'
+    it('configureTableSubscription should update _meta_tables.realtime_enabled', async () => {
+      // Enable
+      const result = await realtimeService.configureTableSubscription(
+        testSchemaName,
+        'test_realtime_table',
+        true,
+      );
+      expect(result.enabled).toBe(true);
+
+      // Verify in DB
+      const dbResult = await pool.query(
+        `SELECT realtime_enabled FROM ${testSchemaName}._meta_tables WHERE table_name = $1`,
+        ['test_realtime_table']
+      );
+      expect(dbResult.rows[0].realtime_enabled).toBe(true);
+
+      // Verify getTableSubscriptions reflects the change
+      const subscriptions = await realtimeService.getTableSubscriptions(testSchemaName);
+      const testTable = subscriptions.find(s => s.tableName === 'test_realtime_table');
+      expect(testTable!.enabled).toBe(true);
+
+      // Disable
+      await realtimeService.configureTableSubscription(
+        testSchemaName,
+        'test_realtime_table',
+        false,
+      );
+
+      const after = await pool.query(
+        `SELECT realtime_enabled FROM ${testSchemaName}._meta_tables WHERE table_name = $1`,
+        ['test_realtime_table']
+      );
+      expect(after.rows[0].realtime_enabled).toBe(false);
+    });
+
+    it('configureTableSubscription should upsert for unregistered tables', async () => {
+      // Create a table not in _meta_tables
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${testSchemaName}.unregistered_table (
+          id SERIAL PRIMARY KEY
         )
-      ).rejects.toThrow('Invalid role');
+      `);
+
+      // Should upsert into _meta_tables
+      const result = await realtimeService.configureTableSubscription(
+        testSchemaName,
+        'unregistered_table',
+        true,
+      );
+      expect(result.enabled).toBe(true);
+
+      // Verify row was created in _meta_tables
+      const dbResult = await pool.query(
+        `SELECT realtime_enabled FROM ${testSchemaName}._meta_tables WHERE table_name = $1`,
+        ['unregistered_table']
+      );
+      expect(dbResult.rows.length).toBe(1);
+      expect(dbResult.rows[0].realtime_enabled).toBe(true);
+
+      // Cleanup
+      await pool.query(`DROP TABLE IF EXISTS ${testSchemaName}.unregistered_table`);
+      await pool.query(
+        `DELETE FROM ${testSchemaName}._meta_tables WHERE table_name = $1`,
+        ['unregistered_table']
+      );
     });
   });
 });

@@ -28,6 +28,7 @@ export async function createTenantSchema(tenantId: string, tenantAlias: string):
         table_name VARCHAR(128) NOT NULL UNIQUE,
         description TEXT,
         row_count BIGINT DEFAULT 0,
+        realtime_enabled BOOLEAN NOT NULL DEFAULT false,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )
@@ -92,6 +93,7 @@ export async function createProjectSchema(
         table_name VARCHAR(128) NOT NULL UNIQUE,
         description TEXT,
         row_count BIGINT DEFAULT 0,
+        realtime_enabled BOOLEAN NOT NULL DEFAULT false,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )
