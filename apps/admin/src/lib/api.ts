@@ -19,6 +19,7 @@ interface EdgeFunction {
   code: string;
   runtime: string;
   status: 'active' | 'disabled';
+  invokeAuthMode: 'jwt_required' | 'anon_allowed';
   description: string | null;
   createdAt: string;
   updatedAt: string;
@@ -1209,7 +1210,7 @@ class ApiClient {
     return this.request('GET', `/api/v1/projects/${projectId}/functions`);
   }
 
-  async createFunction(projectId: string, data: { name: string; code: string; description?: string }): Promise<ApiResponse<EdgeFunction>> {
+  async createFunction(projectId: string, data: { name: string; code: string; description?: string; invokeAuthMode?: 'jwt_required' | 'anon_allowed' }): Promise<ApiResponse<EdgeFunction>> {
     return this.request('POST', `/api/v1/projects/${projectId}/functions`, data);
   }
 
@@ -1217,7 +1218,7 @@ class ApiClient {
     return this.request('GET', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(name)}`);
   }
 
-  async updateFunction(projectId: string, name: string, data: { code?: string; status?: string; description?: string }): Promise<ApiResponse<EdgeFunction>> {
+  async updateFunction(projectId: string, name: string, data: { code?: string; status?: string; description?: string; invokeAuthMode?: 'jwt_required' | 'anon_allowed' }): Promise<ApiResponse<EdgeFunction>> {
     return this.request('PUT', `/api/v1/projects/${projectId}/functions/${encodeURIComponent(name)}`, data);
   }
 

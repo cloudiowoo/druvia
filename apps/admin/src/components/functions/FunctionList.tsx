@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Plus, Code, MoreVertical, Trash2, Power, PowerOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { EdgeFunction } from '@/lib/api';
+import { getInvokeAuthModeBadgeMeta } from './invoke-auth-mode';
 
 interface FunctionListProps {
   functions: EdgeFunction[];
@@ -64,7 +65,10 @@ export function FunctionList({
           </div>
         ) : (
           <ul>
-            {functions.map((func) => (
+            {functions.map((func) => {
+              const badge = getInvokeAuthModeBadgeMeta(func.invokeAuthMode);
+
+              return (
               <li
                 key={func.id}
                 className={cn(
@@ -88,9 +92,17 @@ export function FunctionList({
                 {/* Info */}
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm truncate">{func.name}</p>
-                  <p className="text-xs text-gray-500">
-                    {func.status === 'active' ? '运行中' : '已禁用'}
-                  </p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <p className="text-xs text-gray-500">
+                      {func.status === 'active' ? '运行中' : '已禁用'}
+                    </p>
+                    <span className={cn(
+                      'inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold tracking-wide',
+                      badge.className
+                    )}>
+                      {badge.label}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Menu */}
@@ -149,7 +161,8 @@ export function FunctionList({
                   )}
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </div>

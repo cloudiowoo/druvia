@@ -1,22 +1,28 @@
 'use client';
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Save, Play, Loader2 } from 'lucide-react';
+import { Save, Play, Loader2, ShieldAlert } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
 import { keymap } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 import type { EdgeFunction, InvokeResult } from '@/lib/api';
+import {
+  getInvokeAuthModeWarning,
+  INVOKE_AUTH_MODE_OPTIONS,
+  type InvokeAuthMode,
+} from './invoke-auth-mode';
 
 interface FunctionEditorProps {
   func: EdgeFunction | null;
-  onSave: (code: string, description?: string) => Promise<void>;
+  onSave: (code: string, description?: string, invokeAuthMode?: InvokeAuthMode) => Promise<void>;
   onInvoke: (payload?: unknown) => Promise<InvokeResult | null>;
 }
 
 export function FunctionEditor({ func, onSave, onInvoke }: FunctionEditorProps) {
   const [code, setCode] = useState(func?.code || '');
   const [description, setDescription] = useState(func?.description || '');
+  const [invokeAuthMode, setInvokeAuthMode] = useState<InvokeAuthMode>(func?.invokeAuthMode || 'jwt_required');
   const [payload, setPayload] = useState('{}');
   const [saving, setSaving] = useState(false);
   const [invoking, setInvoking] = useState(false);
@@ -27,25 +33,30 @@ export function FunctionEditor({ func, onSave, onInvoke }: FunctionEditorProps) 
   useEffect(() => {
     setCode(func?.code || '');
     setDescription(func?.description || '');
+    setInvokeAuthMode(func?.invokeAuthMode || 'jwt_required');
     setHasChanges(false);
     setResult(null);
   }, [func?.id]);
 
   const handleCodeChange = useCallback((value: string) => {
     setCode(value);
-    setHasChanges(value !== func?.code);
-  }, [func?.code]);
+    setHasChanges(
+      value !== func?.code
+      || description !== (func?.description || '')
+      || invokeAuthMode !== (func?.invokeAuthMode || 'jwt_required')
+    );
+  }, [description, func?.code, func?.description, func?.invokeAuthMode, invokeAuthMode]);
 
   const handleSave = useCallback(async () => {
     if (!func || saving) return;
     setSaving(true);
     try {
-      await onSave(code, description);
+      await onSave(code, description, invokeAuthMode);
       setHasChanges(false);
     } finally {
       setSaving(false);
     }
-  }, [func, code, description, onSave, saving]);
+  }, [func, code, description, invokeAuthMode, onSave, saving]);
 
   const handleInvoke = useCallback(async () => {
     if (!func || invoking) return;
@@ -104,6 +115,8 @@ export function FunctionEditor({ func, onSave, onInvoke }: FunctionEditorProps) 
     customKeymap,
   ], [customKeymap]);
 
+  const anonWarning = getInvokeAuthModeWarning(invokeAuthMode);
+
   if (!func) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-500">
@@ -159,11 +172,50 @@ export function FunctionEditor({ func, onSave, onInvoke }: FunctionEditorProps) 
           value={description}
           onChange={(e) => {
             setDescription(e.target.value);
-            setHasChanges(true);
+            setHasChanges(
+              code !== (func?.code || '')
+              || e.target.value !== (func?.description || '')
+              || invokeAuthMode !== (func?.invokeAuthMode || 'jwt_required')
+            );
           }}
           placeholder="函数描述（可选）"
           className="w-full px-2 py-1 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
+
+        <div className="mt-3 rounded-lg border bg-gray-50 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-gray-800">Invoke Auth Mode</p>
+              <p className="text-xs text-gray-500">控制该函数是否允许项目匿名 apikey 调用。</p>
+            </div>
+            <select
+              value={invokeAuthMode}
+              onChange={(e) => {
+                const nextValue = e.target.value as InvokeAuthMode;
+                setInvokeAuthMode(nextValue);
+                setHasChanges(
+                  code !== (func?.code || '')
+                  || description !== (func?.description || '')
+                  || nextValue !== (func?.invokeAuthMode || 'jwt_required')
+                );
+              }}
+              className="min-w-44 rounded border bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              {INVOKE_AUTH_MODE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {anonWarning && (
+            <div className="mt-3 flex items-start gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <p>{anonWarning}</p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Code Editor */}

@@ -89,7 +89,7 @@ docker/.env
 # ================================
 # Storage (local adapter)
 # ================================
-apps/api/data/
+apps/api/data/storage/
 tests/.storage/
 
 # ================================
@@ -99,8 +99,17 @@ tests/.storage/
 *.backup
 
 # ================================
-# Claude Code
+# Codex / Claude local files
 # ================================
+# Track project-level Codex rules/skills/docs, ignore only local overrides/cache.
+.codex/**/*.local.*
+.codex/tmp/
+.codex/temp/
+.codex/cache/
+
+# Claude Code plugin settings (user-local)
+**/.claude/*.local.md
+**/.claude/*.local.json
 
 # ================================
 # Git Worktrees
@@ -125,7 +134,3 @@ temp/
 # ================================
 hasura/.env
 hasura/metadata/databases/*/tables/*.yaml.bak
-
-# Claude Code plugin settings (user-local)
-**/.claude/*.local.md
-**/.claude/*.local.json

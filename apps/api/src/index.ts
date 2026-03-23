@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
+import type { FastifyCorsOptions } from '@fastify/cors';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import { pathToFileURL } from 'node:url';
 import { config } from './config/index.js';
 import authPlugin from './middleware/auth.js';
 import { tenantRoutes } from './modules/tenant/tenant.routes.js';
@@ -24,12 +26,7 @@ import { apiKeysRoutes } from './modules/api-keys/api-keys.routes.js';
 import { environmentRoutes } from './modules/environment/environment.routes.js';
 import { rpcRoutes } from './modules/rpc/rpc.routes.js';
 
-const app = Fastify({
-  logger: true,
-});
-
-// Register CORS
-app.register(cors, {
+export const appCorsOptions: FastifyCorsOptions = {
   origin:
     config.nodeEnv === 'development'
       ? true // 开发环境允许所有来源
@@ -38,43 +35,54 @@ app.register(cors, {
         : false,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-});
-app.register(authPlugin);
-app.register(multipart, {
-  limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB
-  },
-});
+  allowedHeaders: ['Content-Type', 'Authorization', 'apikey'],
+};
 
-// Health check
-app.get('/health', async () => {
-  return { status: 'ok', timestamp: new Date().toISOString() };
-});
+export function buildApp() {
+  const app = Fastify({
+    logger: true,
+  });
 
-// Register routes
-app.register(userRoutes, { prefix: '/api/v1' });
-app.register(tenantRoutes, { prefix: '/api/v1' });
-app.register(projectRoutes, { prefix: '/api/v1' });
-app.register(fileRoutes, { prefix: '/api/v1' });
-app.register(oauthRoutes, { prefix: '/api/v1' });
-app.register(tableRoutes, { prefix: '/api/v1' });
-app.register(backupRoutes, { prefix: '/api/v1' });
-app.register(actionsRoutes, { prefix: '/api/v1' });
-app.register(dataRoutes, { prefix: '/api/v1' });
-app.register(settingsRoutes, { prefix: '/api/v1' });
-app.register(dashboardRoutes, { prefix: '/api/v1' });
-app.register(storageRoutes, { prefix: '/api/v1' });
-app.register(authAdminRoutes, { prefix: '/api/v1' });
-app.register(realtimeRoutes, { prefix: '/api/v1' });
-app.register(sqlRoutes, { prefix: '/api/v1' });
-app.register(functionsRoutes, { prefix: '/api/v1' });
-app.register(openapiRoutes, { prefix: '/api/v1' });
-app.register(apiKeysRoutes, { prefix: '/api/v1' });
-app.register(environmentRoutes, { prefix: '/api/v1' });
-app.register(rpcRoutes, { prefix: '/api/v1' });
+  app.register(cors, appCorsOptions);
+  app.register(authPlugin);
+  app.register(multipart, {
+    limits: {
+      fileSize: 50 * 1024 * 1024, // 50MB
+    },
+  });
+
+  // Health check
+  app.get('/health', async () => {
+    return { status: 'ok', timestamp: new Date().toISOString() };
+  });
+
+  // Register routes
+  app.register(userRoutes, { prefix: '/api/v1' });
+  app.register(tenantRoutes, { prefix: '/api/v1' });
+  app.register(projectRoutes, { prefix: '/api/v1' });
+  app.register(fileRoutes, { prefix: '/api/v1' });
+  app.register(oauthRoutes, { prefix: '/api/v1' });
+  app.register(tableRoutes, { prefix: '/api/v1' });
+  app.register(backupRoutes, { prefix: '/api/v1' });
+  app.register(actionsRoutes, { prefix: '/api/v1' });
+  app.register(dataRoutes, { prefix: '/api/v1' });
+  app.register(settingsRoutes, { prefix: '/api/v1' });
+  app.register(dashboardRoutes, { prefix: '/api/v1' });
+  app.register(storageRoutes, { prefix: '/api/v1' });
+  app.register(authAdminRoutes, { prefix: '/api/v1' });
+  app.register(realtimeRoutes, { prefix: '/api/v1' });
+  app.register(sqlRoutes, { prefix: '/api/v1' });
+  app.register(functionsRoutes, { prefix: '/api/v1' });
+  app.register(openapiRoutes, { prefix: '/api/v1' });
+  app.register(apiKeysRoutes, { prefix: '/api/v1' });
+  app.register(environmentRoutes, { prefix: '/api/v1' });
+  app.register(rpcRoutes, { prefix: '/api/v1' });
+
+  return app;
+}
 
 async function start() {
+  const app = buildApp();
   try {
     await app.listen({ port: config.port, host: config.host });
     console.log(`Server running at http://${config.host}:${config.port}`);
@@ -84,4 +92,9 @@ async function start() {
   }
 }
 
-start();
+const isMainModule = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMainModule) {
+  void start();
+}

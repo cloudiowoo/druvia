@@ -6,6 +6,14 @@ interface ExecuteMessage {
   code: string;
   secrets: Record<string, string>;
   payload?: unknown;
+  caller?: {
+    authType: "jwt" | "apikey";
+    projectId: string;
+    role: string;
+    userId?: string;
+    uid?: number;
+    tenantId?: string;
+  };
 }
 
 /** 检测代码是否使用 Deno.serve() 模式（排除注释中的匹配） */
@@ -16,7 +24,7 @@ function isServeMode(code: string): boolean {
 }
 
 self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
-  const { code, secrets, payload } = e.data;
+  const { code, secrets, payload, caller } = e.data;
 
   try {
     // 注入 secrets 到环境变量
@@ -25,9 +33,9 @@ self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
     }
 
     if (isServeMode(code)) {
-      await executeServeMode(code, payload);
+      await executeServeMode(code, payload, caller);
     } else {
-      await executeLegacyMode(code, payload);
+      await executeLegacyMode(code, payload, caller);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -38,8 +46,8 @@ self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
 /**
  * Legacy mode: 通过 AsyncFunction 构造器执行代码字符串
  */
-async function executeLegacyMode(code: string, payload: unknown) {
-  const context = buildContext(payload);
+async function executeLegacyMode(code: string, payload: unknown, caller?: ExecuteMessage["caller"]) {
+  const context = buildContext(payload, caller);
 
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
   const wrappedCode = `
@@ -57,7 +65,7 @@ async function executeLegacyMode(code: string, payload: unknown) {
  * Serve mode: mock Deno.serve()，提取 handler，构造 synthetic Request，
  * 收集 Response 返回给 API 层。
  */
-async function executeServeMode(code: string, payload: unknown) {
+async function executeServeMode(code: string, payload: unknown, caller?: ExecuteMessage["caller"]) {
   let capturedHandler: ((req: Request) => Response | Promise<Response>) | null = null;
 
   // Mock Deno.serve() — 捕获 handler 而非启动真实服务器
@@ -77,7 +85,7 @@ async function executeServeMode(code: string, payload: unknown) {
     },
   });
 
-  const context = buildContext(payload);
+  const context = buildContext(payload, caller);
   context.Deno = mockDeno;
 
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
@@ -97,7 +105,7 @@ async function executeServeMode(code: string, payload: unknown) {
   // 构造 synthetic Request
   const syntheticReq = new Request("http://localhost/invoke", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildTrustedHeaders(caller),
     body: payload !== undefined ? JSON.stringify(payload) : undefined,
   });
 
@@ -120,12 +128,37 @@ async function executeServeMode(code: string, payload: unknown) {
 }
 
 /** 构建共享执行上下文 */
-function buildContext(payload: unknown): Record<string, unknown> {
+function buildTrustedHeaders(caller?: ExecuteMessage["caller"]): Headers {
+  const headers = new Headers({ "Content-Type": "application/json" });
+
+  if (!caller) {
+    return headers;
+  }
+
+  headers.set("x-druvia-auth-type", caller.authType);
+  headers.set("x-druvia-project-id", caller.projectId);
+  headers.set("x-druvia-role", caller.role);
+
+  if (caller.userId) {
+    headers.set("x-druvia-user-id", caller.userId);
+  }
+  if (caller.uid !== undefined) {
+    headers.set("x-druvia-uid", String(caller.uid));
+  }
+  if (caller.tenantId) {
+    headers.set("x-druvia-tenant-id", caller.tenantId);
+  }
+
+  return headers;
+}
+
+function buildContext(payload: unknown, caller?: ExecuteMessage["caller"]): Record<string, unknown> {
   return {
     Deno,
     fetch,
     console,
     payload,
+    caller,
     Response,
     Request,
     Headers,

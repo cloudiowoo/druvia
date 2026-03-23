@@ -2,6 +2,17 @@ import { query, queryOne } from '../../db/index.js';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 
 // Types
+export type FunctionInvokeAuthMode = 'jwt_required' | 'anon_allowed';
+
+export interface FunctionCallerContext {
+  authType: 'jwt' | 'apikey';
+  projectId: string;
+  role: string;
+  userId?: string;
+  uid?: number;
+  tenantId?: string;
+}
+
 export interface EdgeFunction {
   id: string;
   projectId: string;
@@ -9,6 +20,7 @@ export interface EdgeFunction {
   code: string;
   runtime: string;
   status: 'active' | 'disabled';
+  invokeAuthMode: FunctionInvokeAuthMode;
   description: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -61,6 +73,7 @@ function mapFunctionRow(row: Record<string, unknown>): EdgeFunction {
     code: row.code as string,
     runtime: row.runtime as string,
     status: row.status as 'active' | 'disabled',
+    invokeAuthMode: ((row.invoke_auth_mode as FunctionInvokeAuthMode | undefined) ?? 'jwt_required'),
     description: row.description as string | null,
     createdAt: row.created_at as Date,
     updatedAt: row.updated_at as Date,
@@ -117,13 +130,13 @@ export async function listFunctions(projectId: string): Promise<EdgeFunction[]> 
 
 export async function createFunction(
   projectId: string,
-  data: { name: string; code: string; description?: string }
+  data: { name: string; code: string; description?: string; invokeAuthMode?: FunctionInvokeAuthMode }
 ): Promise<EdgeFunction> {
   const row = await queryOne<Record<string, unknown>>(
-    `INSERT INTO druvia_functions (project_id, name, code, description)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO druvia_functions (project_id, name, code, invoke_auth_mode, description)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-    [projectId, data.name, data.code, data.description || null]
+    [projectId, data.name, data.code, data.invokeAuthMode ?? 'jwt_required', data.description || null]
   );
   if (!row) throw new Error('Failed to create function');
   return mapFunctionRow(row);
@@ -148,7 +161,7 @@ export async function getFunctionById(functionId: string): Promise<EdgeFunction 
 export async function updateFunction(
   projectId: string,
   name: string,
-  data: Partial<{ code: string; status: string; description: string }>
+  data: Partial<{ code: string; status: string; description: string; invokeAuthMode: FunctionInvokeAuthMode }>
 ): Promise<EdgeFunction | null> {
   const setClauses: string[] = [];
   const values: unknown[] = [];
@@ -161,6 +174,10 @@ export async function updateFunction(
   if (data.status !== undefined) {
     setClauses.push(`status = $${paramIndex++}`);
     values.push(data.status);
+  }
+  if (data.invokeAuthMode !== undefined) {
+    setClauses.push(`invoke_auth_mode = $${paramIndex++}`);
+    values.push(data.invokeAuthMode);
   }
   if (data.description !== undefined) {
     setClauses.push(`description = $${paramIndex++}`);
@@ -196,7 +213,8 @@ const DENO_WORKER_URL = process.env.DENO_WORKER_URL || 'http://localhost:7133';
 export async function invokeFunction(
   projectId: string,
   name: string,
-  payload?: unknown
+  payload?: unknown,
+  caller?: FunctionCallerContext
 ): Promise<InvokeResult> {
   const func = await getFunction(projectId, name);
   if (!func) throw new Error('Function not found');
@@ -217,6 +235,7 @@ export async function invokeFunction(
         functionName: func.name,
         secrets,
         payload,
+        caller,
         timeout: 30000,
       }),
     });
@@ -227,7 +246,7 @@ export async function invokeFunction(
     // 记录日志
     await createLog(func.id, executionId, result.success ? 'info' : 'error',
       result.success ? 'Function executed successfully' : result.error?.message || 'Unknown error',
-      duration, { payload }
+      duration, { payload, caller }
     );
 
     return { ...result, duration, executionId };
@@ -235,7 +254,7 @@ export async function invokeFunction(
     const duration = Date.now() - startTime;
     const message = error instanceof Error ? error.message : 'Unknown error';
 
-    await createLog(func.id, executionId, 'error', message, duration, { payload });
+    await createLog(func.id, executionId, 'error', message, duration, { payload, caller });
 
     return {
       success: false,

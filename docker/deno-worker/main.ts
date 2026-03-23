@@ -6,6 +6,14 @@ interface ExecuteRequest {
   functionName: string;
   secrets?: Record<string, string>;
   payload?: unknown;
+  caller?: {
+    authType: "jwt" | "apikey";
+    projectId: string;
+    role: string;
+    userId?: string;
+    uid?: number;
+    tenantId?: string;
+  };
   timeout?: number;
 }
 
@@ -35,7 +43,7 @@ Deno.serve({ port: PORT }, async (req: Request): Promise<Response> => {
 
   try {
     const body = await req.json() as ExecuteRequest;
-    const { code, functionName, secrets = {}, payload, timeout = 30000 } = body;
+    const { code, functionName, secrets = {}, payload, caller, timeout = 30000 } = body;
 
     if (!code) {
       return Response.json({
@@ -46,7 +54,7 @@ Deno.serve({ port: PORT }, async (req: Request): Promise<Response> => {
 
     console.log(`[${new Date().toISOString()}] Executing function: ${functionName}`);
 
-    const result = await executeFunction(code, secrets, payload, timeout);
+    const result = await executeFunction(code, secrets, payload, caller, timeout);
     return Response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -64,6 +72,7 @@ async function executeFunction(
   code: string,
   secrets: Record<string, string>,
   payload: unknown,
+  caller: ExecuteRequest["caller"],
   timeout: number
 ): Promise<ExecuteResponse> {
   // 创建隔离的 Worker
@@ -120,6 +129,6 @@ async function executeFunction(
     };
 
     // 发送执行请求到 Worker
-    worker.postMessage({ code, secrets, payload });
+    worker.postMessage({ code, secrets, payload, caller });
   });
 }

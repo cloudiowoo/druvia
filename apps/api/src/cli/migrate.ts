@@ -202,6 +202,11 @@ async function bootstrap(): Promise<void> {
       WHERE table_name = '_meta_tables' AND column_name = 'realtime_enabled'
       LIMIT 1
     ) as exists`,
+    15: `SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'druvia_functions' AND column_name = 'invoke_auth_mode'
+      LIMIT 1
+    ) as exists`,
   };
 
   const result = await pool.query(`

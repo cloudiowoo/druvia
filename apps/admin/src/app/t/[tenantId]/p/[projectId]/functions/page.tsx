@@ -11,6 +11,7 @@ import { FunctionEditor } from '@/components/functions/FunctionEditor';
 import { FunctionLogs } from '@/components/functions/FunctionLogs';
 import { SecretsManager } from '@/components/functions/SecretsManager';
 import { cn } from '@/lib/utils';
+import type { InvokeAuthMode } from '@/components/functions/invoke-auth-mode';
 
 type Tab = 'editor' | 'logs' | 'secrets';
 
@@ -60,9 +61,9 @@ export default function FunctionsPage() {
     return res;
   };
 
-  const handleSave = useCallback(async (code: string, description?: string) => {
+  const handleSave = useCallback(async (code: string, description?: string, invokeAuthMode?: InvokeAuthMode) => {
     if (!selectedFunction) return;
-    const res = await api.updateFunction(projectId, selectedFunction.name, { code, description });
+    const res = await api.updateFunction(projectId, selectedFunction.name, { code, description, invokeAuthMode });
     if (res.success && res.data) {
       setSelectedFunction(res.data);
       setFunctions((prev) =>
