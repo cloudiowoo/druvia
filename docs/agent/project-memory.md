@@ -23,6 +23,10 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - `jwt_required`
   - `anon_allowed`
 - 默认值必须是 `jwt_required`。
+- Edge Function 平台侧已开始补正式内部数据通道：
+  - API 提供 internal GraphQL proxy
+  - 运行时内建 `druvia.graphql()`
+  - 平台级 Hasura secret 不应再作为项目函数的正式 secrets 方案
 
 ## Functions 匿名调用规则
 
@@ -35,6 +39,12 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 - 上传类、用户态、后台函数默认不应开放匿名调用，例如：
   - `upload-avatar`
   - `upload-team-logo`
+
+## Edge Function 内部调用规则
+
+- 新函数应优先使用运行时内建 `druvia.graphql()`，而不是项目 secrets 中的 Hasura admin 类凭证。
+- internal token 属于执行期内部凭证，不属于 Admin secrets UI 中的项目配置项。
+- `DRUVIA_GRAPHQL_URL`、`HASURA_ADMIN_SECRET`、等价的 `DRUVIA_SERVICE_ROLE_KEY` 不应继续作为正式推荐的函数数据访问模型。
 
 ## 管理端与迁移注意事项
 

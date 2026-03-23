@@ -6,6 +6,7 @@ vi.mock('../../apps/api/src/db/index.js', () => ({
 }))
 
 import { createFunction, invokeFunction } from '../../apps/api/src/modules/functions/functions.service.js'
+import { verifyInternalFunctionToken } from '../../apps/api/src/modules/functions/internal-token.js'
 import { query, queryOne } from '../../apps/api/src/db/index.js'
 
 const mockQuery = vi.mocked(query)
@@ -43,7 +44,7 @@ describe('Functions Service', () => {
     expect(func.invokeAuthMode).toBe('jwt_required')
   })
 
-  it('passes trusted caller context to the worker during invocation', async () => {
+  it('passes trusted caller context and helper credentials to the worker during invocation', async () => {
     mockQueryOne.mockResolvedValueOnce({
       id: 'fn_123',
       project_id: 'proj_123',
@@ -88,5 +89,12 @@ describe('Functions Service', () => {
       uid: 42,
       tenantId: 'tenant_123',
     })
+    expect(body.apiBaseUrl).toBeUndefined()
+    expect(body.internalToken).toBeTypeOf('string')
+
+    const tokenPayload = verifyInternalFunctionToken(body.internalToken as string)
+    expect(tokenPayload.projectId).toBe('proj_123')
+    expect(tokenPayload.functionName).toBe('upload-avatar')
+    expect(tokenPayload.authType).toBe('jwt')
   })
 })

@@ -26,8 +26,13 @@
   - `docs/agent/*`
   - `.codex/rules/*`
   - `.codex/skills/*`
+- 平台侧已补齐 Edge Function internal GraphQL 基础能力：
+  - internal token
+  - `/api/internal/functions/graphql`
+  - 运行时 `druvia.graphql()` helper
 
 ## Current Next Steps
 
 - 继续验证 Admin 侧 `invokeAuthMode` 保存链路在迁移执行后是否正常
+- 将 `wx-login-register` 等旧函数从直连 Hasura admin 方案迁移到 `druvia.graphql()`
 - 持续把 taro-app 迁移中沉淀出的高价值结论同步到 Codex 项目记忆体系

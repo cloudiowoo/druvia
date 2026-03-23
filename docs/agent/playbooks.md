@@ -8,6 +8,8 @@
   - `pnpm --filter @druvia/api build`
 - Functions 相关单测：
   - `pnpm test tests/unit/functions-controller.test.ts tests/unit/functions-service.test.ts tests/unit/api-app.test.ts`
+- Edge Function internal GraphQL 相关单测：
+  - `pnpm test tests/unit/functions-internal-token.test.ts tests/unit/functions-internal-graphql.test.ts tests/unit/druvia-helper.test.ts`
 - Admin 侧 invoke auth helper 单测：
   - `pnpm test tests/unit/admin/function-invoke-auth-mode.test.ts`
 
@@ -28,6 +30,16 @@
 - 数据库缺少 `015_function_invoke_auth_mode` 迁移
 
 先执行迁移，再重试页面保存。
+
+## Edge Function Internal GraphQL 排查
+
+如果新函数使用 `druvia.graphql()` 失败，优先检查：
+
+- API 是否已注册 `/api/internal/functions/graphql`
+- 函数 invoke 是否向 Worker 注入了 `internalToken`
+- 若未显式注入 `apiBaseUrl`，确认 Deno Worker 进程已配置 `DRUVIA_API_URL`
+- 函数代码是否仍在依赖 `DRUVIA_GRAPHQL_URL` / `HASURA_ADMIN_SECRET`
+- Hasura admin secret 是否仅保留在 API 服务端，而不是项目函数 secrets 中
 
 ## 文档回填手册
 

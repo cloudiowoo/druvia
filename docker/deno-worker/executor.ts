@@ -1,11 +1,14 @@
 // Druvia Edge Functions - Isolated Executor
 // 在隔离的 Worker 中执行用户代码
 // 支持两种模式：AsyncFunction（原有）和 Deno.serve() handler
+import { createDruviaHelper, resolveDruviaApiBaseUrl } from "./druvia-helper.ts";
 
 interface ExecuteMessage {
   code: string;
   secrets: Record<string, string>;
   payload?: unknown;
+  internalToken?: string;
+  apiBaseUrl?: string;
   caller?: {
     authType: "jwt" | "apikey";
     projectId: string;
@@ -24,7 +27,7 @@ function isServeMode(code: string): boolean {
 }
 
 self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
-  const { code, secrets, payload, caller } = e.data;
+  const { code, secrets, payload, caller, internalToken, apiBaseUrl } = e.data;
 
   try {
     // 注入 secrets 到环境变量
@@ -33,9 +36,9 @@ self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
     }
 
     if (isServeMode(code)) {
-      await executeServeMode(code, payload, caller);
+      await executeServeMode(code, payload, caller, internalToken, apiBaseUrl);
     } else {
-      await executeLegacyMode(code, payload, caller);
+      await executeLegacyMode(code, payload, caller, internalToken, apiBaseUrl);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -46,8 +49,14 @@ self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
 /**
  * Legacy mode: 通过 AsyncFunction 构造器执行代码字符串
  */
-async function executeLegacyMode(code: string, payload: unknown, caller?: ExecuteMessage["caller"]) {
-  const context = buildContext(payload, caller);
+async function executeLegacyMode(
+  code: string,
+  payload: unknown,
+  caller?: ExecuteMessage["caller"],
+  internalToken?: string,
+  apiBaseUrl?: string
+) {
+  const context = buildContext(payload, caller, internalToken, apiBaseUrl);
 
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
   const wrappedCode = `
@@ -65,7 +74,13 @@ async function executeLegacyMode(code: string, payload: unknown, caller?: Execut
  * Serve mode: mock Deno.serve()，提取 handler，构造 synthetic Request，
  * 收集 Response 返回给 API 层。
  */
-async function executeServeMode(code: string, payload: unknown, caller?: ExecuteMessage["caller"]) {
+async function executeServeMode(
+  code: string,
+  payload: unknown,
+  caller?: ExecuteMessage["caller"],
+  internalToken?: string,
+  apiBaseUrl?: string
+) {
   let capturedHandler: ((req: Request) => Response | Promise<Response>) | null = null;
 
   // Mock Deno.serve() — 捕获 handler 而非启动真实服务器
@@ -85,7 +100,7 @@ async function executeServeMode(code: string, payload: unknown, caller?: Execute
     },
   });
 
-  const context = buildContext(payload, caller);
+  const context = buildContext(payload, caller, internalToken, apiBaseUrl);
   context.Deno = mockDeno;
 
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
@@ -152,13 +167,27 @@ function buildTrustedHeaders(caller?: ExecuteMessage["caller"]): Headers {
   return headers;
 }
 
-function buildContext(payload: unknown, caller?: ExecuteMessage["caller"]): Record<string, unknown> {
+function buildContext(
+  payload: unknown,
+  caller?: ExecuteMessage["caller"],
+  internalToken?: string,
+  apiBaseUrl?: string
+): Record<string, unknown> {
+  const resolvedApiBaseUrl = resolveDruviaApiBaseUrl(
+    apiBaseUrl,
+    (name) => Deno.env.get(name)
+  );
+  const druvia = internalToken && resolvedApiBaseUrl
+    ? createDruviaHelper({ apiBaseUrl: resolvedApiBaseUrl, internalToken, fetchFn: fetch })
+    : undefined;
+
   return {
     Deno,
     fetch,
     console,
     payload,
     caller,
+    druvia,
     Response,
     Request,
     Headers,

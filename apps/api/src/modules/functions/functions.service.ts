@@ -1,5 +1,6 @@
 import { query, queryOne } from '../../db/index.js';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { signInternalFunctionToken } from './internal-token.js';
 
 // Types
 export type FunctionInvokeAuthMode = 'jwt_required' | 'anon_allowed';
@@ -209,6 +210,7 @@ export async function deleteFunction(projectId: string, name: string): Promise<b
 // ============================================
 
 const DENO_WORKER_URL = process.env.DENO_WORKER_URL || 'http://localhost:7133';
+const API_BASE_URL = process.env.API_BASE_URL || process.env.DRUVIA_API_URL;
 
 export async function invokeFunction(
   projectId: string,
@@ -222,6 +224,11 @@ export async function invokeFunction(
 
   // 获取 secrets
   const secrets = await getSecretsDecrypted(projectId);
+  const internalToken = signInternalFunctionToken({
+    projectId,
+    functionName: func.name,
+    authType: caller?.authType ?? 'apikey',
+  });
   const executionId = randomBytes(16).toString('hex');
   const startTime = Date.now();
 
@@ -236,6 +243,8 @@ export async function invokeFunction(
         secrets,
         payload,
         caller,
+        internalToken,
+        ...(API_BASE_URL ? { apiBaseUrl: API_BASE_URL } : {}),
         timeout: 30000,
       }),
     });

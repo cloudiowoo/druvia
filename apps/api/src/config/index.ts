@@ -27,4 +27,8 @@ export const config = {
     adminSecret: process.env.HASURA_ADMIN_SECRET || '',
     endpoint: process.env.HASURA_ENDPOINT || 'http://localhost:8080',
   },
+  functions: {
+    internalTokenSecret: process.env.FUNCTIONS_INTERNAL_TOKEN_SECRET || process.env.JWT_SECRET || '',
+    internalTokenTtlSeconds: parseInt(process.env.FUNCTIONS_INTERNAL_TOKEN_TTL_SECONDS || '300', 10),
+  },
 };

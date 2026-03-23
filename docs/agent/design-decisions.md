@@ -26,6 +26,12 @@
 - 只有显式配置为 `anon_allowed` 的函数，才允许同项目匿名 `apikey` 调用。
 - 对匿名开放的函数应限定在登录前场景，不得扩散为上传类或用户态函数的默认策略。
 
+## Edge Function 数据访问策略
+
+- 平台级 Hasura secret 只留在平台服务端。
+- 项目级 Edge Function 的正式数据访问模型应走 API internal proxy，而不是直连 Hasura admin 通道。
+- 运行时 helper 可以向函数暴露受控能力，如 `druvia.graphql()`；但 internal token 不应作为项目 secret 暴露给用户。
+
 ## 文档策略
 
 - `AGENTS.md` 用于入口与索引。
