@@ -5,14 +5,27 @@ import { signInternalFunctionToken } from './internal-token.js';
 // Types
 export type FunctionInvokeAuthMode = 'jwt_required' | 'anon_allowed';
 
-export interface FunctionCallerContext {
-  authType: 'jwt' | 'apikey';
-  projectId: string;
-  role: string;
-  userId?: string;
-  uid?: number;
-  tenantId?: string;
-}
+export type FunctionCallerContext =
+  | {
+      authType: 'platform_user';
+      projectId: string;
+      role: string;
+      userId: string;
+      uid: number;
+      tenantId?: string;
+    }
+  | {
+      authType: 'project_user';
+      projectId: string;
+      role: string;
+      projectUserId: string;
+      provider: string;
+    }
+  | {
+      authType: 'apikey';
+      projectId: string;
+      role: string;
+    };
 
 export interface EdgeFunction {
   id: string;

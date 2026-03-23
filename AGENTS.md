@@ -97,6 +97,11 @@ Codex 项目上下文入口。用于快速建立当前仓库的稳定事实和�
   - 默认 `jwt_required`
   - 仅显式标记 `anon_allowed` 的函数允许同项目匿名 `apikey` 调用
   - Admin 修改该字段前必须先应用 `015_function_invoke_auth_mode` 迁移
+- Project user auth Phase 1 已进入真实实现：
+  - API 已有项目级 `wechat login / silent-login / refresh / logout`
+  - 请求身份已拆分为 `platform_user / project_user / apikey`
+  - `Functions jwt_required` 与 `RPC` 已开始接受同项目 `project_user`
+  - SDK 已增加 `client.projectAuth` 和独立 `druvia.project_session`
 
 ## Working Rules
 

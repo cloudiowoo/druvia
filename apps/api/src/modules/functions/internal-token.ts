@@ -4,7 +4,7 @@ import { config } from '../../config/index.js';
 export interface InternalFunctionTokenPayload {
   projectId: string;
   functionName: string;
-  authType: 'jwt' | 'apikey';
+  authType: 'platform_user' | 'project_user' | 'apikey';
   iat?: number;
   exp?: number;
 }
@@ -12,7 +12,7 @@ export interface InternalFunctionTokenPayload {
 interface SignInternalFunctionTokenInput {
   projectId: string;
   functionName: string;
-  authType: 'jwt' | 'apikey';
+  authType: 'platform_user' | 'project_user' | 'apikey';
   expiresIn?: number;
 }
 

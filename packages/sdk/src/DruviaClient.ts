@@ -3,6 +3,7 @@ import { getDefaultFetch, createFetchWrapper } from './lib/fetch-adapter.js'
 import { getDefaultStorage } from './lib/storage-adapter.js'
 import { getDefaultWebSocketFactory } from './lib/websocket-adapter.js'
 import { DruviaAuth } from './modules/auth.js'
+import { DruviaProjectAuth } from './modules/project-auth.js'
 import { DruviaDatabase } from './modules/database.js'
 import { DruviaStorage } from './modules/storage.js'
 import { DruviaRealtime, RealtimeChannel } from './modules/realtime.js'
@@ -12,13 +13,15 @@ import { QueryBuilder } from './modules/query-builder.js'
 
 export class DruviaClient {
   readonly auth: DruviaAuth
+  readonly projectAuth: DruviaProjectAuth
   readonly storage: DruviaStorage
   readonly functions: DruviaFunctions
 
   private database: DruviaDatabase
   private rpcModule: DruviaRpc
   private realtime: DruviaRealtime | null
-  private authedFetch: FetchFn
+  private platformFetch: FetchFn
+  private projectFetch: FetchFn
 
   constructor(baseUrl: string, apiKey: string, options: DruviaClientOptions) {
     const rawFetch = options.fetch ?? getDefaultFetch()
@@ -30,22 +33,37 @@ export class DruviaClient {
       console.warn('@druvia/sdk: No schema provided. Use createClient with { schema } option or call DruviaClient.create() for auto-detection.')
     }
 
-    let cachedToken: string | null = null
+    let cachedPlatformToken: string | null = null
+    let cachedProjectToken: string | null = null
     this.auth = new DruviaAuth(apiBase, rawFetch, storageAdapter)
     this.auth.onAuthStateChange((_event, session) => {
-      cachedToken = session?.accessToken ?? null
+      cachedPlatformToken = session?.accessToken ?? null
+    })
+    this.projectAuth = new DruviaProjectAuth(
+      apiBase,
+      options.projectId,
+      createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedProjectToken),
+      storageAdapter
+    )
+    this.projectAuth.onAuthStateChange((_event, session) => {
+      cachedProjectToken = session?.accessToken ?? null
     })
     const initialRaw = storageAdapter.getItem('druvia.session')
     if (typeof initialRaw === 'string') {
-      try { cachedToken = JSON.parse(initialRaw).accessToken } catch { /* ignore */ }
+      try { cachedPlatformToken = JSON.parse(initialRaw).accessToken } catch { /* ignore */ }
+    }
+    const initialProjectRaw = storageAdapter.getItem('druvia.project_session')
+    if (typeof initialProjectRaw === 'string') {
+      try { cachedProjectToken = JSON.parse(initialProjectRaw).accessToken } catch { /* ignore */ }
     }
 
-    this.authedFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedToken)
+    this.platformFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedPlatformToken)
+    this.projectFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedProjectToken ?? cachedPlatformToken)
     const graphqlUrl = `${apiBase}/projects/${options.projectId}/graphql`
-    this.database = new DruviaDatabase(graphqlUrl, this.authedFetch, schema)
-    this.storage = new DruviaStorage(apiBase, options.projectId, this.authedFetch)
-    this.rpcModule = new DruviaRpc(apiBase, options.projectId, this.authedFetch)
-    this.functions = new DruviaFunctions(apiBase, options.projectId, this.authedFetch)
+    this.database = new DruviaDatabase(graphqlUrl, this.platformFetch, schema)
+    this.storage = new DruviaStorage(apiBase, options.projectId, this.platformFetch)
+    this.rpcModule = new DruviaRpc(apiBase, options.projectId, this.projectFetch)
+    this.functions = new DruviaFunctions(apiBase, options.projectId, this.projectFetch)
 
     const wsFactory = options.websocket ?? getDefaultWebSocketFactory()
     if (wsFactory) {

@@ -21,6 +21,14 @@
 - Realtime 权限开始与表管理权限解耦
 - Functions invoke 已引入函数级 `invoke_auth_mode`
 - Admin Functions 页面已补充 `invokeAuthMode` 的展示与编辑能力
+- 项目终端用户 Auth Phase 1 已落地第一批核心能力：
+  - `project-auth` API 路由
+  - provider 通用核心与 `/:provider/login` 路由
+  - 项目级 refresh token 基础设施
+  - `platform_user / project_user / apikey` 身份分流
+  - Functions `jwt_required` 接受同项目 `project_user`
+  - RPC 接受同项目 `project_user`
+  - SDK `client.projectAuth` 与独立 project session 存储
 - 仓库已补齐 Codex 原生项目上下文体系：
   - 根与模块 `AGENTS.md`
   - `docs/agent/*`
@@ -33,6 +41,7 @@
 
 ## Current Next Steps
 
-- 继续验证 Admin 侧 `invokeAuthMode` 保存链路在迁移执行后是否正常
-- 将 `wx-login-register` 等旧函数从直连 Hasura admin 方案迁移到 `druvia.graphql()`
+- 将 taro-app 的 `wx-login-register` / `wx-silent-login` 切换到平台 project auth API
+- 评估并规划 GraphQL project-user 能力的下一阶段设计
+- 继续把旧 Edge Function 登录函数收敛为薄代理或下线
 - 持续把 taro-app 迁移中沉淀出的高价值结论同步到 Codex 项目记忆体系

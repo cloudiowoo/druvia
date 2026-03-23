@@ -31,4 +31,8 @@ export const config = {
     internalTokenSecret: process.env.FUNCTIONS_INTERNAL_TOKEN_SECRET || process.env.JWT_SECRET || '',
     internalTokenTtlSeconds: parseInt(process.env.FUNCTIONS_INTERNAL_TOKEN_TTL_SECONDS || '300', 10),
   },
+  projectAuth: {
+    tokenSecret: process.env.PROJECT_AUTH_JWT_SECRET || process.env.JWT_SECRET || '',
+    defaultAccessTokenTtlSeconds: parseInt(process.env.PROJECT_AUTH_ACCESS_TOKEN_TTL_SECONDS || '3600', 10),
+  },
 };

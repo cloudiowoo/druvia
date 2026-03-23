@@ -12,7 +12,53 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 
 - SDK 补齐与 Supabase 迁移兼容
 - 权限模型细化，尤其是 API key、Functions、Realtime
+- 项目终端用户 Auth Phase 1 已开始落地，优先解 taro-app 登录后受保护接口链路
 - 商业化前置能力仍在规划，但不是当前一线开发焦点
+
+## Project User Auth Phase 1
+
+- API 已新增项目级认证路由：
+  - `POST /api/v1/projects/:projectId/auth/wechat/login`
+  - `POST /api/v1/projects/:projectId/auth/wechat/silent-login`
+  - `POST /api/v1/projects/:projectId/auth/:provider/login`
+  - `POST /api/v1/projects/:projectId/auth/:provider/silent-login`
+  - `POST /api/v1/projects/:projectId/auth/refresh`
+  - `POST /api/v1/projects/:projectId/auth/logout`
+- 请求身份已显式拆分为三类：
+  - `platform_user`
+  - `project_user`
+  - `apikey`
+- `PROJECT_AUTH_JWT_SECRET` 可独立于平台 `JWT_SECRET`。
+- `authenticate()` 需要识别 project-user token，而不能只按平台 secret 验 Bearer token。
+- 项目级 refresh token 基础设施依赖：
+  - `migrations/016_project_user_auth_phase1.up.sql`
+- taro-app 当前联调库仍需兼容旧字段：
+  - `wx_open_id` 仍是有效查找键
+  - `provider_id` / `last_login_at` 不能假设已存在
+- `project-auth` 的正式演进方向已确定为：
+  - 通用 provider 核心
+  - provider adapter 负责 `exchangeCode()`
+  - 微信路由只是兼容别名，不应成为每个 provider 都复制一套 controller/service 的模板
+- 当前通用核心已支持按 provider 复用同一套：
+  - 项目配置读取
+  - 用户查找/创建
+  - session / refresh token 签发
+- 但真正可用的 provider 仍取决于现有 adapter 实现状态；当前已落地的是 `wechat`，`oidc` 路径已可复用 generic core。
+- Phase 1 里：
+  - `Functions jwt_required` 已接受同项目 `project_user`
+  - `RPC` 已接受同项目 `project_user`
+  - GraphQL project-user 能力仍不在本阶段内
+
+## SDK Project Auth 近期事实
+
+- SDK 已新增 `client.projectAuth`，与平台 `client.auth` 分离。
+- 项目侧 session 存储键为：
+  - `druvia.project_session`
+- `functions` / `rpc` 的 token 选择顺序现在是：
+  1. project session token
+  2. platform session token
+- `database/graphql` 与 `storage` 仍保持平台 token 路径，不自动切到 project token。
+- 新迁入应用应优先调用平台 project auth API，而不是继续依赖 Edge Function 自造 session。
 
 ## Functions / API Key 近期事实
 

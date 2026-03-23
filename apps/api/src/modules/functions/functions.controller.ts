@@ -2,7 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as functionsService from './functions.service.js';
 import * as projectService from '../project/project.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
-import { isJwtUser } from '../../middleware/auth.js';
+import { isApiKeyUser, isPlatformUser, isProjectUser } from '../../middleware/auth.js';
 import type { FunctionCallerContext } from './functions.service.js';
 
 interface ProjectParams {
@@ -43,7 +43,7 @@ async function verifyProjectAccess(
   const { projectId } = request.params;
   const user = request.user;
 
-  if (!user || !isJwtUser(user)) {
+  if (!user || !isPlatformUser(user)) {
     reply.status(401).send({
       success: false,
       error: { code: 'UNAUTHORIZED', message: 'Not authenticated' },
@@ -95,7 +95,7 @@ async function verifyInvokeAccess(
     return null;
   }
 
-  if (!isJwtUser(user)) {
+  if (isApiKeyUser(user)) {
     if (user.projectId !== projectId) {
       reply.status(403).send({
         success: false,
@@ -122,6 +122,27 @@ async function verifyInvokeAccess(
     };
   }
 
+  if (isProjectUser(user)) {
+    if (user.projectId !== projectId) {
+      reply.status(403).send({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'No access to this project' },
+      });
+      return null;
+    }
+
+    return {
+      projectId,
+      caller: {
+        authType: 'project_user',
+        projectId,
+        role: user.role,
+        projectUserId: user.sub,
+        provider: user.provider,
+      },
+    };
+  }
+
   const hasAccess = await checkProjectAccess(user.userId, projectId);
   if (!hasAccess) {
     reply.status(403).send({
@@ -134,7 +155,7 @@ async function verifyInvokeAccess(
   return {
     projectId,
     caller: {
-      authType: 'jwt',
+      authType: 'platform_user',
       projectId,
       role: user.role ?? 'authenticated',
       userId: user.userId,

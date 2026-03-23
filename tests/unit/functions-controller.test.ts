@@ -78,7 +78,7 @@ describe('Functions Controller', () => {
     const request = {
       params: { projectId: 'proj_123', name: 'wx-login-register' },
       body: { payload: { code: 'wx_code' } },
-      user: { projectId: 'proj_123', role: 'anon' as const },
+      user: { kind: 'apikey' as const, projectId: 'proj_123', role: 'anon' as const },
     }
 
     await functionsController.invokeFunction(request as never, reply as never)
@@ -104,6 +104,57 @@ describe('Functions Controller', () => {
     })
   })
 
+  it('allows same-project project users to invoke jwt-required functions', async () => {
+    vi.mocked(functionsService.getFunction).mockResolvedValue({
+      id: 'fn_456',
+      projectId: 'proj_123',
+      name: 'upload-avatar',
+      code: 'return {}',
+      runtime: 'deno',
+      status: 'active',
+      invokeAuthMode: 'jwt_required',
+      description: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    vi.mocked(functionsService.invokeFunction).mockResolvedValue({
+      success: true,
+      data: { ok: true },
+      duration: 10,
+      executionId: 'exec_456',
+    })
+
+    const reply = createReply()
+    const request = {
+      params: { projectId: 'proj_123', name: 'upload-avatar' },
+      body: { payload: { fileName: 'avatar.png' } },
+      user: {
+        kind: 'project_user' as const,
+        sub: 'usr_proj_123',
+        projectId: 'proj_123',
+        authType: 'project_user' as const,
+        role: 'authenticated' as const,
+        provider: 'wechat',
+      },
+    }
+
+    await functionsController.invokeFunction(request as never, reply as never)
+
+    expect(functionsService.invokeFunction).toHaveBeenCalledWith(
+      'proj_123',
+      'upload-avatar',
+      { fileName: 'avatar.png' },
+      {
+        authType: 'project_user',
+        projectId: 'proj_123',
+        role: 'authenticated',
+        projectUserId: 'usr_proj_123',
+        provider: 'wechat',
+      }
+    )
+    expect(access.checkProjectAccess).not.toHaveBeenCalled()
+  })
+
   it('rejects apikey invoke requests for jwt-required functions', async () => {
     vi.mocked(functionsService.getFunction).mockResolvedValue({
       id: 'fn_456',
@@ -122,7 +173,7 @@ describe('Functions Controller', () => {
     const request = {
       params: { projectId: 'proj_123', name: 'upload-avatar' },
       body: { payload: { fileName: 'avatar.png' } },
-      user: { projectId: 'proj_123', role: 'anon' as const },
+      user: { kind: 'apikey' as const, projectId: 'proj_123', role: 'anon' as const },
     }
 
     await functionsController.invokeFunction(request as never, reply as never)
@@ -140,7 +191,7 @@ describe('Functions Controller', () => {
     const request = {
       params: { projectId: 'proj_123', name: 'wx-login-register' },
       body: { payload: { code: 'wx_code' } },
-      user: { projectId: 'proj_other', role: 'anon' as const },
+      user: { kind: 'apikey' as const, projectId: 'proj_other', role: 'anon' as const },
     }
 
     await functionsController.invokeFunction(request as never, reply as never)
@@ -157,7 +208,7 @@ describe('Functions Controller', () => {
     const reply = createReply()
     const request = {
       params: { projectId: 'proj_123' },
-      user: { projectId: 'proj_123', role: 'anon' as const },
+      user: { kind: 'apikey' as const, projectId: 'proj_123', role: 'anon' as const },
     }
 
     await functionsController.listFunctions(request as never, reply as never)

@@ -36,3 +36,41 @@ describe('API app internal functions route', () => {
     }
   })
 })
+
+describe('API app project auth routes', () => {
+  it('registers the public project auth routes', async () => {
+    const app = buildApp()
+
+    try {
+      const loginResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/proj_123/auth/wechat/login',
+        payload: {},
+      })
+
+      const refreshResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/proj_123/auth/refresh',
+        payload: {},
+      })
+
+      const providerLoginResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/proj_123/auth/oidc/login',
+        payload: {},
+      })
+
+      const logoutResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/proj_123/auth/logout',
+      })
+
+      expect(loginResponse.statusCode).toBe(400)
+      expect(refreshResponse.statusCode).toBe(400)
+      expect(providerLoginResponse.statusCode).toBe(400)
+      expect(logoutResponse.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
+})

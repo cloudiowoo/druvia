@@ -10,12 +10,14 @@ interface ExecuteMessage {
   internalToken?: string;
   apiBaseUrl?: string;
   caller?: {
-    authType: "jwt" | "apikey";
+    authType: "platform_user" | "project_user" | "apikey";
     projectId: string;
     role: string;
     userId?: string;
     uid?: number;
     tenantId?: string;
+    projectUserId?: string;
+    provider?: string;
   };
 }
 
@@ -162,6 +164,12 @@ function buildTrustedHeaders(caller?: ExecuteMessage["caller"]): Headers {
   }
   if (caller.tenantId) {
     headers.set("x-druvia-tenant-id", caller.tenantId);
+  }
+  if (caller.projectUserId) {
+    headers.set("x-druvia-project-user-id", caller.projectUserId);
+  }
+  if (caller.provider) {
+    headers.set("x-druvia-provider", caller.provider);
   }
 
   return headers;

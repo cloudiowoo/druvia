@@ -47,12 +47,28 @@ export interface Session {
   user: UserInfo
 }
 
+export interface ProjectSession {
+  accessToken: string
+  refreshToken?: string
+  expiresIn?: number
+  expiresAt?: string
+  user: ProjectUserInfo
+}
+
 export interface UserInfo {
   id: number
   userId?: string
   email?: string
   username?: string
   avatarUrl?: string
+  role?: string
+}
+
+export interface ProjectUserInfo {
+  id: string
+  email?: string | null
+  username?: string | null
+  avatarUrl?: string | null
   role?: string
 }
 
@@ -65,5 +81,15 @@ export interface UserResponse {
 /** Supabase-compatible nested response for getSession() */
 export interface SessionResponse {
   data: { session: Session | null }
+  error: DruviaError | null
+}
+
+export interface ProjectUserResponse {
+  data: { user: ProjectUserInfo | null }
+  error: DruviaError | null
+}
+
+export interface ProjectSessionResponse {
+  data: { session: ProjectSession | null }
   error: DruviaError | null
 }

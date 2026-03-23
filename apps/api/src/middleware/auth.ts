@@ -5,8 +5,8 @@ import { config } from '../config/index.js';
 import { checkSchemaAccess } from '../lib/access.js';
 import { validateApiKey } from '../modules/api-keys/api-keys.service.js';
 
-// JWT Payload 类型
-export interface JwtPayload {
+export interface PlatformJwtUser {
+  kind: 'platform_user';
   userId: string;
   uid: number;
   tenantId?: string;
@@ -15,16 +15,41 @@ export interface JwtPayload {
   exp?: number;
 }
 
-// API Key 匿名身份
+export type JwtPayload = PlatformJwtUser;
+
+export interface ProjectJwtUser {
+  kind: 'project_user';
+  sub: string;
+  projectId: string;
+  authType: 'project_user';
+  role: 'authenticated';
+  provider: string;
+  iat?: number;
+  exp?: number;
+}
+
 export interface ApiKeyIdentity {
+  kind: 'apikey';
   projectId: string;
   role: 'anon';
 }
 
-export type RequestUser = JwtPayload | ApiKeyIdentity;
+export type RequestUser = PlatformJwtUser | ProjectJwtUser | ApiKeyIdentity;
 
 export function isJwtUser(user: RequestUser): user is JwtPayload {
-  return 'userId' in user;
+  return isPlatformUser(user);
+}
+
+export function isPlatformUser(user: RequestUser): user is PlatformJwtUser {
+  return user.kind === 'platform_user';
+}
+
+export function isProjectUser(user: RequestUser): user is ProjectJwtUser {
+  return user.kind === 'project_user';
+}
+
+export function isApiKeyUser(user: RequestUser): user is ApiKeyIdentity {
+  return user.kind === 'apikey';
 }
 
 // 扩展 FastifyRequest
@@ -35,19 +60,59 @@ declare module 'fastify' {
 }
 
 // 验证 JWT Token
-function verifyToken(token: string): JwtPayload {
-  if (!config.jwt.secret) {
-    throw new Error('JWT_SECRET is not configured');
+function verifyToken(token: string): RequestUser {
+  const decoded = jwt.decode(token) as ({ authType?: string } & Partial<PlatformJwtUser> & Partial<ProjectJwtUser>) | null;
+  if (decoded?.authType === 'project_user') {
+    return verifyProjectUserToken(token);
   }
-  return jwt.verify(token, config.jwt.secret) as JwtPayload;
+
+  const payload = jwt.verify(token, config.jwt.secret) as Partial<PlatformJwtUser>;
+  return {
+    kind: 'platform_user',
+    userId: payload.userId!,
+    uid: payload.uid!,
+    tenantId: payload.tenantId,
+    role: payload.role,
+    iat: payload.iat,
+    exp: payload.exp,
+  };
 }
 
 // 生成 JWT Token
-export function signToken(payload: Omit<JwtPayload, 'iat' | 'exp'>, expiresIn: string | number = '7d'): string {
+export function signToken(payload: Omit<JwtPayload, 'iat' | 'exp' | 'kind'>, expiresIn: string | number = '7d'): string {
   if (!config.jwt.secret) {
     throw new Error('JWT_SECRET is not configured');
   }
-  return jwt.sign(payload, config.jwt.secret, { expiresIn } as jwt.SignOptions);
+  return jwt.sign({ ...payload, kind: 'platform_user' }, config.jwt.secret, { expiresIn } as jwt.SignOptions);
+}
+
+export function signProjectUserToken(
+  payload: Omit<ProjectJwtUser, 'iat' | 'exp' | 'kind'>,
+  expiresIn: string | number = config.projectAuth.defaultAccessTokenTtlSeconds
+): string {
+  if (!config.projectAuth.tokenSecret) {
+    throw new Error('PROJECT_AUTH_JWT_SECRET or JWT_SECRET is not configured');
+  }
+
+  return jwt.sign({ ...payload, kind: 'project_user' }, config.projectAuth.tokenSecret, { expiresIn } as jwt.SignOptions);
+}
+
+export function verifyProjectUserToken(token: string): ProjectJwtUser {
+  if (!config.projectAuth.tokenSecret) {
+    throw new Error('PROJECT_AUTH_JWT_SECRET or JWT_SECRET is not configured');
+  }
+
+  const payload = jwt.verify(token, config.projectAuth.tokenSecret) as Partial<ProjectJwtUser>;
+  return {
+    kind: 'project_user',
+    sub: payload.sub!,
+    projectId: payload.projectId!,
+    authType: 'project_user',
+    role: 'authenticated',
+    provider: payload.provider!,
+    iat: payload.iat,
+    exp: payload.exp,
+  };
 }
 
 // 认证中间件 - 必须认证
@@ -75,7 +140,7 @@ export async function authenticate(
   if (apiKey) {
     const result = await validateApiKey(apiKey);
     if (result.valid && result.projectId) {
-      request.user = { projectId: result.projectId, role: 'anon' };
+      request.user = { kind: 'apikey', projectId: result.projectId, role: 'anon' };
       return;
     }
     return reply.status(401).send({
@@ -109,7 +174,7 @@ export async function optionalAuth(
   if (apiKey) {
     const result = await validateApiKey(apiKey);
     if (result.valid && result.projectId) {
-      request.user = { projectId: result.projectId, role: 'anon' };
+      request.user = { kind: 'apikey', projectId: result.projectId, role: 'anon' };
     }
   }
 }
@@ -120,7 +185,8 @@ export async function verifySchemaAccess(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
-  const userId = (request.user as JwtPayload | undefined)?.userId;
+  const user = request.user;
+  const userId = user && isPlatformUser(user) ? user.userId : undefined;
   if (!userId) {
     return reply.status(401).send({
       success: false,

@@ -29,7 +29,7 @@ describe('Functions Internal Token', () => {
     const token = signInternalFunctionToken({
       projectId: 'proj_123',
       functionName: 'wx-login-register',
-      authType: 'jwt',
+      authType: 'platform_user',
       expiresIn: 1,
     })
 

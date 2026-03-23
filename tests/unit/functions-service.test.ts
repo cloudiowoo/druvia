@@ -69,7 +69,7 @@ describe('Functions Service', () => {
       'upload-avatar',
       { fileName: 'avatar.png' },
       {
-        authType: 'jwt',
+        authType: 'platform_user',
         projectId: 'proj_123',
         role: 'user',
         userId: 'user_123',
@@ -82,7 +82,7 @@ describe('Functions Service', () => {
     const [, init] = vi.mocked(global.fetch).mock.calls[0]
     const body = JSON.parse(init!.body as string) as Record<string, unknown>
     expect(body.caller).toEqual({
-      authType: 'jwt',
+      authType: 'platform_user',
       projectId: 'proj_123',
       role: 'user',
       userId: 'user_123',
@@ -95,6 +95,6 @@ describe('Functions Service', () => {
     const tokenPayload = verifyInternalFunctionToken(body.internalToken as string)
     expect(tokenPayload.projectId).toBe('proj_123')
     expect(tokenPayload.functionName).toBe('upload-avatar')
-    expect(tokenPayload.authType).toBe('jwt')
+    expect(tokenPayload.authType).toBe('platform_user')
   })
 })

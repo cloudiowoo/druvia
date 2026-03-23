@@ -18,6 +18,7 @@ import { settingsRoutes } from './modules/settings/settings.routes.js';
 import { dashboardRoutes } from './modules/dashboard/dashboard.routes.js';
 import { storageRoutes } from './modules/storage/storage.routes.js';
 import { authAdminRoutes } from './modules/auth-admin/auth-admin.routes.js';
+import { projectAuthRoutes } from './modules/project-auth/project-auth.routes.js';
 import { realtimeRoutes } from './modules/realtime/realtime.routes.js';
 import { sqlRoutes } from './modules/sql/sql.routes.js';
 import { functionsRoutes } from './modules/functions/functions.routes.js';
@@ -71,6 +72,7 @@ export function buildApp() {
   app.register(dashboardRoutes, { prefix: '/api/v1' });
   app.register(storageRoutes, { prefix: '/api/v1' });
   app.register(authAdminRoutes, { prefix: '/api/v1' });
+  app.register(projectAuthRoutes, { prefix: '/api/v1' });
   app.register(realtimeRoutes, { prefix: '/api/v1' });
   app.register(sqlRoutes, { prefix: '/api/v1' });
   app.register(functionsRoutes, { prefix: '/api/v1' });

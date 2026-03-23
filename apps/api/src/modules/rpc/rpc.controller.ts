@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { callFunction, RpcError } from './rpc.service.js';
 import * as projectService from '../project/project.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
+import { isPlatformUser, isProjectUser } from '../../middleware/auth.js';
 
 interface RpcParams {
   projectId: string;
@@ -17,9 +18,9 @@ async function verifyProjectAccess(
   reply: FastifyReply,
 ): Promise<{ projectId: string; schemaName: string } | null> {
   const { projectId } = request.params;
-  const userId = (request as unknown as { user?: { userId?: string } }).user?.userId;
+  const user = request.user;
 
-  if (!userId) {
+  if (!user || (!isPlatformUser(user) && !isProjectUser(user))) {
     reply.status(401).send({
       success: false,
       error: { code: 'UNAUTHORIZED', message: 'Not authenticated' },
@@ -36,8 +37,16 @@ async function verifyProjectAccess(
     return null;
   }
 
-  const hasAccess = await checkProjectAccess(userId, projectId);
-  if (!hasAccess) {
+  if (isPlatformUser(user)) {
+    const hasAccess = await checkProjectAccess(user.userId, projectId);
+    if (!hasAccess) {
+      reply.status(403).send({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'No access to this project' },
+      });
+      return null;
+    }
+  } else if (user.projectId !== projectId) {
     reply.status(403).send({
       success: false,
       error: { code: 'FORBIDDEN', message: 'No access to this project' },
