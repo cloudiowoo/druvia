@@ -16,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { GitBranch, Key, ChevronRight } from 'lucide-react';
+import { GitBranch, Key, Gauge, ChevronRight } from 'lucide-react';
 
 interface ProjectDetails {
   projectId: string;
@@ -231,13 +231,26 @@ export default function ProjectSettingsPage() {
             </Link>
             <Link
               href={`/t/${tenantId}/p/${projectId}/settings/api-keys`}
-              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50"
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 border-b"
             >
               <div className="flex items-center gap-3">
                 <Key className="h-5 w-5 text-gray-400" />
                 <div>
                   <div className="font-medium">API 密钥</div>
                   <div className="text-sm text-gray-500">管理项目的 API 访问密钥</div>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-gray-400" />
+            </Link>
+            <Link
+              href={`/t/${tenantId}/p/${projectId}/settings/rate-limits`}
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50"
+            >
+              <div className="flex items-center gap-3">
+                <Gauge className="h-5 w-5 text-gray-400" />
+                <div>
+                  <div className="font-medium">限流配置</div>
+                  <div className="text-sm text-gray-500">配置 GraphQL API 的请求频率限制</div>
                 </div>
               </div>
               <ChevronRight className="h-5 w-5 text-gray-400" />

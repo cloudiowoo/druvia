@@ -220,14 +220,16 @@ class ApiClient {
       alias: string;
       name: string;
       schemaName: string;
+      settings: Record<string, unknown>;
       status: string;
     }>('GET', `/api/v1/projects/${projectId}`);
   }
 
-  async updateProject(projectId: string, data: { name?: string; status?: string }) {
+  async updateProject(projectId: string, data: { name?: string; status?: string; settings?: Record<string, unknown> }) {
     return this.request<{
       projectId: string;
       name: string;
+      settings: Record<string, unknown>;
       status: string;
     }>('PATCH', `/api/v1/projects/${projectId}`, data);
   }

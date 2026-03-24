@@ -111,8 +111,8 @@ export async function updateProject(projectId: string, input: UpdateProjectInput
     values.push(input.name);
   }
   if (input.settings !== undefined) {
-    updates.push(`settings = $${paramIndex++}`);
-    values.push(input.settings);
+    updates.push(`settings = COALESCE(settings, '{}'::jsonb) || $${paramIndex++}::jsonb`);
+    values.push(JSON.stringify(input.settings));
   }
   if (input.status !== undefined) {
     updates.push(`status = $${paramIndex++}`);

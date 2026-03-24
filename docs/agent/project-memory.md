@@ -60,6 +60,25 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 - `database/graphql` 与 `storage` 仍保持平台 token 路径，不自动切到 project token。
 - 新迁入应用应优先调用平台 project auth API，而不是继续依赖 Edge Function 自造 session。
 
+## GraphQL 限流配置近期事实
+
+- GraphQL 代理限流现已支持项目级配置，管理入口为：
+  - `/t/:tenantId/p/:projectId/settings/rate-limits`
+- 配置存储在：
+  - `project.settings.rateLimits.graphql`
+- 当前字段语义为：
+  - `perUser`: 每项目内单 actor 每分钟限额
+  - `perProject`: 项目总计每分钟限额，`0` 表示不限
+- 当前 actor 归并规则为：
+  - `platform_user` -> `platform:${userId}`
+  - `project_user` -> `project:${sub}`
+  - `apikey` -> `anon-ip:${request.ip}`
+- 因此当前匿名 `apikey` 流量仍按来源 IP 聚合，不是按 API key id 独立计数。
+- GraphQL 限流 Redis key 必须包含 `projectId`，否则会把跨项目流量错误合并。
+- 项目设置保存虽已改为 `settings` 顶层 JSONB merge，但 `rateLimits` 内部仍不是深合并：
+  - 前端保存 `rateLimits.graphql` 时必须保留同级其他子键
+  - 不能只提交一个孤立的 `graphql` 子对象并假设后端会自动深合并
+
 ## Functions / API Key 近期事实
 
 - API 已支持 `apikey` fallback 认证。

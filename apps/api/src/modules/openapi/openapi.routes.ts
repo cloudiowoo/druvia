@@ -2,9 +2,9 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { generateProjectOpenApi } from './openapi.service.js';
 import { authenticate, isJwtUser } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
-import { createRateLimiter } from '../../middleware/ratelimit.js';
-import { pool } from '../../db/index.js';
+import { checkProjectGraphqlRateLimit, createRateLimiter } from '../../middleware/ratelimit.js';
 import { config } from '../../config/index.js';
+import { getProjectById } from '../project/project.service.js';
 import YAML from 'yaml';
 
 const HASURA_URL = config.hasura.endpoint;
@@ -15,13 +15,6 @@ const openapiRateLimiter = createRateLimiter({
   windowMs: 60 * 1000,
   maxRequests: 10,
   keyPrefix: 'ratelimit:openapi',
-});
-
-// Rate limiter for GraphQL proxy (60 requests per minute)
-const graphqlRateLimiter = createRateLimiter({
-  windowMs: 60 * 1000,
-  maxRequests: 60,
-  keyPrefix: 'ratelimit:graphql',
 });
 
 export async function openapiRoutes(fastify: FastifyInstance) {
@@ -51,33 +44,52 @@ export async function openapiRoutes(fastify: FastifyInstance) {
             if (user.projectId !== projectId) {
               return reply.status(403).send({ error: 'API key does not match project' });
             }
-            return;
+          } else {
+            // JWT 认证：原有逻辑
+            const hasAccess = await checkProjectAccess(user.userId, projectId);
+            if (!hasAccess) {
+              return reply.status(403).send({ error: 'Access denied' });
+            }
           }
 
-          // JWT 认证：原有逻辑
-          const hasAccess = await checkProjectAccess(user.userId, projectId);
-          if (!hasAccess) {
-            return reply.status(403).send({ error: 'Access denied' });
+          const project = await getProjectById(projectId);
+          if (!project || !project.schemaName) {
+            return reply.status(404).send({ error: 'Project not found' });
           }
+
+          (request as FastifyRequest & {
+            project?: {
+              schemaName: string | null;
+              settings: Record<string, unknown>;
+            };
+          }).project = {
+            schemaName: project.schemaName,
+            settings: project.settings,
+          };
+
+          const rateLimitConfig = (project.settings as Record<string, unknown> | undefined)
+            ?.rateLimits as Record<string, unknown> | undefined;
+          await checkProjectGraphqlRateLimit(
+            request,
+            reply,
+            projectId,
+            rateLimitConfig?.graphql as { perUser?: number; perProject?: number } | undefined
+          );
+          if (reply.sent) return;
         },
-        graphqlRateLimiter,
       ],
     },
     async (request, reply) => {
-      const { projectId } = request.params;
       const { query, variables, operationName } = request.body;
+      const project = (request as FastifyRequest & {
+        project?: { schemaName: string | null };
+      }).project;
 
-      // Get schema name for the project to set Hasura role header
-      const projectResult = await pool.query(
-        'SELECT schema_name FROM druvia_projects WHERE project_id = $1',
-        [projectId]
-      );
-
-      if (projectResult.rows.length === 0) {
+      if (!project?.schemaName) {
         return reply.status(404).send({ error: 'Project not found' });
       }
 
-      const schemaName = projectResult.rows[0].schema_name;
+      const schemaName = project.schemaName;
 
       try {
         const hasuraHeaders: Record<string, string> = {

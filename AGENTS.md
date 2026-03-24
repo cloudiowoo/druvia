@@ -102,6 +102,11 @@ Codex 项目上下文入口。用于快速建立当前仓库的稳定事实和�
   - 请求身份已拆分为 `platform_user / project_user / apikey`
   - `Functions jwt_required` 与 `RPC` 已开始接受同项目 `project_user`
   - SDK 已增加 `client.projectAuth` 和独立 `druvia.project_session`
+- GraphQL 代理限流已改为项目级可配置：
+  - 管理入口为项目设置下的 `rate-limits`
+  - `perUser` 语义是“项目内 actor 限额”，不是全局用户限额
+  - 匿名 `apikey` 当前仍按 `request.ip` 归并
+  - 保存配置时必须保留完整 `rateLimits` 子对象
 
 ## Working Rules
 

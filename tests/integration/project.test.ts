@@ -123,6 +123,32 @@ describe('ProjectService Integration', () => {
 
       expect(updated?.name).toBe('Updated Name');
     });
+
+    it('should merge settings at the top level without overwriting existing keys', async () => {
+      const created = await projectService.createProject({
+        tenantId: testTenantId,
+        alias: 'settingsmerge',
+        name: 'Settings Merge Test',
+      });
+
+      await projectService.updateProject(created.projectId, {
+        settings: {
+          featureFlags: { betaDashboard: true },
+          rateLimits: { rpc: { perUser: 20 } },
+        },
+      });
+
+      const updated = await projectService.updateProject(created.projectId, {
+        settings: {
+          rateLimits: { graphql: { perUser: 200, perProject: 1000 } },
+        },
+      });
+
+      expect(updated?.settings).toMatchObject({
+        featureFlags: { betaDashboard: true },
+        rateLimits: { graphql: { perUser: 200, perProject: 1000 } },
+      });
+    });
   });
 
   describe('deleteProject', () => {
