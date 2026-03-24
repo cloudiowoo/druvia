@@ -53,7 +53,7 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 
 - SDK 已新增 `client.projectAuth`，与平台 `client.auth` 分离。
 - 项目侧 session 存储键为：
-  - `druvia.project_session`
+  - `druvia.project_session:${projectId}`
 - `functions` / `rpc` 的 token 选择顺序现在是：
   1. project session token
   2. platform session token
@@ -96,6 +96,14 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 
 - Admin 端 Functions 页面已经增加 `invokeAuthMode` 的展示与编辑能力。
 - 创建函数时不暴露该字段，默认保持 `JWT Required`。
+- Admin 端项目级 Auth 页面
+  - `/t/:tenantId/p/:projectId/auth`
+  - 当前就是微信小程序 `project-auth` 的配置入口
+  - UI 中的 `Client ID` / `Client Secret` 应按 `微信 AppID` / `微信 AppSecret` 理解
+  - 当前微信登录类型固定按 `miniprogram` 处理，不应再依赖旧的 Edge Function secrets 约定
+- Admin 端数据库页要区分两条 SQL 链路：
+  - DDL 模式仍会禁止 `CREATE FUNCTION` / `SECURITY DEFINER`
+  - `/sql/import` 已支持导入带 `$$` 或 `$tag$` body 的 PL/pgSQL function SQL
 - 在 Admin 中保存 `invokeAuthMode` 之前，数据库必须已执行：
   - `migrations/015_function_invoke_auth_mode.up.sql`
 - 如果保存时报：

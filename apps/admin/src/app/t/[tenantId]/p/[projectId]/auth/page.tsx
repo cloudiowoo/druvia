@@ -76,6 +76,17 @@ interface AuthProvider {
   hasCredentials: boolean;
 }
 
+interface AuthProviderDetail {
+  id: number;
+  projectId: string;
+  provider: string;
+  enabled: boolean;
+  clientId: string | null;
+  config: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface ProjectUser {
   id: string;
   email: string;
@@ -112,12 +123,14 @@ export default function AuthPage() {
   const [providersLoading, setProvidersLoading] = useState(true);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<AuthProvider | null>(null);
+  const [selectedProviderDetail, setSelectedProviderDetail] = useState<AuthProviderDetail | null>(null);
   const [providerConfig, setProviderConfig] = useState({
     clientId: '',
     clientSecret: '',
     enabled: true,
   });
   const [savingProvider, setSavingProvider] = useState(false);
+  const [providerConfigLoading, setProviderConfigLoading] = useState(false);
 
   // Users state
   const [users, setUsers] = useState<ProjectUser[]>([]);
@@ -177,19 +190,44 @@ export default function AuthPage() {
   }, [fetchUsers]);
 
   // Provider handlers
-  const handleProviderClick = (provider: AuthProvider) => {
+  const resetProviderConfig = (provider: AuthProvider) => {
+    setProviderConfig({
+      clientId: '',
+      clientSecret: '',
+      enabled: provider.enabled,
+    });
+    setSelectedProviderDetail(null);
+  };
+
+  const handleProviderClick = async (provider: AuthProvider) => {
     if (provider.type === 'builtin') {
       // Toggle builtin provider (email)
       handleToggleProvider(provider);
     } else {
       // Open config dialog for OAuth providers
       setSelectedProvider(provider);
-      setProviderConfig({
-        clientId: '',
-        clientSecret: '',
-        enabled: provider.enabled,
-      });
+      resetProviderConfig(provider);
       setConfigDialogOpen(true);
+
+      if (!provider.configured) {
+        return;
+      }
+
+      setProviderConfigLoading(true);
+      const res = await api.getAuthProvider(projectId, provider.id);
+      setProviderConfigLoading(false);
+
+      if (res.success && res.data) {
+        setSelectedProviderDetail(res.data);
+        setProviderConfig({
+          clientId: res.data.clientId || '',
+          clientSecret: '',
+          enabled: res.data.enabled,
+        });
+        return;
+      }
+
+      toast({ title: '读取配置失败', description: res.error?.message, variant: 'destructive' });
     }
   };
 
@@ -225,7 +263,12 @@ export default function AuthPage() {
     if (!selectedProvider) return;
     setSavingProvider(true);
 
-    const data: { enabled?: boolean; clientId?: string; clientSecret?: string } = {
+    const data: {
+      enabled?: boolean;
+      clientId?: string;
+      clientSecret?: string;
+      config?: Record<string, unknown>;
+    } = {
       enabled: providerConfig.enabled,
     };
     if (providerConfig.clientId) {
@@ -233,6 +276,12 @@ export default function AuthPage() {
     }
     if (providerConfig.clientSecret) {
       data.clientSecret = providerConfig.clientSecret;
+    }
+    if (selectedProvider.id === 'wechat') {
+      data.config = {
+        ...(selectedProviderDetail?.config || {}),
+        type: 'miniprogram',
+      };
     }
 
     let res;
@@ -300,6 +349,16 @@ export default function AuthPage() {
     editedConfig.allowSignup !== config.allowSignup
   );
 
+  const isWechatProvider = selectedProvider?.id === 'wechat';
+  const providerIdLabel = isWechatProvider ? '微信 AppID' : 'Client ID';
+  const providerIdPlaceholder = isWechatProvider ? '输入微信小程序 AppID' : '输入 Client ID';
+  const providerSecretLabel = isWechatProvider ? '微信 AppSecret' : 'Client Secret';
+  const providerSecretPlaceholder = selectedProvider?.configured
+    ? '留空保持不变'
+    : isWechatProvider
+      ? '输入微信小程序 AppSecret'
+      : '输入 Client Secret';
+
   return (
     <DashboardLayout isProjectLevel={true}>
       <div className="flex items-center justify-between mb-6">
@@ -331,47 +390,96 @@ export default function AuthPage() {
       </div>
 
       {/* Provider Config Dialog */}
-      <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
+      <Dialog
+        open={configDialogOpen}
+        onOpenChange={(open) => {
+          setConfigDialogOpen(open);
+          if (!open) {
+            setSelectedProvider(null);
+            setSelectedProviderDetail(null);
+            setProviderConfigLoading(false);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
               配置 {selectedProvider?.name}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="client-id">Client ID</Label>
-              <Input
-                id="client-id"
-                value={providerConfig.clientId}
-                onChange={(e) => setProviderConfig({ ...providerConfig, clientId: e.target.value })}
-                placeholder="输入 Client ID"
-              />
+          {providerConfigLoading ? (
+            <div className="space-y-4 py-4">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-16 w-full" />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="client-secret">Client Secret</Label>
-              <Input
-                id="client-secret"
-                type="password"
-                value={providerConfig.clientSecret}
-                onChange={(e) => setProviderConfig({ ...providerConfig, clientSecret: e.target.value })}
-                placeholder={selectedProvider?.configured ? '留空保持不变' : '输入 Client Secret'}
-              />
+          ) : (
+            <div className="space-y-4 py-4">
+              {isWechatProvider && (
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-1">
+                  <div className="text-sm font-medium">微信小程序登录</div>
+                  <p className="text-sm text-muted-foreground">
+                    这里配置的 AppID 和 AppSecret 会用于项目级 `project-auth` 登录接口。
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    当前接入类型固定为微信小程序，登录时会按 `miniprogram` 模式调用微信 `jscode2session`。
+                  </p>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="client-id">{providerIdLabel}</Label>
+                <Input
+                  id="client-id"
+                  value={providerConfig.clientId}
+                  onChange={(e) => setProviderConfig({ ...providerConfig, clientId: e.target.value })}
+                  placeholder={providerIdPlaceholder}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="client-secret">{providerSecretLabel}</Label>
+                <Input
+                  id="client-secret"
+                  type="password"
+                  value={providerConfig.clientSecret}
+                  onChange={(e) => setProviderConfig({ ...providerConfig, clientSecret: e.target.value })}
+                  placeholder={providerSecretPlaceholder}
+                />
+                {isWechatProvider && (
+                  <p className="text-xs text-muted-foreground">
+                    对应 taro-app 中的 `WX_APP_SECRET`。编辑已有配置时，留空会保持服务端已保存的密钥不变。
+                  </p>
+                )}
+              </div>
+              {isWechatProvider && (
+                <div className="space-y-2">
+                  <Label>接入类型</Label>
+                  <div className="h-9 rounded-md border bg-muted/30 px-3 text-sm flex items-center text-muted-foreground">
+                    微信小程序（miniprogram）
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="provider-enabled">启用此提供商</Label>
+                  {isWechatProvider && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      启用后，客户端可通过 `/api/v1/projects/:projectId/auth/wechat/login` 发起登录。
+                    </p>
+                  )}
+                </div>
+                <Switch
+                  id="provider-enabled"
+                  checked={providerConfig.enabled}
+                  onCheckedChange={(checked: boolean) => setProviderConfig({ ...providerConfig, enabled: checked })}
+                />
+              </div>
             </div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="provider-enabled">启用此提供商</Label>
-              <Switch
-                id="provider-enabled"
-                checked={providerConfig.enabled}
-                onCheckedChange={(checked: boolean) => setProviderConfig({ ...providerConfig, enabled: checked })}
-              />
-            </div>
-          </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfigDialogOpen(false)}>
               取消
             </Button>
-            <Button onClick={handleSaveProvider} disabled={savingProvider}>
+            <Button onClick={handleSaveProvider} disabled={savingProvider || providerConfigLoading}>
               {savingProvider ? '保存中...' : '保存'}
             </Button>
           </DialogFooter>
@@ -440,9 +548,16 @@ export default function AuthPage() {
                       <div>
                         <div className="font-medium">{provider.name}</div>
                         <div className="text-sm text-muted-foreground">
-                          {provider.type === 'builtin' ? '内置' : 'OAuth 2.0'}
+                          {provider.id === 'wechat'
+                            ? '微信小程序项目登录'
+                            : provider.type === 'builtin'
+                              ? '内置'
+                              : 'OAuth 2.0'}
                           {provider.configured && provider.hasCredentials && (
                             <span className="ml-2 text-green-600">已配置</span>
+                          )}
+                          {provider.id === 'wechat' && !provider.configured && (
+                            <span className="ml-2">待配置 AppID/AppSecret</span>
                           )}
                         </div>
                       </div>

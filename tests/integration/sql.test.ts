@@ -59,6 +59,8 @@ describe('SqlService Integration', () => {
       await pool.query(`DROP TABLE IF EXISTS ${testSchemaName}.table_a CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${testSchemaName}.table_b CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${testSchemaName}.regular_table CASCADE`);
+      await pool.query(`DROP FUNCTION IF EXISTS ${testSchemaName}.test_sql_import_function() CASCADE`);
+      await pool.query(`DROP FUNCTION IF EXISTS ${testSchemaName}.tagged_sql_import_function() CASCADE`);
     }
   });
 
@@ -255,6 +257,51 @@ describe('SqlService Integration', () => {
 
       const data = await pool.query(`SELECT data FROM ${testSchemaName}.import_test`);
       expect(data.rows[0].data).toBe('value; with; semicolons');
+    });
+
+    it('should import plpgsql functions with $$ quoted bodies', async () => {
+      const sql = `
+        CREATE OR REPLACE FUNCTION test_sql_import_function()
+        RETURNS integer
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+          value integer := 1;
+        BEGIN
+          value := value + 1;
+          RETURN value;
+        END;
+        $$;
+      `;
+
+      const result = await sqlService.importSql(testSchemaName, sql);
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.statementsExecuted).toBe(1);
+
+      const data = await pool.query(`SELECT ${testSchemaName}.test_sql_import_function() AS value`);
+      expect(data.rows[0].value).toBe(2);
+    });
+
+    it('should import plpgsql functions with tagged dollar quoted bodies', async () => {
+      const sql = `
+        CREATE OR REPLACE FUNCTION tagged_sql_import_function()
+        RETURNS text
+        LANGUAGE plpgsql
+        AS $func$
+        BEGIN
+          RETURN 'ok;still-inside';
+        END;
+        $func$;
+      `;
+
+      const result = await sqlService.importSql(testSchemaName, sql);
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.statementsExecuted).toBe(1);
+
+      const data = await pool.query(`SELECT ${testSchemaName}.tagged_sql_import_function() AS value`);
+      expect(data.rows[0].value).toBe('ok;still-inside');
     });
 
     it('should reject invalid schema names', async () => {

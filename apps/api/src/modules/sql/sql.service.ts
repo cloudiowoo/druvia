@@ -17,6 +17,28 @@ export interface ImportOptions {
   atomic?: boolean;         // 是否原子导入（任意错误则回滚）
 }
 
+function stripLeadingSqlComments(sql: string): string {
+  let result = sql.trimStart();
+
+  while (result.length > 0) {
+    if (result.startsWith('--')) {
+      const newlineIndex = result.search(/[\r\n]/);
+      result = newlineIndex === -1 ? '' : result.slice(newlineIndex + 1).trimStart();
+      continue;
+    }
+
+    if (result.startsWith('/*')) {
+      const endIndex = result.indexOf('*/');
+      result = endIndex === -1 ? '' : result.slice(endIndex + 2).trimStart();
+      continue;
+    }
+
+    break;
+  }
+
+  return result;
+}
+
 // 验证标识符名称（防止 SQL 注入）
 function validateIdentifier(name: string): boolean {
   // PostgreSQL 标识符规则：字母或下划线开头，后跟字母、数字、下划线
@@ -124,14 +146,16 @@ export async function importSql(
 
     for (const stmt of statements) {
       const trimmed = stmt.trim();
-      if (!trimmed || trimmed.startsWith('--')) continue;
+      const executable = stripLeadingSqlComments(trimmed);
+      if (!executable) continue;
+      if (/^(BEGIN|COMMIT|ROLLBACK)\b/i.test(executable)) continue;
 
       try {
-        await client.query(trimmed);
+        await client.query(executable);
         result.statementsExecuted++;
       } catch (error) {
         const err = error as Error;
-        result.errors.push(`Statement failed: ${trimmed.substring(0, 50)}... Error: ${err.message}`);
+        result.errors.push(`Statement failed: ${executable.substring(0, 50)}... Error: ${err.message}`);
 
         // 原子模式：任意错误则回滚
         if (atomic) {
@@ -274,10 +298,32 @@ function splitSqlStatements(sql: string): string[] {
   let current = '';
   let inString = false;
   let stringChar = '';
+  let dollarQuoteTag: string | null = null;
 
   for (let i = 0; i < sql.length; i++) {
     const char = sql[i];
     const prevChar = sql[i - 1];
+
+    if (dollarQuoteTag) {
+      if (sql.startsWith(dollarQuoteTag, i)) {
+        current += dollarQuoteTag;
+        i += dollarQuoteTag.length - 1;
+        dollarQuoteTag = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (!inString && char === '$') {
+      const match = sql.slice(i).match(/^(\$\$|\$[A-Za-z_][A-Za-z0-9_]*\$)/);
+      if (match) {
+        dollarQuoteTag = match[1];
+        current += dollarQuoteTag;
+        i += dollarQuoteTag.length - 1;
+        continue;
+      }
+    }
 
     // 处理字符串开始/结束
     if ((char === "'" || char === '"') && prevChar !== '\\') {
