@@ -364,6 +364,25 @@ export async function trackAllTablesInHasura(
   }
 }
 
+export async function reloadHasuraMetadata(
+  _request: FastifyRequest<{ Params: SchemaParams }>,
+  reply: FastifyReply
+) {
+  try {
+    await tableService.reloadHasuraMetadata();
+    return reply.send({
+      success: true,
+      message: 'Hasura metadata reloaded successfully',
+    });
+  } catch (error) {
+    const err = error as Error;
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'RELOAD_FAILED', message: err.message },
+    });
+  }
+}
+
 // Track single table in Hasura
 export async function trackTableInHasura(
   request: FastifyRequest<{ Params: TableParams }>,

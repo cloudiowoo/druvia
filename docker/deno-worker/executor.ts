@@ -186,7 +186,11 @@ function buildContext(
     (name) => Deno.env.get(name)
   );
   const druvia = internalToken && resolvedApiBaseUrl
-    ? createDruviaHelper({ apiBaseUrl: resolvedApiBaseUrl, internalToken, fetchFn: fetch })
+    ? createDruviaHelper({
+        apiBaseUrl: resolvedApiBaseUrl,
+        internalToken,
+        fetchFn: fetch,
+      })
     : undefined;
 
   return {

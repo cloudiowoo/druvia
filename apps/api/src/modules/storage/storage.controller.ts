@@ -301,7 +301,10 @@ export async function uploadObject(
       sanitizedName,
       buffer,
       data.mimetype,
-      (request.user as JwtPayload | undefined)?.userId
+      {
+        createdByType: 'platform_user',
+        platformUserId: (request.user as JwtPayload | undefined)?.userId,
+      }
     );
 
     return reply.status(201).send({ success: true, data: object });

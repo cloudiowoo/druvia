@@ -82,6 +82,13 @@ export interface ListObjectsOptions {
   offset?: number;
 }
 
+export interface StorageUploadAuditContext {
+  createdByType?: 'platform_user' | 'project_user' | 'apikey';
+  platformUserId?: string;
+  projectUserId?: string;
+  sourceFunction?: string;
+}
+
 // Helper functions
 function toBucket(row: BucketRow): Bucket {
   return {
@@ -284,7 +291,7 @@ export async function uploadObject(
   name: string,
   file: Buffer,
   mimeType: string,
-  userId?: string
+  auditContext?: StorageUploadAuditContext
 ): Promise<StorageObject> {
   // Validate file size
   if (bucket.fileSizeLimit && file.length > bucket.fileSizeLimit) {
@@ -301,6 +308,21 @@ export async function uploadObject(
   const storage = getStorage();
   const objectId = generateObjectId();
   const storagePath = `${bucket.projectId}/${bucket.name}/${name}`;
+  const metadata = {
+    ...(auditContext?.createdByType
+      ? { created_by_type: auditContext.createdByType }
+      : {}),
+    ...(auditContext?.platformUserId
+      ? { created_by_platform_user_id: auditContext.platformUserId }
+      : {}),
+    ...(auditContext?.projectUserId
+      ? { created_by_project_user_id: auditContext.projectUserId }
+      : {}),
+    ...(auditContext?.sourceFunction
+      ? { source_function: auditContext.sourceFunction }
+      : {}),
+  } satisfies Record<string, unknown>;
+  const createdBy = auditContext?.platformUserId ?? null;
 
   const client = await pool.connect();
   try {
@@ -313,10 +335,16 @@ export async function uploadObject(
     // Save metadata
     const result = await client.query<ObjectRow>(
       `INSERT INTO druvia_storage_objects
-       (object_id, bucket_id, name, size, mime_type, etag, storage_provider, storage_path, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       (object_id, bucket_id, name, size, mime_type, etag, storage_provider, storage_path, metadata, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
        ON CONFLICT (bucket_id, name) DO UPDATE SET
-         size = $4, mime_type = $5, etag = $6, storage_path = $8, updated_at = NOW()
+         size = $4,
+         mime_type = $5,
+         etag = $6,
+         storage_path = $8,
+         metadata = $9::jsonb,
+         created_by = $10,
+         updated_at = NOW()
        RETURNING *`,
       [
         objectId,
@@ -327,7 +355,8 @@ export async function uploadObject(
         uploadResult.etag || null,
         storage.name,
         storagePath,
-        userId || null,
+        JSON.stringify(metadata),
+        createdBy,
       ]
     );
 

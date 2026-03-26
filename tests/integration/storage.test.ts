@@ -147,7 +147,10 @@ describe('StorageService Integration', () => {
         'hello.txt',
         file,
         'text/plain',
-        'user_test_storage'
+        {
+          createdByType: 'platform_user',
+          platformUserId: 'user_test_storage',
+        }
       );
 
       expect(object).toBeDefined();
@@ -155,6 +158,51 @@ describe('StorageService Integration', () => {
       expect(object.name).toBe('hello.txt');
       expect(object.size).toBe(13);
       expect(object.mimeType).toBe('text/plain');
+    });
+
+    it('should persist upload audit metadata and refresh it on same-path re-upload', async () => {
+      await storageService.uploadObject(
+        testBucket,
+        'avatars/user-1.png',
+        Buffer.from('version 1'),
+        'image/png',
+        {
+          createdByType: 'platform_user',
+          platformUserId: 'user_test_storage',
+          sourceFunction: 'upload-avatar',
+        }
+      );
+
+      const firstObject = await storageService.getObject(testBucket.bucketId, 'avatars/user-1.png');
+      expect(firstObject?.metadata).toMatchObject({
+        created_by_type: 'platform_user',
+        created_by_platform_user_id: 'user_test_storage',
+        source_function: 'upload-avatar',
+      });
+      expect(firstObject?.metadata.created_by_project_user_id).toBeUndefined();
+
+      await storageService.uploadObject(
+        testBucket,
+        'avatars/user-1.png',
+        Buffer.from('version 2'),
+        'image/png',
+        {
+          createdByType: 'project_user',
+          projectUserId: 'pu_123',
+          sourceFunction: 'upload-team-logo',
+        }
+      );
+
+      const secondObject = await storageService.getObject(testBucket.bucketId, 'avatars/user-1.png');
+      expect(secondObject?.metadata).toMatchObject({
+        created_by_type: 'project_user',
+        created_by_project_user_id: 'pu_123',
+        source_function: 'upload-team-logo',
+      });
+      expect(secondObject?.metadata.created_by_platform_user_id).toBeUndefined();
+
+      const content = await storageService.downloadObject(secondObject!);
+      expect(content.toString()).toBe('version 2');
     });
 
     it('should list objects', async () => {

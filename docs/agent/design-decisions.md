@@ -51,6 +51,21 @@
 - 平台级 Hasura secret 只留在平台服务端。
 - 项目级 Edge Function 的正式数据访问模型应走 API internal proxy，而不是直连 Hasura admin 通道。
 - 运行时 helper 可以向函数暴露受控能力，如 `druvia.graphql()`；但 internal token 不应作为项目 secret 暴露给用户。
+- 项目级 Edge Function 的 storage 写入也遵循同一原则：
+  - 正式模型是 API internal storage proxy
+  - 运行时 helper 目前包含 `druvia.storage.upload()` 与受控 `druvia.storage.remove()`
+  - 不向项目函数下发 `DRUVIA_TOKEN`、管理 JWT、或其他平台级 storage 写入凭证
+- storage 上传审计先落在 `druvia_storage_objects.metadata` JSONB，而不是立即扩表加独立列。
+- helper 可在运行时内部附带可信 `callerContext`，但这不是函数作者可自定义的公开 helper 参数。
+
+## Hasura 同步策略
+
+- `track-all` 与 `reload metadata` 是两类不同操作，不能混用概念：
+  - `track-all` 负责表、关系、权限等 metadata 对象同步
+  - `reload metadata` 负责刷新 Hasura schema / cache 视图
+- Druvia 管理端对列级 DDL 的正式策略是：
+  - Admin Tables 页面内的 `add/drop/rename column` 自动触发 `reload metadata`
+  - 外部 SQL / migration 导致的 schema 漂移，由用户显式触发 `刷新 Hasura Schema`
 
 ## 文档策略
 

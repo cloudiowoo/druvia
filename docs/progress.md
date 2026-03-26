@@ -38,10 +38,21 @@
   - internal token
   - `/api/internal/functions/graphql`
   - 运行时 `druvia.graphql()` helper
+- 平台侧已补齐终端用户图片上传 Phase 1 基础能力：
+  - `/api/internal/functions/storage/upload`
+  - `/api/internal/functions/storage/remove`
+  - 运行时 `druvia.storage.upload()` / `druvia.storage.remove()`
+  - storage 审计信息写入 `druvia_storage_objects.metadata`
+  - taro-app 风格上传函数后续可去掉 `DRUVIA_TOKEN`
+- Admin Tables 已补齐 Hasura schema 刷新能力：
+  - 新增 `刷新 Hasura Schema` 按钮
+  - `addColumn` / `dropColumn` / `renameColumn` 后自动 reload metadata
+  - 与原有 `同步 GraphQL 权限` 操作分离
 
 ## Current Next Steps
 
 - 将 taro-app 的 `wx-login-register` / `wx-silent-login` 切换到平台 project auth API
+- 将 taro-app 的 `upload-avatar` / `upload-team-logo` 改为调用 `druvia.storage.upload()`，并在需要新文件名替换时配合 `druvia.storage.remove()`
 - 评估并规划 GraphQL project-user 能力的下一阶段设计
 - 继续把旧 Edge Function 登录函数收敛为薄代理或下线
 - 持续把 taro-app 迁移中沉淀出的高价值结论同步到 Codex 项目记忆体系

@@ -9,6 +9,11 @@ interface ApiResponse<T> {
     code: string;
     message: string;
   };
+  pagination?: {
+    limit: number;
+    offset: number;
+    total: number;
+  };
 }
 
 // Functions Types
@@ -269,6 +274,10 @@ class ApiClient {
 
   async trackAllTablesInHasura(schemaName: string) {
     return this.request<{ tracked: string[]; failed: string[]; relationships: number; untracked: number }>('POST', `/api/v1/schemas/${schemaName}/hasura/track-all`);
+  }
+
+  async reloadHasuraMetadata(schemaName: string) {
+    return this.request<void>('POST', `/api/v1/schemas/${schemaName}/hasura/reload`);
   }
 
   async createTable(schemaName: string, table: {

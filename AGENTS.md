@@ -97,6 +97,10 @@ Codex 项目上下文入口。用于快速建立当前仓库的稳定事实和�
   - 默认 `jwt_required`
   - 仅显式标记 `anon_allowed` 的函数允许同项目匿名 `apikey` 调用
   - Admin 修改该字段前必须先应用 `015_function_invoke_auth_mode` 迁移
+- Edge Function 终端用户图片上传 Phase 1 已补齐正式内部能力：
+  - `/api/internal/functions/storage/upload`
+  - 运行时 `druvia.storage.upload()`
+  - `DRUVIA_TOKEN` 不是正式方案
 - Project user auth Phase 1 已进入真实实现：
   - API 已有项目级 `wechat login / silent-login / refresh / logout`
   - 请求身份已拆分为 `platform_user / project_user / apikey`
@@ -107,6 +111,10 @@ Codex 项目上下文入口。用于快速建立当前仓库的稳定事实和�
   - `perUser` 语义是“项目内 actor 限额”，不是全局用户限额
   - 匿名 `apikey` 当前仍按 `request.ip` 归并
   - 保存配置时必须保留完整 `rateLimits` 子对象
+- Admin Tables 已补齐 Hasura schema 刷新路径：
+  - `add/drop/rename column` 后 API 自动 reload metadata
+  - 手动按钮 `刷新 Hasura Schema` 用于外部 SQL / migration 后的 cache 刷新
+  - 不要把它和 `同步 GraphQL 权限` 视为同一操作
 
 ## Working Rules
 

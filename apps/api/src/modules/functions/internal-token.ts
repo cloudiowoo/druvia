@@ -5,6 +5,12 @@ export interface InternalFunctionTokenPayload {
   projectId: string;
   functionName: string;
   authType: 'platform_user' | 'project_user' | 'apikey';
+  role?: string;
+  userId?: string;
+  uid?: number;
+  tenantId?: string;
+  projectUserId?: string;
+  provider?: string;
   iat?: number;
   exp?: number;
 }
@@ -13,6 +19,12 @@ interface SignInternalFunctionTokenInput {
   projectId: string;
   functionName: string;
   authType: 'platform_user' | 'project_user' | 'apikey';
+  role?: string;
+  userId?: string;
+  uid?: number;
+  tenantId?: string;
+  projectUserId?: string;
+  provider?: string;
   expiresIn?: number;
 }
 

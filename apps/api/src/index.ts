@@ -23,6 +23,7 @@ import { realtimeRoutes } from './modules/realtime/realtime.routes.js';
 import { sqlRoutes } from './modules/sql/sql.routes.js';
 import { functionsRoutes } from './modules/functions/functions.routes.js';
 import { internalFunctionsGraphqlRoutes } from './modules/functions/internal-graphql.routes.js';
+import { internalFunctionsStorageRoutes } from './modules/functions/internal-storage.routes.js';
 import { openapiRoutes } from './modules/openapi/openapi.routes.js';
 import { apiKeysRoutes } from './modules/api-keys/api-keys.routes.js';
 import { environmentRoutes } from './modules/environment/environment.routes.js';
@@ -77,6 +78,7 @@ export function buildApp() {
   app.register(sqlRoutes, { prefix: '/api/v1' });
   app.register(functionsRoutes, { prefix: '/api/v1' });
   app.register(internalFunctionsGraphqlRoutes, { prefix: '/api' });
+  app.register(internalFunctionsStorageRoutes, { prefix: '/api' });
   app.register(openapiRoutes, { prefix: '/api/v1' });
   app.register(apiKeysRoutes, { prefix: '/api/v1' });
   app.register(environmentRoutes, { prefix: '/api/v1' });

@@ -241,6 +241,20 @@ export async function invokeFunction(
     projectId,
     functionName: func.name,
     authType: caller?.authType ?? 'apikey',
+    role: caller?.role,
+    ...(caller?.authType === 'platform_user'
+      ? {
+          userId: caller.userId,
+          uid: caller.uid,
+          tenantId: caller.tenantId,
+        }
+      : {}),
+    ...(caller?.authType === 'project_user'
+      ? {
+          projectUserId: caller.projectUserId,
+          provider: caller.provider,
+        }
+      : {}),
   });
   const executionId = randomBytes(16).toString('hex');
   const startTime = Date.now();

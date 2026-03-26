@@ -53,6 +53,9 @@ export async function tableRoutes(app: FastifyInstance) {
   // Track all tables in Hasura (for GraphQL access)
   app.post('/schemas/:schemaName/hasura/track-all', controller.trackAllTablesInHasura as never);
 
+  // Reload Hasura metadata/schema cache for this schema context
+  app.post('/schemas/:schemaName/hasura/reload', controller.reloadHasuraMetadata as never);
+
   // Track single table in Hasura
   app.post('/schemas/:schemaName/tables/:tableName/hasura/track', controller.trackTableInHasura as never);
 

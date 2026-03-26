@@ -244,6 +244,14 @@ async function untrackTableFromHasura(schemaName: string, tableName: string): Pr
   }
 }
 
+export async function reloadHasuraMetadata(): Promise<void> {
+  await hasuraMetadataRequest('reload_metadata', {
+    reload_sources: true,
+    reload_remote_schemas: true,
+    recreate_event_triggers: true,
+  });
+}
+
 // Add column to table
 export async function addColumn(
   schemaName: string,
@@ -252,6 +260,7 @@ export async function addColumn(
 ): Promise<void> {
   const colDDL = generateColumnDDL(column, schemaName);
   await pool.query(`ALTER TABLE "${schemaName}"."${tableName}" ADD COLUMN ${colDDL}`);
+  await reloadHasuraMetadata();
 }
 
 // Drop column from table
@@ -261,6 +270,7 @@ export async function dropColumn(
   columnName: string
 ): Promise<void> {
   await pool.query(`ALTER TABLE "${schemaName}"."${tableName}" DROP COLUMN "${columnName}"`);
+  await reloadHasuraMetadata();
 }
 
 // Rename column
@@ -273,6 +283,7 @@ export async function renameColumn(
   await pool.query(
     `ALTER TABLE "${schemaName}"."${tableName}" RENAME COLUMN "${oldName}" TO "${newName}"`
   );
+  await reloadHasuraMetadata();
 }
 
 // Get table metadata

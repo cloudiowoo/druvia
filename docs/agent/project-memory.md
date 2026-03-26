@@ -110,11 +110,41 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 - 新函数应优先使用运行时内建 `druvia.graphql()`，而不是项目 secrets 中的 Hasura admin 类凭证。
 - internal token 属于执行期内部凭证，不属于 Admin secrets UI 中的项目配置项。
 - `DRUVIA_GRAPHQL_URL`、`HASURA_ADMIN_SECRET`、等价的 `DRUVIA_SERVICE_ROLE_KEY` 不应继续作为正式推荐的函数数据访问模型。
+- 终端用户图片上传的 Phase 1 正式模型已确定为：
+  - API internal storage proxy
+  - 运行时内建 `druvia.storage.upload()` / `druvia.storage.remove()`
+  - 平台级 storage 写权限只保留在 API 服务端
+- `DRUVIA_TOKEN` 不再是项目函数写 storage 的正式方案，只可视为历史临时兼容思路。
+- `druvia.storage.upload()` 当前是窄能力：
+  - 当前支持 `upload()` 与受控 `remove()`
+  - helper 对函数作者不暴露 `projectId` / `caller`
+  - helper 原始返回 `{ path, publicUrl, object }`
+  - `publicUrl` 仅在目标 bucket 为 public 时非 `null`
+- `remove({ bucket, path, ignoreMissing? })` 已可用于头像/队徽替换场景里的旧对象清理。
+- internal storage route 会把以下审计字段写入 `druvia_storage_objects.metadata`：
+  - `created_by_type`
+  - `created_by_platform_user_id`
+  - `created_by_project_user_id`
+  - `source_function`
+- 同路径重传时，storage metadata 中的上述审计字段也必须刷新，不能沿用旧调用者信息。
 
 ## 管理端与迁移注意事项
 
 - Admin 端 Functions 页面已经增加 `invokeAuthMode` 的展示与编辑能力。
 - 创建函数时不暴露该字段，默认保持 `JWT Required`。
+- Admin 端 Tables 页面现在要区分两类 Hasura 操作：
+  - `同步 GraphQL 权限` = track tables / relationships / permissions
+  - `刷新 Hasura Schema` = 触发 Hasura metadata reload，处理字段缓存未刷新问题
+- 在 Admin Tables 页面内执行：
+  - `addColumn`
+  - `dropColumn`
+  - `renameColumn`
+  这三类列级 DDL 后，API 会自动执行一次 Hasura metadata reload。
+- 如果变更来自：
+  - 外部 SQL
+  - 手工 migration
+  - 数据库页直接执行的 schema 变更
+  则不能假设 Hasura cache 已自动刷新；此时应显式点击 `刷新 Hasura Schema`。
 - Admin 端项目级 Auth 页面
   - `/t/:tenantId/p/:projectId/auth`
   - 当前就是微信小程序 `project-auth` 的配置入口

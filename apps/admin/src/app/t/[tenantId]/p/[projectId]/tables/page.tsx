@@ -65,6 +65,7 @@ export default function TablesPage() {
   const [hasuraStatus, setHasuraStatus] = useState<HasuraStatus>({});
   const [realtimeStatus, setRealtimeStatus] = useState<Record<string, boolean>>({});
   const [syncing, setSyncing] = useState(false);
+  const [reloadingHasura, setReloadingHasura] = useState(false);
 
   // ER diagram data
   const [tablesWithColumns, setTablesWithColumns] = useState<TableWithColumns[]>([]);
@@ -115,6 +116,26 @@ export default function TablesPage() {
       toast({ title: '同步失败', variant: 'destructive' });
     }
     setSyncing(false);
+  };
+
+  const handleReloadHasura = async () => {
+    if (!effectiveSchema) return;
+    setReloadingHasura(true);
+    const res = await api.reloadHasuraMetadata(effectiveSchema);
+    if (res.success) {
+      toast({ title: 'Hasura Schema 已刷新' });
+      const statusRes = await api.getHasuraStatus(effectiveSchema);
+      if (statusRes.success && statusRes.data) {
+        setHasuraStatus(statusRes.data);
+      }
+    } else {
+      toast({
+        title: '刷新失败',
+        description: res.error?.message,
+        variant: 'destructive',
+      });
+    }
+    setReloadingHasura(false);
   };
 
   const fetchERData = async () => {
@@ -168,6 +189,15 @@ export default function TablesPage() {
         </div>
         {effectiveSchema && (
           <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleReloadHasura}
+              disabled={reloadingHasura}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${reloadingHasura ? 'animate-spin' : ''}`} />
+              {reloadingHasura ? '刷新中...' : '刷新 Hasura Schema'}
+            </Button>
             <Button
               variant="outline"
               size="sm"

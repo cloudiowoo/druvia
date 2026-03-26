@@ -152,6 +152,7 @@ function ObjectThumbnail({ projectId, bucket, obj }: { projectId: string; bucket
 }
 
 export default function StoragePage() {
+  const STORAGE_PAGE_SIZE = 100;
   const params = useParams();
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
@@ -191,11 +192,37 @@ export default function StoragePage() {
 
   const fetchObjects = useCallback(async (bucket: Bucket, prefix: string) => {
     setObjectsLoading(true);
-    const res = await api.listObjects(projectId, bucket.name, { prefix });
-    if (res.success && res.data) {
-      setObjects(res.data);
+    try {
+      let offset = 0;
+      let total = 0;
+      const allObjects: StorageObject[] = [];
+
+      do {
+        const res = await api.listObjects(projectId, bucket.name, {
+          prefix,
+          limit: STORAGE_PAGE_SIZE,
+          offset,
+        });
+
+        if (!res.success || !res.data) {
+          setObjects([]);
+          toast({ title: '加载文件失败', description: res.error?.message, variant: 'destructive' });
+          return;
+        }
+
+        allObjects.push(...res.data);
+        total = res.pagination?.total ?? allObjects.length;
+        offset += res.data.length;
+
+        if (res.data.length === 0) {
+          break;
+        }
+      } while (offset < total);
+
+      setObjects(allObjects);
+    } finally {
+      setObjectsLoading(false);
     }
-    setObjectsLoading(false);
   }, [projectId]);
 
   useEffect(() => {

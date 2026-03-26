@@ -35,6 +35,44 @@ describe('API app internal functions route', () => {
       await app.close()
     }
   })
+
+  it('registers the internal functions storage upload route', async () => {
+    const app = buildApp()
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/internal/functions/storage/upload',
+        payload: {
+          bucket: 'team-assets',
+          path: 'avatars/a.png',
+          contentType: 'image/png',
+          dataBase64: 'ZmlsZQ==',
+        },
+      })
+
+      expect(response.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('API app schema hasura routes', () => {
+  it('registers the manual hasura reload route', async () => {
+    const app = buildApp()
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/schemas/dru_test/hasura/reload',
+      })
+
+      expect(response.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
 })
 
 describe('API app project auth routes', () => {
