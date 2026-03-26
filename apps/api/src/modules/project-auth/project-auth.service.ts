@@ -26,6 +26,11 @@ type ProjectUser = {
   provider: string;
 };
 
+type PgLikeError = {
+  code?: string;
+  message?: string;
+};
+
 type SchemaCapabilities = {
   hasEmail: boolean;
   hasUsername: boolean;
@@ -37,6 +42,7 @@ type SchemaCapabilities = {
   hasWxOpenId: boolean;
   hasCreatedAt: boolean;
   hasUpdatedAt: boolean;
+  userIdDataType: string | null;
 };
 
 export interface ProjectSession {
@@ -72,6 +78,10 @@ function validateSchemaName(schemaName: string): void {
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function buildFallbackUsername(providerId: string): string {
+  return `用户_${providerId.slice(0, 8)}`;
 }
 
 function buildUserSelect(schemaName: string, capabilities: SchemaCapabilities): string {
@@ -186,13 +196,14 @@ async function getAuthAdapter(projectId: string, providerName: string) {
 async function getSchemaCapabilities(schemaName: string): Promise<SchemaCapabilities> {
   validateSchemaName(schemaName);
 
-  const columns = await query<{ column_name: string }>(
-    `SELECT column_name
+  const columns = await query<{ column_name: string; data_type: string | null }>(
+    `SELECT column_name, data_type
      FROM information_schema.columns
      WHERE table_schema = $1 AND table_name = 'users'`,
     [schemaName]
   );
   const names = new Set(columns.map((column) => column.column_name));
+  const idColumn = columns.find((column) => column.column_name === 'id');
 
   return {
     hasEmail: names.has('email'),
@@ -205,6 +216,7 @@ async function getSchemaCapabilities(schemaName: string): Promise<SchemaCapabili
     hasWxOpenId: names.has('wx_open_id'),
     hasCreatedAt: names.has('created_at'),
     hasUpdatedAt: names.has('updated_at'),
+    userIdDataType: idColumn?.data_type ?? null,
   };
 }
 
@@ -292,10 +304,20 @@ async function createProjectUser(
 ): Promise<ProjectUserRow> {
   validateSchemaName(schemaName);
 
-  const columns: string[] = ['id'];
-  const values: unknown[] = [generateUserId()];
-  const placeholders = ['$1'];
-  let paramIndex = 2;
+  const columns: string[] = [];
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
+  let paramIndex = 1;
+
+  if (capabilities.userIdDataType === 'uuid') {
+    columns.push('id');
+    values.push(crypto.randomUUID());
+    placeholders.push(`$${paramIndex++}`);
+  } else {
+    columns.push('id');
+    values.push(generateUserId());
+    placeholders.push(`$${paramIndex++}`);
+  }
 
   if (capabilities.hasEmail) {
     columns.push('email');
@@ -304,7 +326,7 @@ async function createProjectUser(
   }
   if (capabilities.hasUsername) {
     columns.push('username');
-    values.push(userInfo?.nickName || authUser.nickname || null);
+    values.push(userInfo?.nickName || authUser.nickname || buildFallbackUsername(providerId));
     placeholders.push(`$${paramIndex++}`);
   }
   if (capabilities.hasAvatarUrl) {
@@ -345,26 +367,46 @@ async function createProjectUser(
     placeholders.push('NOW()');
   }
 
-  const created = await queryOne<ProjectUserRow>(
-    `INSERT INTO ${schemaName}.users (${columns.join(', ')})
-     VALUES (${placeholders.join(', ')})
-     RETURNING id,
-               ${capabilities.hasEmail ? 'email' : 'NULL::text AS email'},
-               ${capabilities.hasUsername ? 'username' : 'NULL::text AS username'},
-               ${capabilities.hasAvatarUrl ? 'avatar_url' : 'NULL::text AS avatar_url'},
-               ${capabilities.hasProvider ? 'provider' : `'${provider}'::text AS provider`},
-               ${capabilities.hasProviderId ? 'provider_id' : 'NULL::text AS provider_id'},
-               ${capabilities.hasStatus ? 'status' : "'active'::text AS status"},
-               ${capabilities.hasLastLoginAt ? 'last_login_at' : 'NULL::timestamptz AS last_login_at'},
-               ${capabilities.hasCreatedAt ? 'created_at' : 'NOW() AS created_at'}`,
-    values
-  );
+  try {
+    const created = await queryOne<ProjectUserRow>(
+      `INSERT INTO ${schemaName}.users (${columns.join(', ')})
+       VALUES (${placeholders.join(', ')})
+       RETURNING id,
+                 ${capabilities.hasEmail ? 'email' : 'NULL::text AS email'},
+                 ${capabilities.hasUsername ? 'username' : 'NULL::text AS username'},
+                 ${capabilities.hasAvatarUrl ? 'avatar_url' : 'NULL::text AS avatar_url'},
+                 ${capabilities.hasProvider ? 'provider' : `'${provider}'::text AS provider`},
+                 ${capabilities.hasProviderId ? 'provider_id' : 'NULL::text AS provider_id'},
+                 ${capabilities.hasStatus ? 'status' : "'active'::text AS status"},
+                 ${capabilities.hasLastLoginAt ? 'last_login_at' : 'NULL::timestamptz AS last_login_at'},
+                 ${capabilities.hasCreatedAt ? 'created_at' : 'NOW() AS created_at'}`,
+      values
+    );
 
-  if (!created) {
-    throw new Error('Failed to create project user');
+    if (!created) {
+      throw new ProjectAuthError('USER_CREATE_FAILED', 'Failed to create project user', 500);
+    }
+
+    return created;
+  } catch (error) {
+    const pgError = error as PgLikeError;
+    if (pgError.code === '23505') {
+      const existingUser = await findProjectUserByProvider(schemaName, capabilities, provider, providerId);
+      if (existingUser) {
+        return existingUser;
+      }
+    }
+
+    if (pgError.code === '23502' && pgError.message?.includes('"id"')) {
+      throw new ProjectAuthError(
+        'USER_CREATE_FAILED',
+        'Project user creation failed because users.id could not be generated',
+        500
+      );
+    }
+
+    throw new ProjectAuthError('USER_CREATE_FAILED', 'Failed to create project user', 500);
   }
-
-  return created;
 }
 
 export async function createProjectRefreshToken(

@@ -97,6 +97,29 @@ describe('Project Auth Controller', () => {
     })
   })
 
+  it('maps semantic user creation failures from login to API response', async () => {
+    vi.mocked(wechatLogin).mockRejectedValue(
+      new ProjectAuthError('USER_CREATE_FAILED', 'Project user creation failed because users.id could not be generated', 500)
+    )
+
+    const reply = createReply()
+    const request = {
+      params: { projectId: 'proj_123' },
+      body: { code: 'wx_code', userInfo: {} },
+    }
+
+    await controller.wechatLogin(request as never, reply as never)
+
+    expect(reply.status).toHaveBeenCalledWith(500)
+    expect(reply.payload).toEqual({
+      success: false,
+      error: {
+        code: 'USER_CREATE_FAILED',
+        message: 'Project user creation failed because users.id could not be generated',
+      },
+    })
+  })
+
   it('forwards generic provider login to the shared service', async () => {
     vi.mocked(providerLogin).mockResolvedValue({
       token: 'access_token',

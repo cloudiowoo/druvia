@@ -23,6 +23,10 @@
 - 平台用户认证与项目终端用户认证必须分层，不能继续共用一套 session 签发语义。
 - 项目终端用户 access token / refresh token 由 Druvia API 正式签发，不再由 Edge Function 自造。
 - Phase 1 复用 `<project schema>.users`，但必须兼容 taro-app 现存 `wx_open_id` 数据形态。
+- `project-auth` 创建项目业务用户时必须尊重 `<project schema>.users.id` 的真实类型：
+  - 不能把平台风格 `user_xxx` 字符串强写进 UUID 主键业务表
+  - UUID 主键项目由 API 显式生成合法 UUID，不依赖业务表一定存在默认值
+- `project-auth` 暴露给客户端的失败语义应是 auth 级错误，而不是原始数据库约束错误直出。
 - `PROJECT_AUTH_JWT_SECRET` 可以独立配置；中间件必须同时支持 platform-user 与 project-user token 验签。
 - SDK 侧 `projectAuth` 与 `auth` 分开存储，避免平台后台登录与项目业务登录污染同一 session 槽。
 - provider 扩展策略采用“通用 auth 核心 + provider adapter”：

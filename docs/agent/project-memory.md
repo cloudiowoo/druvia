@@ -35,6 +35,12 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 - taro-app 当前联调库仍需兼容旧字段：
   - `wx_open_id` 仍是有效查找键
   - `provider_id` / `last_login_at` 不能假设已存在
+- `project-auth` 在 signup 分支不能假设 `<schema>.users.id` 是文本主键：
+  - 若 `users.id` 为 `uuid`，服务端必须写入合法 UUID，不能写入 `user_xxx`
+  - 若项目仍是文本型 `users.id`，才继续兼容字符串主键模式
+- `project-auth` 不能假设 UUID 主键一定带数据库默认值：
+  - 对 UUID 主键用户表，当前由 API 在创建时显式生成 UUID
+  - 建用户底层约束错误需包装为语义化 auth 错误，如 `USER_CREATE_FAILED`
 - `project-auth` 的正式演进方向已确定为：
   - 通用 provider 核心
   - provider adapter 负责 `exchangeCode()`
