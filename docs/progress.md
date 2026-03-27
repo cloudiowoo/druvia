@@ -44,6 +44,12 @@
   - 运行时 `druvia.storage.upload()` / `druvia.storage.remove()`
   - storage 审计信息写入 `druvia_storage_objects.metadata`
   - taro-app 风格上传函数后续可去掉 `DRUVIA_TOKEN`
+- 平台日志 Phase 1 已落地第一批基础能力：
+  - `packages/shared` 新增结构化日志契约与错误序列化 helper
+  - API 首批高价值模块已接入结构化 stdout/stderr
+  - Deno Worker 已输出执行级日志，并为函数内 `console.*` 注入统一结构化包装
+  - MCP Server 已覆盖启动、鉴权失败、fatal 等关键日志事件
+  - Admin 服务端 API wrapper 已覆盖上游 API 失败、无效响应、网络异常等最小结构化日志
 - Admin Tables 已补齐 Hasura schema 刷新能力：
   - 新增 `刷新 Hasura Schema` 按钮
   - `addColumn` / `dropColumn` / `renameColumn` 后自动 reload metadata
@@ -56,3 +62,7 @@
 - 评估并规划 GraphQL project-user 能力的下一阶段设计
 - 继续把旧 Edge Function 登录函数收敛为薄代理或下线
 - 持续把 taro-app 迁移中沉淀出的高价值结论同步到 Codex 项目记忆体系
+- 继续扩展平台日志覆盖面：
+  - Admin 服务端日志
+  - 更多 API 模块的 `console.*` 收敛
+  - Phase 2 可选日志部署方案文档

@@ -10,9 +10,15 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { createMcpLogger } from './logger.js';
 
 const API_URL = process.env.DRUVIA_API_URL || 'http://localhost:3001';
 const API_KEY = process.env.DRUVIA_API_KEY || '';
+const logger = createMcpLogger({
+  service: 'mcp-server',
+  env: process.env.NODE_ENV,
+  context: { module: 'server' },
+});
 
 interface ApiResponse<T> {
   success: boolean;
@@ -371,14 +377,14 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 // Main entry point
 async function main() {
   if (!API_KEY) {
-    console.error('Error: DRUVIA_API_KEY environment variable is required');
+    logger.error('missing DRUVIA_API_KEY environment variable');
     process.exit(1);
   }
 
   // Validate API key and get project info
   const validation = await validateApiKey();
   if (!validation.valid || !validation.projectId) {
-    console.error('Error: Invalid API key');
+    logger.error('invalid api key');
     process.exit(1);
   }
 
@@ -390,7 +396,7 @@ async function main() {
     `/api/v1/projects/${projectId}`
   );
   if (!projectRes.success || !projectRes.data) {
-    console.error('Error: Failed to get project info');
+    logger.error('failed to get project info', { projectId });
     process.exit(1);
   }
 
@@ -400,11 +406,10 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error(`Druvia MCP Server started for project ${projectId}`);
+  logger.info('mcp server started', { projectId, schemaName });
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
+  logger.error('fatal error', undefined, error);
   process.exit(1);
 });
-

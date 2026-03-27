@@ -1,6 +1,9 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { RequestUser } from './auth.js';
 import { redis } from '../lib/redis.js';
+import { createApiLogger } from '../lib/logger.js';
+
+const logger = createApiLogger({ module: 'ratelimit' });
 
 export interface RateLimitConfig {
   windowMs: number;      // Time window in milliseconds
@@ -62,7 +65,7 @@ export function createRateLimiter(config: Partial<RateLimitConfig> = {}) {
       }
     } catch (error) {
       // If Redis fails, allow the request (fail open)
-      console.error('Rate limiter error:', error);
+      logger.error('rate limiter error', { requestId: request.id }, error);
     }
   };
 }
@@ -114,7 +117,7 @@ export function createTenantRateLimiter(config: Partial<RateLimitConfig> = {}) {
         });
       }
     } catch (error) {
-      console.error('Tenant rate limiter error:', error);
+      logger.error('tenant rate limiter error', { requestId: request.id, tenantId }, error);
     }
   };
 }
@@ -228,6 +231,9 @@ export async function checkProjectGraphqlRateLimit(
       }
     }
   } catch (error) {
-    console.error('GraphQL rate limiter error:', error);
+    logger.error('graphql rate limiter error', {
+      requestId: request.id,
+      projectId,
+    }, error);
   }
 }

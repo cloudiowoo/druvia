@@ -12,6 +12,8 @@ vi.mock('../../apps/api/src/lib/redis.js', () => ({
 }))
 
 import { appCorsOptions, buildApp } from '../../apps/api/src/index.js'
+import { authenticate, signProjectUserToken, signToken } from '../../apps/api/src/middleware/auth.js'
+import { getApiLogContext } from '../../apps/api/src/lib/log-context.js'
 
 describe('API app CORS', () => {
   it('includes the apikey header in the allowed CORS headers', () => {
@@ -107,6 +109,72 @@ describe('API app project auth routes', () => {
       expect(refreshResponse.statusCode).toBe(400)
       expect(providerLoginResponse.statusCode).toBe(400)
       expect(logoutResponse.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('API app log context hooks', () => {
+  it('includes authenticated platform user context after route auth runs', async () => {
+    const app = buildApp()
+    const token = signToken({ userId: 'user_123', uid: 1, tenantId: 'tenant_123' })
+
+    app.get('/__test/projects/:projectId/log-context', { preHandler: authenticate }, async () => {
+      return getApiLogContext()
+    })
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/__test/projects/proj_123/log-context',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({
+        requestId: expect.any(String),
+        projectId: 'proj_123',
+        userId: 'user_123',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('captures schema and table alias params and project user context', async () => {
+    const app = buildApp()
+    const token = signProjectUserToken({
+      sub: 'usr_proj_123',
+      projectId: 'proj_456',
+      authType: 'project_user',
+      role: 'authenticated',
+      provider: 'wechat',
+    })
+
+    app.get('/__test/schemas/:schema/tables/:table/log-context', { preHandler: authenticate }, async () => {
+      return getApiLogContext()
+    })
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/__test/schemas/dru_test/tables/users/log-context',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({
+        requestId: expect.any(String),
+        projectId: 'proj_456',
+        projectUserId: 'usr_proj_123',
+        schemaName: 'dru_test',
+        tableName: 'users',
+      })
     } finally {
       await app.close()
     }

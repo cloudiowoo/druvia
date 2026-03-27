@@ -2,9 +2,12 @@
 // 在隔离的 Worker 中执行用户代码
 // 支持两种模式：AsyncFunction（原有）和 Deno.serve() handler
 import { createDruviaHelper, resolveDruviaApiBaseUrl } from "./druvia-helper.ts";
+import { createDenoLogger, createExecutionConsole } from "./logging.ts";
 
 interface ExecuteMessage {
   code: string;
+  functionName: string;
+  executionId?: string;
   secrets: Record<string, string>;
   payload?: unknown;
   internalToken?: string;
@@ -29,7 +32,18 @@ function isServeMode(code: string): boolean {
 }
 
 self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
-  const { code, secrets, payload, caller, internalToken, apiBaseUrl } = e.data;
+  const { code, functionName, executionId, secrets, payload, caller, internalToken, apiBaseUrl } = e.data;
+  const logger = createDenoLogger({
+    service: "deno-worker",
+    env: Deno.env.get("DENO_ENV") ?? Deno.env.get("NODE_ENV"),
+    context: {
+      module: "executor",
+      projectId: caller?.projectId,
+      functionName,
+      executionId,
+    },
+  });
+  const startTime = Date.now();
 
   try {
     // 注入 secrets 到环境变量
@@ -37,14 +51,21 @@ self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
       Deno.env.set(key, value);
     }
 
+    logger.debug("executor received execution request", {
+      runtimeMode: isServeMode(code) ? "serve" : "legacy",
+    });
+
     if (isServeMode(code)) {
-      await executeServeMode(code, payload, caller, internalToken, apiBaseUrl);
+      await executeServeMode(code, payload, caller, internalToken, apiBaseUrl, logger);
     } else {
-      await executeLegacyMode(code, payload, caller, internalToken, apiBaseUrl);
+      await executeLegacyMode(code, payload, caller, internalToken, apiBaseUrl, logger);
     }
   } catch (error) {
+    logger.error("executor failed to run function", {
+      durationMs: Date.now() - startTime,
+    }, error);
     const message = error instanceof Error ? error.message : String(error);
-    self.postMessage({ error: message });
+    self.postMessage({ error: message, durationMs: Date.now() - startTime });
   }
 };
 
@@ -56,9 +77,11 @@ async function executeLegacyMode(
   payload: unknown,
   caller?: ExecuteMessage["caller"],
   internalToken?: string,
-  apiBaseUrl?: string
+  apiBaseUrl?: string,
+  logger?: ReturnType<typeof createDenoLogger>
 ) {
-  const context = buildContext(payload, caller, internalToken, apiBaseUrl);
+  const context = buildContext(payload, caller, internalToken, apiBaseUrl, logger);
+  const startTime = Date.now();
 
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
   const wrappedCode = `
@@ -69,7 +92,7 @@ async function executeLegacyMode(
 
   const fn = new AsyncFunction(...Object.keys(context), wrappedCode);
   const result = await fn(...Object.values(context));
-  self.postMessage({ result });
+  self.postMessage({ result, durationMs: Date.now() - startTime });
 }
 
 /**
@@ -81,9 +104,11 @@ async function executeServeMode(
   payload: unknown,
   caller?: ExecuteMessage["caller"],
   internalToken?: string,
-  apiBaseUrl?: string
+  apiBaseUrl?: string,
+  logger?: ReturnType<typeof createDenoLogger>
 ) {
   let capturedHandler: ((req: Request) => Response | Promise<Response>) | null = null;
+  const startTime = Date.now();
 
   // Mock Deno.serve() — 捕获 handler 而非启动真实服务器
   const mockDeno = new Proxy(Deno, {
@@ -102,7 +127,7 @@ async function executeServeMode(
     },
   });
 
-  const context = buildContext(payload, caller, internalToken, apiBaseUrl);
+  const context = buildContext(payload, caller, internalToken, apiBaseUrl, logger);
   context.Deno = mockDeno;
 
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
@@ -138,9 +163,12 @@ async function executeServeMode(
   }
 
   if (response.ok) {
-    self.postMessage({ result });
+    self.postMessage({ result, durationMs: Date.now() - startTime });
   } else {
-    self.postMessage({ error: typeof result === "string" ? result : JSON.stringify(result) });
+    self.postMessage({
+      error: typeof result === "string" ? result : JSON.stringify(result),
+      durationMs: Date.now() - startTime,
+    });
   }
 }
 
@@ -179,7 +207,8 @@ function buildContext(
   payload: unknown,
   caller?: ExecuteMessage["caller"],
   internalToken?: string,
-  apiBaseUrl?: string
+  apiBaseUrl?: string,
+  logger?: ReturnType<typeof createDenoLogger>
 ): Record<string, unknown> {
   const resolvedApiBaseUrl = resolveDruviaApiBaseUrl(
     apiBaseUrl,
@@ -196,7 +225,14 @@ function buildContext(
   return {
     Deno,
     fetch,
-    console,
+    console: createExecutionConsole(logger ?? createDenoLogger({
+      service: "deno-worker",
+      env: Deno.env.get("DENO_ENV") ?? Deno.env.get("NODE_ENV"),
+      context: {
+        module: "function",
+        projectId: caller?.projectId,
+      },
+    })),
     payload,
     caller,
     druvia,

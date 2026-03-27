@@ -1,5 +1,8 @@
 import RedisClient from 'ioredis';
 import { config } from '../config/index.js';
+import { createApiLogger } from './logger.js';
+
+const logger = createApiLogger({ module: 'redis' });
 
 // Create Redis client
 const Redis = RedisClient.default || RedisClient;
@@ -9,11 +12,11 @@ export const redis = new Redis(config.redis.url);
 export async function connectRedis(): Promise<void> {
   return new Promise((resolve, reject) => {
     redis.on('connect', () => {
-      console.log('Redis connected');
+      logger.info('redis connected');
       resolve();
     });
     redis.on('error', (err: Error) => {
-      console.error('Redis connection error:', err);
+      logger.error('redis connection error', undefined, err);
       reject(err);
     });
   });

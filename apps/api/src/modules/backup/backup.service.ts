@@ -3,6 +3,9 @@ import { query, queryOne, pool } from '../../db/index.js';
 import { generateBackupId } from '@druvia/shared';
 import { getDefaultStorageAdapter } from '../../adapters/storage/index.js';
 import { config } from '../../config/index.js';
+import { createApiLogger } from '../../lib/logger.js';
+
+const logger = createApiLogger({ module: 'backup' });
 
 // Backup row type
 interface BackupRow {
@@ -77,7 +80,9 @@ async function runPgDump(schemaName: string): Promise<Buffer> {
     ]);
 
     pgDump.stdout.on('data', (chunk) => chunks.push(chunk));
-    pgDump.stderr.on('data', (data) => console.error(`pg_dump stderr: ${data}`));
+    pgDump.stderr.on('data', (data) => {
+      logger.error('pg_dump stderr', { schemaName }, String(data));
+    });
 
     pgDump.on('close', (code) => {
       if (code === 0) {
@@ -112,7 +117,9 @@ async function runPgRestore(schemaName: string, data: Buffer): Promise<void> {
     pgRestore.stdin.write(data);
     pgRestore.stdin.end();
 
-    pgRestore.stderr.on('data', (data) => console.error(`pg_restore stderr: ${data}`));
+    pgRestore.stderr.on('data', (data) => {
+      logger.error('pg_restore stderr', { schemaName }, String(data));
+    });
 
     pgRestore.on('close', (code) => {
       // pg_restore may return non-zero even on success with warnings
@@ -187,6 +194,7 @@ export async function createBackup(
       );
     } catch (error) {
       const err = error as Error;
+      logger.error('backup execution failed', { tenantId, projectId, schemaName, backupId }, err);
       await pool.query(
         `UPDATE druvia_backups SET status = 'failed', error_message = $1 WHERE backup_id = $2`,
         [err.message, backupId]

@@ -3,6 +3,7 @@ import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/index.js';
 import { checkSchemaAccess } from '../lib/access.js';
+import { mergeApiLogContext } from '../lib/log-context.js';
 import { validateApiKey } from '../modules/api-keys/api-keys.service.js';
 
 export interface PlatformJwtUser {
@@ -35,6 +36,19 @@ export interface ApiKeyIdentity {
 }
 
 export type RequestUser = PlatformJwtUser | ProjectJwtUser | ApiKeyIdentity;
+
+function mergeUserLogContext(user: RequestUser): void {
+  mergeApiLogContext({
+    ...(user.kind === 'platform_user' ? { userId: user.userId } : {}),
+    ...(user.kind === 'project_user'
+      ? {
+          projectId: user.projectId,
+          projectUserId: user.sub,
+        }
+      : {}),
+    ...(user.kind === 'apikey' ? { projectId: user.projectId } : {}),
+  });
+}
 
 export function isJwtUser(user: RequestUser): user is JwtPayload {
   return isPlatformUser(user);
@@ -126,6 +140,7 @@ export async function authenticate(
     const token = authHeader.slice(7);
     try {
       request.user = verifyToken(token);
+      mergeUserLogContext(request.user);
       return;
     } catch {
       return reply.status(401).send({
@@ -141,6 +156,7 @@ export async function authenticate(
     const result = await validateApiKey(apiKey);
     if (result.valid && result.projectId) {
       request.user = { kind: 'apikey', projectId: result.projectId, role: 'anon' };
+      mergeUserLogContext(request.user);
       return;
     }
     return reply.status(401).send({
@@ -166,6 +182,7 @@ export async function optionalAuth(
     const token = authHeader.slice(7);
     try {
       request.user = verifyToken(token);
+      mergeUserLogContext(request.user);
     } catch { /* 忽略 */ }
     return;
   }
@@ -175,6 +192,7 @@ export async function optionalAuth(
     const result = await validateApiKey(apiKey);
     if (result.valid && result.projectId) {
       request.user = { kind: 'apikey', projectId: result.projectId, role: 'anon' };
+      mergeUserLogContext(request.user);
     }
   }
 }

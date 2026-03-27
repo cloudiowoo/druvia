@@ -1,6 +1,9 @@
 import { query, queryOne } from '../../db/index.js';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { signInternalFunctionToken } from './internal-token.js';
+import { createApiLogger } from '../../lib/logger.js';
+
+const logger = createApiLogger({ module: 'functions' });
 
 // Types
 export type FunctionInvokeAuthMode = 'jwt_required' | 'anon_allowed';
@@ -267,6 +270,7 @@ export async function invokeFunction(
       body: JSON.stringify({
         code: func.code,
         functionName: func.name,
+        executionId,
         secrets,
         payload,
         caller,
@@ -308,7 +312,7 @@ export async function invokeFunction(
 // 加密密钥：生产环境必须配置 SECRETS_ENCRYPTION_KEY (64 位十六进制字符串)
 const ENCRYPTION_KEY = process.env.SECRETS_ENCRYPTION_KEY;
 if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
-  console.warn('[Functions] SECRETS_ENCRYPTION_KEY not configured or invalid. Secrets encryption will use a development key.');
+  logger.warn('secrets encryption key not configured or invalid; using development fallback');
 }
 const EFFECTIVE_KEY = ENCRYPTION_KEY && ENCRYPTION_KEY.length === 64 ? ENCRYPTION_KEY : '0'.repeat(64);
 

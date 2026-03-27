@@ -1,6 +1,9 @@
 // Use relative path (empty string) for same-origin requests in production
 // Falls back to localhost:3001 for local development without Docker
+import { createAdminServerLogger } from './server-logger';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
+const serverLogger = createAdminServerLogger({ module: 'api-client' });
 
 interface ApiResponse<T> {
   success: boolean;
@@ -91,6 +94,21 @@ class ApiClient {
     return this.token;
   }
 
+  private isServerRuntime() {
+    return typeof window === 'undefined';
+  }
+
+  private extractLogContext(path: string, method: string, statusCode?: number, errorCode?: string) {
+    return {
+      method,
+      path,
+      ...(statusCode !== undefined ? { statusCode } : {}),
+      ...(errorCode ? { errorCode } : {}),
+      ...(path.match(/\/tenants\/([^/]+)/)?.[1] ? { tenantId: path.match(/\/tenants\/([^/]+)/)?.[1] } : {}),
+      ...(path.match(/\/projects\/([^/]+)/)?.[1] ? { projectId: path.match(/\/projects\/([^/]+)/)?.[1] } : {}),
+    };
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -122,14 +140,36 @@ class ApiClient {
       // Handle non-JSON responses
       const contentType = response.headers.get('content-type');
       if (!contentType?.includes('application/json')) {
+        if (this.isServerRuntime()) {
+          serverLogger.warn(
+            'admin upstream returned non-json response',
+            this.extractLogContext(path, method, response.status)
+          );
+        }
         return {
           success: false,
           error: { code: 'INVALID_RESPONSE', message: 'Invalid server response' },
         };
       }
 
-      return response.json();
+      const result = await response.json() as ApiResponse<T>;
+
+      if (this.isServerRuntime() && !result.success && response.status >= 500) {
+        serverLogger.warn(
+          'admin upstream api request failed',
+          this.extractLogContext(path, method, response.status, result.error?.code)
+        );
+      }
+
+      return result;
     } catch (error) {
+      if (this.isServerRuntime()) {
+        serverLogger.error(
+          'admin upstream api request crashed',
+          this.extractLogContext(path, method),
+          error
+        );
+      }
       // Handle network errors
       return {
         success: false,

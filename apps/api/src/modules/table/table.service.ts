@@ -1,5 +1,8 @@
 import { pool, query, queryOne } from '../../db/index.js';
 import { hasuraMetadataRequest } from '../realtime/realtime.service.js';
+import { createApiLogger } from '../../lib/logger.js';
+
+const logger = createApiLogger({ module: 'table' });
 
 // Column definition
 export interface ColumnDefinition {
@@ -145,7 +148,7 @@ export async function trackTableInHasura(schemaName: string, tableName: string):
     // Ignore if already tracked
     const errorMsg = error instanceof Error ? error.message : String(error);
     if (!errorMsg.includes('already tracked') && !errorMsg.includes('already exists')) {
-      console.warn(`Failed to track table ${schemaName}.${tableName} in Hasura:`, errorMsg);
+      logger.warn('failed to track table in hasura', { schemaName, tableName }, error);
     }
   }
 
@@ -169,7 +172,12 @@ export async function trackTableInHasura(schemaName: string, tableName: string):
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       if (!errorMsg.includes('already exists')) {
-        console.warn(`Failed to create ${op.type} for user on ${schemaName}.${tableName}:`, errorMsg);
+        logger.warn('failed to create user permission in hasura', {
+          schemaName,
+          tableName,
+          operation: op.type,
+          role: 'user',
+        }, error);
       }
     }
   }
@@ -193,7 +201,12 @@ export async function trackTableInHasura(schemaName: string, tableName: string):
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       if (!errorMsg.includes('already exists')) {
-        console.warn(`Failed to create ${op.type} for anonymous on ${schemaName}.${tableName}:`, errorMsg);
+        logger.warn('failed to create anonymous permission in hasura', {
+          schemaName,
+          tableName,
+          operation: op.type,
+          role: 'anonymous',
+        }, error);
       }
     }
   }
@@ -239,7 +252,7 @@ async function untrackTableFromHasura(schemaName: string, tableName: string): Pr
     // Ignore if not tracked
     const errorMsg = error instanceof Error ? error.message : String(error);
     if (!errorMsg.includes('not tracked') && !errorMsg.includes('does not exist')) {
-      console.warn(`Failed to untrack table ${schemaName}.${tableName} from Hasura:`, errorMsg);
+      logger.warn('failed to untrack table from hasura', { schemaName, tableName }, error);
     }
   }
 }
@@ -621,7 +634,10 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
       await trackTableInHasura(schemaName, table.tableName);
       tracked.push(table.tableName);
     } catch (error) {
-      console.error(`Failed to track ${table.tableName}:`, error);
+      logger.error('failed to track table during schema sync', {
+        schemaName,
+        tableName: table.tableName,
+      }, error);
       failed.push(table.tableName);
     }
   }
@@ -648,13 +664,22 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
           if (!errorMsg.includes('does not exist')) {
-            console.warn(`Failed to drop anonymous select_permission on ${schemaName}.${table.tableName}:`, errorMsg);
+            logger.warn('failed to drop anonymous select permission', {
+              schemaName,
+              tableName: table.tableName,
+              role: 'anonymous',
+              operation: 'select',
+            }, error);
           }
         }
       }
     }
   } catch (error) {
-    console.warn('Failed to clean up anonymous select_permissions:', error);
+    logger.warn('failed to clean up anonymous select permissions', {
+      schemaName,
+      role: 'anonymous',
+      operation: 'select',
+    }, error);
   }
 
   // 2. Create relationships based on foreign keys

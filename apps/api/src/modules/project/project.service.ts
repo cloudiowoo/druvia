@@ -7,6 +7,9 @@ import * as environmentService from '../environment/environment.service.js';
 import * as dbCredentialsService from './db-credentials.service.js';
 import { hasuraMetadataRequest } from '../realtime/realtime.service.js';
 import { validateAlias } from '../../lib/validation.js';
+import { createApiLogger } from '../../lib/logger.js';
+
+const logger = createApiLogger({ module: 'project' });
 
 // Database row type (snake_case)
 interface ProjectRow {
@@ -164,7 +167,7 @@ export async function deleteProject(projectId: string): Promise<boolean> {
       await dbCredentialsService.dropProjectDbUser(projectId);
     } catch (error) {
       // 如果用户不存在或删除失败，记录警告但继续删除项目
-      console.warn(`Failed to drop database user for project ${projectId}:`, error);
+      logger.warn('failed to drop project database user', { projectId }, error);
     }
 
     // 5. 删除项目记录（会级联删除 API 密钥和环境记录）
@@ -175,7 +178,7 @@ export async function deleteProject(projectId: string): Promise<boolean> {
 
     return rows.length > 0;
   } catch (error) {
-    console.error(`Failed to delete project ${projectId}:`, error);
+    logger.error('failed to delete project', { projectId }, error);
     throw error;
   }
 }
@@ -203,12 +206,15 @@ async function untrackSchemaTablesFromHasura(schemaName: string): Promise<void> 
         // 忽略表未被追踪的错误
         const errorMsg = error instanceof Error ? error.message : String(error);
         if (!errorMsg.includes('not tracked') && !errorMsg.includes('does not exist')) {
-          console.warn(`Failed to untrack table ${schemaName}.${row.table_name}:`, errorMsg);
+          logger.warn('failed to untrack table from hasura', {
+            schemaName,
+            tableName: row.table_name,
+          }, error);
         }
       }
     }
   } catch (error) {
-    console.warn(`Failed to untrack tables from schema ${schemaName}:`, error);
+    logger.warn('failed to untrack tables from schema', { schemaName }, error);
   }
 }
 

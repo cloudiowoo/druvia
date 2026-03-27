@@ -1,20 +1,24 @@
 // Druvia Edge Functions - Deno Worker Server
 // 提供隔离的函数执行环境
+import { createDenoLogger, getElapsedDurationMs } from "./logging.ts";
 
 interface ExecuteRequest {
   code: string;
   functionName: string;
+  executionId?: string;
   secrets?: Record<string, string>;
   payload?: unknown;
   internalToken?: string;
   apiBaseUrl?: string;
   caller?: {
-    authType: "jwt" | "apikey";
+    authType: "platform_user" | "project_user" | "apikey";
     projectId: string;
     role: string;
     userId?: string;
     uid?: number;
     tenantId?: string;
+    projectUserId?: string;
+    provider?: string;
   };
   timeout?: number;
 }
@@ -23,9 +27,15 @@ interface ExecuteResponse {
   success: boolean;
   data?: unknown;
   error?: { message: string };
+  durationMs?: number;
 }
 
 const PORT = 7133;
+const logger = createDenoLogger({
+  service: "deno-worker",
+  env: Deno.env.get("DENO_ENV") ?? Deno.env.get("NODE_ENV"),
+  context: { module: "runtime" },
+});
 
 Deno.serve({ port: PORT }, async (req: Request): Promise<Response> => {
   // Health check
@@ -45,7 +55,22 @@ Deno.serve({ port: PORT }, async (req: Request): Promise<Response> => {
 
   try {
     const body = await req.json() as ExecuteRequest;
-    const { code, functionName, secrets = {}, payload, caller, internalToken, apiBaseUrl, timeout = 30000 } = body;
+    const {
+      code,
+      functionName,
+      executionId,
+      secrets = {},
+      payload,
+      caller,
+      internalToken,
+      apiBaseUrl,
+      timeout = 30000,
+    } = body;
+    const executionLogger = logger.child({
+      projectId: caller?.projectId,
+      functionName,
+      executionId,
+    });
 
     if (!code) {
       return Response.json({
@@ -54,13 +79,30 @@ Deno.serve({ port: PORT }, async (req: Request): Promise<Response> => {
       }, { status: 400 });
     }
 
-    console.log(`[${new Date().toISOString()}] Executing function: ${functionName}`);
+    executionLogger.info("function execution started");
 
-    const result = await executeFunction(code, secrets, payload, caller, internalToken, apiBaseUrl, timeout);
+    const result = await executeFunction(
+      code,
+      functionName,
+      executionId,
+      secrets,
+      payload,
+      caller,
+      internalToken,
+      apiBaseUrl,
+      timeout,
+    );
+    executionLogger.info(
+      result.success ? "function execution succeeded" : "function execution failed",
+      {
+        durationMs: result.durationMs,
+      },
+      result.success ? undefined : result.error?.message,
+    );
     return Response.json(result);
   } catch (error) {
+    logger.error("worker request failed", undefined, error);
     const message = error instanceof Error ? error.message : "Unknown error";
-    console.error(`[${new Date().toISOString()}] Error:`, message);
     return Response.json({
       success: false,
       error: { message }
@@ -68,10 +110,12 @@ Deno.serve({ port: PORT }, async (req: Request): Promise<Response> => {
   }
 });
 
-console.log(`Druvia Deno Worker listening on port ${PORT}`);
+logger.info("deno worker listening", { port: PORT });
 
 async function executeFunction(
   code: string,
+  functionName: string,
+  executionId: string | undefined,
   secrets: Record<string, string>,
   payload: unknown,
   caller: ExecuteRequest["caller"],
@@ -79,6 +123,12 @@ async function executeFunction(
   apiBaseUrl: string | undefined,
   timeout: number
 ): Promise<ExecuteResponse> {
+  const executionLogger = logger.child({
+    projectId: caller?.projectId,
+    functionName,
+    executionId,
+  });
+  const startedAt = Date.now();
   // 创建隔离的 Worker
   const worker = new Worker(
     new URL("./executor.ts", import.meta.url).href,
@@ -100,9 +150,12 @@ async function executeFunction(
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       worker.terminate();
+      const durationMs = getElapsedDurationMs(startedAt);
+      executionLogger.error("function execution timed out", { durationMs });
       resolve({
         success: false,
-        error: { message: `Function timeout after ${timeout}ms` }
+        error: { message: `Function timeout after ${timeout}ms` },
+        durationMs,
       });
     }, timeout);
 
@@ -111,14 +164,20 @@ async function executeFunction(
       worker.terminate();
 
       if (e.data.error) {
+        executionLogger.error("function worker returned error", undefined, e.data.error);
         resolve({
           success: false,
-          error: { message: e.data.error }
+          error: { message: e.data.error },
+          durationMs: e.data.durationMs,
         });
       } else {
+        executionLogger.debug("function worker returned result", {
+          durationMs: e.data.durationMs,
+        });
         resolve({
           success: true,
-          data: e.data.result
+          data: e.data.result,
+          durationMs: e.data.durationMs,
         });
       }
     };
@@ -126,13 +185,25 @@ async function executeFunction(
     worker.onerror = (e: ErrorEvent) => {
       clearTimeout(timer);
       worker.terminate();
+      const durationMs = getElapsedDurationMs(startedAt);
+      executionLogger.error("function worker crashed", { durationMs }, e.message);
       resolve({
         success: false,
-        error: { message: e.message || "Worker error" }
+        error: { message: e.message || "Worker error" },
+        durationMs,
       });
     };
 
     // 发送执行请求到 Worker
-    worker.postMessage({ code, secrets, payload, caller, internalToken, apiBaseUrl });
+    worker.postMessage({
+      code,
+      functionName,
+      executionId,
+      secrets,
+      payload,
+      caller,
+      internalToken,
+      apiBaseUrl,
+    });
   });
 }

@@ -97,6 +97,10 @@ Codex 项目上下文入口。用于快速建立当前仓库的稳定事实和�
   - 默认 `jwt_required`
   - 仅显式标记 `anon_allowed` 的函数允许同项目匿名 `apikey` 调用
   - Admin 修改该字段前必须先应用 `015_function_invoke_auth_mode` 迁移
+- 平台日志 Phase 1 已开始落地：
+  - 共享结构化日志契约
+  - API / Admin 服务端 / Deno Worker / MCP 输出 stdout-first JSON 日志
+  - Loki / Promtail / Grafana 仍是后续可选部署，不是当前硬依赖
 - Edge Function 终端用户图片上传 Phase 1 已补齐正式内部能力：
   - `/api/internal/functions/storage/upload`
   - 运行时 `druvia.storage.upload()`

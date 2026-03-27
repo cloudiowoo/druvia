@@ -4,6 +4,8 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { pathToFileURL } from 'node:url';
 import { config } from './config/index.js';
+import { mergeApiLogContext } from './lib/log-context.js';
+import { toFastifySerializedError } from './lib/logger.js';
 import authPlugin from './middleware/auth.js';
 import { tenantRoutes } from './modules/tenant/tenant.routes.js';
 import { userRoutes } from './modules/user/user.routes.js';
@@ -43,7 +45,76 @@ export const appCorsOptions: FastifyCorsOptions = {
 
 export function buildApp() {
   const app = Fastify({
-    logger: true,
+    logger: {
+      level: config.nodeEnv === 'development' ? 'debug' : 'info',
+      messageKey: 'msg',
+      base: {
+        service: 'api',
+        env: config.nodeEnv,
+      },
+      timestamp: () => `,"ts":"${new Date().toISOString()}"`,
+      formatters: {
+        level: (label) => ({ level: label }),
+      },
+      serializers: {
+        err: (error) => toFastifySerializedError(error),
+        req: (request) => ({
+          requestId: request.id,
+          method: request.method,
+          url: request.url,
+          remoteAddress: request.ip,
+        }),
+        res: (reply) => ({
+          statusCode: reply.statusCode,
+        }),
+      },
+      redact: {
+        paths: [
+          'req.headers.authorization',
+          'req.headers.apikey',
+          'authorization',
+          'apikey',
+          'password',
+          'refreshToken',
+          'refresh_token',
+          'token',
+        ],
+        remove: true,
+      },
+    },
+  });
+
+  app.addHook('onRequest', async (request) => {
+    mergeApiLogContext({ requestId: request.id });
+  });
+
+  app.addHook('preHandler', async (request) => {
+    const params = (request.params ?? {}) as Record<string, unknown>;
+    const user = request.user;
+
+    mergeApiLogContext({
+      ...(typeof params.tenantId === 'string' ? { tenantId: params.tenantId } : {}),
+      ...(typeof params.projectId === 'string' ? { projectId: params.projectId } : {}),
+      ...(
+        typeof params.schemaName === 'string'
+          ? { schemaName: params.schemaName }
+          : typeof params.schema === 'string'
+            ? { schemaName: params.schema }
+            : {}
+      ),
+      ...(
+        typeof params.tableName === 'string'
+          ? { tableName: params.tableName }
+          : typeof params.table === 'string'
+            ? { tableName: params.table }
+            : {}
+      ),
+      ...(user?.kind === 'platform_user' ? { userId: user.userId } : {}),
+      ...(user?.kind === 'project_user'
+        ? { projectId: user.projectId, projectUserId: user.sub }
+        : {}),
+      ...(user?.kind === 'apikey' ? { projectId: user.projectId } : {}),
+    });
   });
 
   app.register(cors, appCorsOptions);
@@ -91,7 +162,10 @@ async function start() {
   const app = buildApp();
   try {
     await app.listen({ port: config.port, host: config.host });
-    console.log(`Server running at http://${config.host}:${config.port}`);
+    app.log.info(
+      { host: config.host, port: config.port },
+      'server running'
+    );
   } catch (err) {
     app.log.error(err);
     process.exit(1);

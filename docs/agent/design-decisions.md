@@ -62,6 +62,21 @@
 - storage 上传审计先落在 `druvia_storage_objects.metadata` JSONB，而不是立即扩表加独立列。
 - helper 可在运行时内部附带可信 `callerContext`，但这不是函数作者可自定义的公开 helper 参数。
 
+## 平台日志策略
+
+- Phase 1 采用 backend-agnostic 的 stdout-first 模型：
+  - 各服务输出结构化 JSON 日志到 stdout / stderr
+  - 不把集中式日志系统作为默认部署强依赖
+- 共享的是“日志契约”，不是强制一份跨运行时实现：
+  - Node 服务可以复用共享 helper
+  - Deno Worker 允许保持本地实现，只需对齐字段与错误序列化约定
+- API 以 Fastify logger 为锚点，不额外引入重量级日志框架。
+- Deno Worker 日志必须携带可信执行上下文：
+  - `projectId`
+  - `functionName`
+  - `executionId`
+- 平台 Phase 1 只覆盖服务端运行日志，不包含浏览器日志采集。
+
 ## Hasura 同步策略
 
 - `track-all` 与 `reload metadata` 是两类不同操作，不能混用概念：

@@ -13,7 +13,34 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 - SDK 补齐与 Supabase 迁移兼容
 - 权限模型细化，尤其是 API key、Functions、Realtime
 - 项目终端用户 Auth Phase 1 已开始落地，优先解 taro-app 登录后受保护接口链路
+- 平台日志 Phase 1 已开始落地，优先把 API / Deno Worker / MCP 收口到统一结构化 stdout 契约
 - 商业化前置能力仍在规划，但不是当前一线开发焦点
+
+## Platform Logging Phase 1
+
+- 当前正式方向是：
+  - 各服务输出结构化 JSON 到 stdout / stderr
+  - 不把 Loki / Promtail / Grafana 绑定为最小部署前提
+  - 用户可按自身部署规范对接任意日志采集后端
+- 共享日志契约当前最小字段为：
+  - `ts`
+  - `level`
+  - `service`
+  - `msg`
+  - 常用上下文字段如 `module` / `requestId` / `projectId` / `functionName` / `executionId` / `durationMs`
+- Node 侧当前已落地：
+  - `packages/shared/src/logging/*` 提供共享契约与 error serializer
+  - API 使用 Fastify request logger + `apps/api/src/lib/logger.ts`
+  - MCP 目前先用本地 logger helper 对齐同一输出契约
+  - Admin 当前已在 `apps/admin/src/lib/api.ts` 的服务端执行路径接入最小结构化日志
+- Deno Worker 当前策略是：
+  - 采用本地实现 `docker/deno-worker/logging.ts`
+  - `main.ts` 记录 worker 启动、函数执行开始/成功/失败/超时
+  - `executor.ts` 会把函数内 `console.*` 包装成带 `projectId/functionName/executionId` 的结构化日志
+- Phase 1 当前只覆盖服务端运行日志：
+  - 不采集浏览器前端日志
+  - 不默认接入集中式日志后端
+  - 不要求项目函数作者感知平台内部 token 或日志基础设施
 
 ## Project User Auth Phase 1
 
