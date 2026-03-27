@@ -50,6 +50,10 @@
   - Deno Worker 已输出执行级日志，并为函数内 `console.*` 注入统一结构化包装
   - MCP Server 已覆盖启动、鉴权失败、fatal 等关键日志事件
   - Admin 服务端 API wrapper 已覆盖上游 API 失败、无效响应、网络异常等最小结构化日志
+- 平台日志 Phase 2 已补齐官方可选部署示例：
+  - `docker-compose.local.yml` / `docker-compose.prod.yml` 新增 `with-logs` profile
+  - 提供 `Loki + Promtail + Grafana` 最小可用配置
+  - 新增 `docs/platform-logging-guide.md` 说明启动方式、标签约定与查询示例
 - Admin Tables 已补齐 Hasura schema 刷新能力：
   - 新增 `刷新 Hasura Schema` 按钮
   - `addColumn` / `dropColumn` / `renameColumn` 后自动 reload metadata
@@ -63,6 +67,5 @@
 - 继续把旧 Edge Function 登录函数收敛为薄代理或下线
 - 持续把 taro-app 迁移中沉淀出的高价值结论同步到 Codex 项目记忆体系
 - 继续扩展平台日志覆盖面：
-  - Admin 服务端日志
   - 更多 API 模块的 `console.*` 收敛
-  - Phase 2 可选日志部署方案文档
+  - 可选日志栈的 dashboard / 告警模板

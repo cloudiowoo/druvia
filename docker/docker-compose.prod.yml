@@ -145,6 +145,61 @@ services:
     networks:
       - druvia-network
 
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: druvia-loki
+    restart: unless-stopped
+    user: "0"
+    command: ["-config.file=/etc/loki/config.yml"]
+    volumes:
+      - ./loki/config.yml:/etc/loki/config.yml:ro
+      - ./loki_data:/loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    networks:
+      - druvia-network
+    profiles:
+      - with-logs
+
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: druvia-promtail
+    restart: unless-stopped
+    user: "0"
+    depends_on:
+      - loki
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./promtail/config.yml:/etc/promtail/config.yml:ro
+      - ./promtail_data:/tmp/promtail
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - druvia-network
+    profiles:
+      - with-logs
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: druvia-grafana
+    restart: unless-stopped
+    user: "0"
+    depends_on:
+      - loki
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3002}:3000"
+    networks:
+      - druvia-network
+    profiles:
+      - with-logs
+
   # Nginx reverse proxy (optional, for production with SSL)
   nginx:
     image: nginx:alpine

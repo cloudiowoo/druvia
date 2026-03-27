@@ -22,6 +22,10 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - 各服务输出结构化 JSON 到 stdout / stderr
   - 不把 Loki / Promtail / Grafana 绑定为最小部署前提
   - 用户可按自身部署规范对接任意日志采集后端
+- 当前官方可选部署能力已补齐：
+  - `docker-compose.local.yml` / `docker-compose.prod.yml` 均支持 `with-logs` profile
+  - 推荐组合为 `Loki + Promtail + Grafana`
+  - 采集目标覆盖官方 compose 中的 `api/admin/deno/hasura/postgres/redis/nginx`
 - 共享日志契约当前最小字段为：
   - `ts`
   - `level`
@@ -41,6 +45,8 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - 不采集浏览器前端日志
   - 不默认接入集中式日志后端
   - 不要求项目函数作者感知平台内部 token 或日志基础设施
+- Phase 2 使用说明入口：
+  - `docs/platform-logging-guide.md`
 
 ## Project User Auth Phase 1
 

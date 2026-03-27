@@ -74,6 +74,9 @@ Desktop.ini
 docker/postgres_data/
 docker/redis_data/
 docker/deno_cache/
+docker/loki_data/
+docker/promtail_data/
+docker/grafana_data/
 docker/nginx/ssl/
 docker/.env
 !docker/.env.example

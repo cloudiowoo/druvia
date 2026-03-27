@@ -67,6 +67,10 @@
 - Phase 1 采用 backend-agnostic 的 stdout-first 模型：
   - 各服务输出结构化 JSON 日志到 stdout / stderr
   - 不把集中式日志系统作为默认部署强依赖
+- Phase 2 继续采用可选部署策略：
+  - 官方提供 `Loki + Promtail + Grafana` 作为推荐组合
+  - 通过 compose `with-logs` profile 启用
+  - 不改变 Druvia 的最小运行依赖
 - 共享的是“日志契约”，不是强制一份跨运行时实现：
   - Node 服务可以复用共享 helper
   - Deno Worker 允许保持本地实现，只需对齐字段与错误序列化约定

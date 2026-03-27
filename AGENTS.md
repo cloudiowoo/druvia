@@ -101,6 +101,9 @@ Codex 项目上下文入口。用于快速建立当前仓库的稳定事实和�
   - 共享结构化日志契约
   - API / Admin 服务端 / Deno Worker / MCP 输出 stdout-first JSON 日志
   - Loki / Promtail / Grafana 仍是后续可选部署，不是当前硬依赖
+- 平台日志 Phase 2 已补齐可选部署入口：
+  - `docker-compose.local.yml` / `docker-compose.prod.yml` 支持 `with-logs`
+  - 推荐组合是 `Loki + Promtail + Grafana`
 - Edge Function 终端用户图片上传 Phase 1 已补齐正式内部能力：
   - `/api/internal/functions/storage/upload`
   - 运行时 `druvia.storage.upload()`
@@ -148,6 +151,7 @@ Codex 项目上下文入口。用于快速建立当前仓库的稳定事实和�
 - `.codex/rules/project.rules.md`
 - `.codex/rules/docs.rules.md`
 - `.codex/skills/druvia-doc-update/SKILL.md`
+- `docs/platform-logging-guide.md`
 - `.codex/skills/taro-migration-memory/SKILL.md`
 - `.claude/memory/design-decisions.md`
 - `.claude/memory/project-memory.md`
