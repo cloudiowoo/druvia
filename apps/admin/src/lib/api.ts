@@ -83,6 +83,8 @@ export interface ForeignKeyDetail {
 
 export type { EdgeFunction, FunctionSecret, FunctionSchedule, FunctionLog, InvokeResult };
 
+export type TrustedBackendKeyScope = 'project_session:issue' | 'storage_ticket:issue';
+
 class ApiClient {
   private token: string | null = null;
 
@@ -1409,6 +1411,39 @@ class ApiClient {
 
   async deleteApiKey(projectId: string, keyId: number) {
     return this.request<void>('DELETE', `/api/v1/projects/${projectId}/api-keys/${keyId}`);
+  }
+
+  async listTrustedBackendKeys(projectId: string) {
+    return this.request<Array<{
+      id: number;
+      projectId: string;
+      keyPrefix: string;
+      name: string | null;
+      scopes: TrustedBackendKeyScope[];
+      createdBy: string | null;
+      createdAt: string;
+      lastUsedAt: string | null;
+    }>>('GET', `/api/v1/projects/${projectId}/trusted-backend-keys`);
+  }
+
+  async createTrustedBackendKey(projectId: string, data: { name?: string; scopes?: TrustedBackendKeyScope[] }) {
+    return this.request<{
+      key: string;
+      trustedBackendKey: {
+        id: number;
+        projectId: string;
+        keyPrefix: string;
+        name: string | null;
+        scopes: TrustedBackendKeyScope[];
+        createdBy: string | null;
+        createdAt: string;
+        lastUsedAt: string | null;
+      };
+    }>('POST', `/api/v1/projects/${projectId}/trusted-backend-keys`, data);
+  }
+
+  async deleteTrustedBackendKey(projectId: string, keyId: number) {
+    return this.request<void>('DELETE', `/api/v1/projects/${projectId}/trusted-backend-keys/${keyId}`);
   }
 }
 

@@ -59,6 +59,17 @@ export class DruviaProjectAuth {
     return this.authRequest(`/projects/${this.projectId}/auth/${provider}/silent-login`, params)
   }
 
+  async issueTrustedSession(params: {
+    userId: string
+    trustedBackendKey: string
+  }): Promise<DruviaResponse<ProjectSession>> {
+    return this.authRequest(
+      `/projects/${this.projectId}/auth/trusted/issue-session`,
+      { userId: params.userId },
+      { 'x-druvia-trusted-backend-key': params.trustedBackendKey }
+    )
+  }
+
   async refreshSession(params: { refresh_token: string }): Promise<ProjectSessionResponse> {
     try {
       const response = await this.fetchFn(`${this.baseUrl}/projects/${this.projectId}/auth/refresh`, {
@@ -82,8 +93,10 @@ export class DruviaProjectAuth {
 
   async logout(): Promise<DruviaResponse<{ loggedOut: boolean }>> {
     try {
+      const token = await this.getToken()
       const response = await this.fetchFn(`${this.baseUrl}/projects/${this.projectId}/auth/logout`, {
         method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       })
       const json = await response.json()
       if (!response.ok || json.success === false) {
@@ -124,11 +137,15 @@ export class DruviaProjectAuth {
     return { unsubscribe: () => { this.listeners = this.listeners.filter(listener => listener !== callback) } }
   }
 
-  private async authRequest(path: string, body: Record<string, unknown>): Promise<DruviaResponse<ProjectSession>> {
+  private async authRequest(
+    path: string,
+    body: Record<string, unknown>,
+    headers?: Record<string, string>
+  ): Promise<DruviaResponse<ProjectSession>> {
     try {
       const response = await this.fetchFn(`${this.baseUrl}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify(body),
       })
       const json = await response.json()

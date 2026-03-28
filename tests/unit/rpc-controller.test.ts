@@ -70,7 +70,7 @@ describe('RPC Controller', () => {
         projectId: 'proj_123',
         authType: 'project_user' as const,
         role: 'authenticated' as const,
-        provider: 'wechat',
+        provider: 'trusted_backend',
       },
     }
 

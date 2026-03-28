@@ -44,6 +44,13 @@
   - 运行时 `druvia.storage.upload()` / `druvia.storage.remove()`
   - storage 审计信息写入 `druvia_storage_objects.metadata`
   - taro-app 风格上传函数后续可去掉 `DRUVIA_TOKEN`
+- 平台侧已补齐 trusted backend access Phase 1 第一批正式能力：
+  - `trusted backend key` 数据模型与项目级管理 API
+  - trusted project session issuer
+  - trusted storage upload/remove ticket issuer
+  - trusted storage upload/remove consume routes
+  - SDK `projectAuth` / `storage` trusted helper
+  - storage ticket 上传审计写入 `druvia_storage_objects.metadata`
 - 平台日志 Phase 1 已落地第一批基础能力：
   - `packages/shared` 新增结构化日志契约与错误序列化 helper
   - API 首批高价值模块已接入结构化 stdout/stderr
@@ -63,6 +70,8 @@
 
 - 将 taro-app 的 `wx-login-register` / `wx-silent-login` 切换到平台 project auth API
 - 将 taro-app 的 `upload-avatar` / `upload-team-logo` 改为调用 `druvia.storage.upload()`，并在需要新文件名替换时配合 `druvia.storage.remove()`
+- 为 H5 类应用补 Admin UI 里的 trusted backend key 管理入口
+- 继续把 H5 的用户名登录收口到 trusted issuer + project session 主链
 - 评估并规划 GraphQL project-user 能力的下一阶段设计
 - 继续把旧 Edge Function 登录函数收敛为薄代理或下线
 - 持续把 taro-app 迁移中沉淀出的高价值结论同步到 Codex 项目记忆体系

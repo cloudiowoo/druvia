@@ -12,6 +12,10 @@ export async function storageRoutes(app: FastifyInstance) {
 
   // Public bucket download (no authentication, checks bucket.public)
   app.get('/storage/public/:projectId/:bucketName/*', controller.downloadPublic as never);
+  app.post('/storage/upload-with-ticket', controller.uploadWithTicket as never);
+  app.post('/storage/remove-with-ticket', controller.removeWithTicket as never);
+  app.post('/projects/:projectId/storage/trusted/upload-ticket', controller.issueTrustedUploadTicket as never);
+  app.post('/projects/:projectId/storage/trusted/remove-ticket', controller.issueTrustedRemoveTicket as never);
 
   // ============================================
   // Protected routes (authentication required)

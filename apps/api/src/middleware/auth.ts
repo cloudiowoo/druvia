@@ -37,6 +37,11 @@ export interface ApiKeyIdentity {
 
 export type RequestUser = PlatformJwtUser | ProjectJwtUser | ApiKeyIdentity;
 
+type DecodedJwt = {
+  authType?: string;
+  tokenType?: string;
+} & Partial<PlatformJwtUser> & Partial<ProjectJwtUser>;
+
 function mergeUserLogContext(user: RequestUser): void {
   mergeApiLogContext({
     ...(user.kind === 'platform_user' ? { userId: user.userId } : {}),
@@ -75,16 +80,24 @@ declare module 'fastify' {
 
 // 验证 JWT Token
 function verifyToken(token: string): RequestUser {
-  const decoded = jwt.decode(token) as ({ authType?: string } & Partial<PlatformJwtUser> & Partial<ProjectJwtUser>) | null;
+  const decoded = jwt.decode(token) as DecodedJwt | null;
+  if (decoded?.tokenType === 'storage_trusted_ticket') {
+    throw new Error('Storage tickets cannot be used as bearer tokens');
+  }
+
   if (decoded?.authType === 'project_user') {
     return verifyProjectUserToken(token);
   }
 
   const payload = jwt.verify(token, config.jwt.secret) as Partial<PlatformJwtUser>;
+  if (typeof payload.userId !== 'string' || typeof payload.uid !== 'number') {
+    throw new Error('Invalid platform token claims');
+  }
+
   return {
     kind: 'platform_user',
-    userId: payload.userId!,
-    uid: payload.uid!,
+    userId: payload.userId,
+    uid: payload.uid,
     tenantId: payload.tenantId,
     role: payload.role,
     iat: payload.iat,
@@ -117,13 +130,22 @@ export function verifyProjectUserToken(token: string): ProjectJwtUser {
   }
 
   const payload = jwt.verify(token, config.projectAuth.tokenSecret) as Partial<ProjectJwtUser>;
+  if (
+    payload.authType !== 'project_user'
+    || typeof payload.sub !== 'string'
+    || typeof payload.projectId !== 'string'
+    || typeof payload.provider !== 'string'
+  ) {
+    throw new Error('Invalid project user token claims');
+  }
+
   return {
     kind: 'project_user',
-    sub: payload.sub!,
-    projectId: payload.projectId!,
+    sub: payload.sub,
+    projectId: payload.projectId,
     authType: 'project_user',
     role: 'authenticated',
-    provider: payload.provider!,
+    provider: payload.provider,
     iat: payload.iat,
     exp: payload.exp,
   };

@@ -52,7 +52,7 @@ export class DruviaClient {
     if (typeof initialRaw === 'string') {
       try { cachedPlatformToken = JSON.parse(initialRaw).accessToken } catch { /* ignore */ }
     }
-    const initialProjectRaw = storageAdapter.getItem('druvia.project_session')
+    const initialProjectRaw = storageAdapter.getItem(`druvia.project_session:${options.projectId}`)
     if (typeof initialProjectRaw === 'string') {
       try { cachedProjectToken = JSON.parse(initialProjectRaw).accessToken } catch { /* ignore */ }
     }

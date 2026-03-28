@@ -93,3 +93,35 @@ export interface ProjectSessionResponse {
   data: { session: ProjectSession | null }
   error: DruviaError | null
 }
+
+export interface StorageUploadTicket {
+  ticket: string
+  expiresIn: number
+  expiresAt: string
+  payload: {
+    purpose: 'upload'
+    projectId: string
+    projectUserId: string
+    bucket: string
+    pathPrefix: string
+    contentTypes?: string[]
+    maxBytes?: number
+    issuedBy: string
+    issuedVia: 'trusted_storage_ticket'
+  }
+}
+
+export interface StorageRemoveTicket {
+  ticket: string
+  expiresIn: number
+  expiresAt: string
+  payload: {
+    purpose: 'remove'
+    projectId: string
+    projectUserId: string
+    bucket: string
+    path: string
+    issuedBy: string
+    issuedVia: 'trusted_storage_ticket'
+  }
+}

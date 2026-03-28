@@ -22,6 +22,10 @@
 
 - 平台用户认证与项目终端用户认证必须分层，不能继续共用一套 session 签发语义。
 - 项目终端用户 access token / refresh token 由 Druvia API 正式签发，不再由 Edge Function 自造。
+- “已有业务用户 -> 标准 project session”的正式受控补口采用 trusted backend key + trusted issuer：
+  - issuer route 只接受 `x-druvia-trusted-backend-key`
+  - 返回仍是标准 `ProjectSession`
+  - refresh / logout 不再额外扩 fork API 形态
 - Phase 1 复用 `<project schema>.users`，但必须兼容 taro-app 现存 `wx_open_id` 数据形态。
 - `project-auth` 创建项目业务用户时必须尊重 `<project schema>.users.id` 的真实类型：
   - 不能把平台风格 `user_xxx` 字符串强写进 UUID 主键业务表
@@ -45,6 +49,7 @@
   - 允许 platform user
   - 允许同项目 project user
   - 拒绝 anonymous apikey
+- trusted-issued session 的 project-user claim 应继续走同一套 auth 分支，不为 `trusted_backend` 再开特殊鉴权分支。
 - Function Worker caller 上下文不再使用模糊的 `jwt/apikey` 二值模型，应显式区分：
   - `platform_user`
   - `project_user`
@@ -61,6 +66,22 @@
   - 不向项目函数下发 `DRUVIA_TOKEN`、管理 JWT、或其他平台级 storage 写入凭证
 - storage 上传审计先落在 `druvia_storage_objects.metadata` JSONB，而不是立即扩表加独立列。
 - helper 可在运行时内部附带可信 `callerContext`，但这不是函数作者可自定义的公开 helper 参数。
+- 外部应用终端用户上传图片的正式能力采用“双层模型”：
+  - project session 解决统一身份
+  - storage ticket 解决受限文件操作
+- storage ticket 不是 project session 的替代品，而是能力更窄的补充：
+  - 上传票据只允许受限 `pathPrefix`
+  - 删除票据只允许精确 `path`
+  - browser / H5 上传链路不直接持有 trusted backend key
+- storage ticket 必须使用独立于 platform/project JWT 的专用签名 secret：
+  - 不允许回退复用 `PROJECT_AUTH_JWT_SECRET` 或 `JWT_SECRET`
+  - auth 中间件也不应把 storage ticket 识别为正常 Bearer token
+- storage ticket Phase 1 的审计落点仍是：
+  - stdout-first 结构化日志
+  - `druvia_storage_objects.metadata` 中的 `issued_by / issued_via / created_by_*`
+- trusted issuer 签发的 session provider 固定为 `trusted_backend`：
+  - 不复用原始业务用户的 `wechat/oidc/...` provider claim
+  - 这样 Functions/RPC/审计链路才能区分 trusted-issued session 与普通终端登录
 
 ## 平台日志策略
 

@@ -83,10 +83,12 @@ export interface ListObjectsOptions {
 }
 
 export interface StorageUploadAuditContext {
-  createdByType?: 'platform_user' | 'project_user' | 'apikey';
+  createdByType?: 'platform_user' | 'project_user' | 'apikey' | 'trusted_backend_project_user';
   platformUserId?: string;
   projectUserId?: string;
   sourceFunction?: string;
+  issuedBy?: string;
+  issuedVia?: 'trusted_storage_ticket';
 }
 
 // Helper functions
@@ -320,6 +322,12 @@ export async function uploadObject(
       : {}),
     ...(auditContext?.sourceFunction
       ? { source_function: auditContext.sourceFunction }
+      : {}),
+    ...(auditContext?.issuedBy
+      ? { issued_by: auditContext.issuedBy }
+      : {}),
+    ...(auditContext?.issuedVia
+      ? { issued_via: auditContext.issuedVia }
       : {}),
   } satisfies Record<string, unknown>;
   const createdBy = auditContext?.platformUserId ?? null;

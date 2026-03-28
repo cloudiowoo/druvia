@@ -12,15 +12,21 @@ vi.mock('../../apps/api/src/modules/project-auth/project-auth.service.js', () =>
   },
   providerLogin: vi.fn(),
   providerSilentLogin: vi.fn(),
+  issueTrustedProjectSession: vi.fn(),
   wechatLogin: vi.fn(),
   wechatSilentLogin: vi.fn(),
   refreshProjectSession: vi.fn(),
   logoutProjectUser: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/modules/trusted-backend-keys/trusted-backend-keys.service.js', () => ({
+  validateTrustedBackendKey: vi.fn(),
+}))
+
 import * as controller from '../../apps/api/src/modules/project-auth/project-auth.controller.js'
 import {
   ProjectAuthError,
+  issueTrustedProjectSession,
   logoutProjectUser,
   providerLogin,
   providerSilentLogin,
@@ -28,6 +34,7 @@ import {
   wechatLogin,
   wechatSilentLogin,
 } from '../../apps/api/src/modules/project-auth/project-auth.service.js'
+import { validateTrustedBackendKey } from '../../apps/api/src/modules/trusted-backend-keys/trusted-backend-keys.service.js'
 
 type ReplyStub = {
   status: ReturnType<typeof vi.fn>
@@ -184,6 +191,64 @@ describe('Project Auth Controller', () => {
       error: { code: 'FORBIDDEN', message: 'Project user authentication required' },
     })
     expect(logoutProjectUser).not.toHaveBeenCalled()
+  })
+
+  it('issues trusted sessions only for a valid trusted backend key', async () => {
+    vi.mocked(validateTrustedBackendKey).mockResolvedValue({
+      valid: true,
+      projectId: 'proj_123',
+      keyPrefix: 'drutb_1234567890',
+      scopes: ['project_session:issue'],
+    })
+    vi.mocked(issueTrustedProjectSession).mockResolvedValue({
+      token: 'access_token',
+      refreshToken: 'refresh_token',
+      expiresIn: 3600,
+      expiresAt: new Date('2026-03-24T01:00:00Z').toISOString(),
+      user: {
+        id: 'usr_proj_1',
+        email: 'user@example.com',
+        username: 'Alice',
+        avatarUrl: null,
+        role: 'authenticated',
+      },
+    })
+
+    const reply = createReply()
+    const request = {
+      params: { projectId: 'proj_123' },
+      headers: {
+        'x-druvia-trusted-backend-key': 'drutb_secret',
+        'user-agent': 'vitest',
+      },
+      ip: '127.0.0.1',
+      body: { userId: 'usr_proj_1' },
+      log: { info: vi.fn() },
+    }
+
+    await controller.issueTrustedSession(request as never, reply as never)
+
+    expect(validateTrustedBackendKey).toHaveBeenCalledWith('drutb_secret', {
+      requiredScope: 'project_session:issue',
+      requiredProjectId: 'proj_123',
+    })
+    expect(issueTrustedProjectSession).toHaveBeenCalledWith('proj_123', 'usr_proj_1')
+    expect(reply.payload).toEqual({
+      success: true,
+      data: {
+        token: 'access_token',
+        refreshToken: 'refresh_token',
+        expiresIn: 3600,
+        expiresAt: new Date('2026-03-24T01:00:00Z').toISOString(),
+        user: {
+          id: 'usr_proj_1',
+          email: 'user@example.com',
+          username: 'Alice',
+          avatarUrl: null,
+          role: 'authenticated',
+        },
+      },
+    })
   })
 
   it('refreshes and logs out with project user context', async () => {

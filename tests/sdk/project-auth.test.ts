@@ -112,9 +112,48 @@ describe('DruviaProjectAuth', () => {
     expect(result.error).toBeNull()
     expect(fetch).toHaveBeenCalledWith(
       `/api/v1/projects/${projectId}/auth/logout`,
-      expect.objectContaining({ method: 'POST' })
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer project-access-token',
+        },
+      })
     )
     expect(storage.removeItem).toHaveBeenCalledWith(projectSessionKey)
+  })
+
+  it('issues trusted sessions with trusted backend key header', async () => {
+    const fetch = createMockFetch({
+      success: true,
+      data: {
+        token: 'trusted-access-token',
+        refreshToken: 'trusted-refresh-token',
+        expiresIn: 3600,
+        expiresAt: '2026-03-24T03:00:00.000Z',
+        user: { id: 'usr_proj_1', email: 'user@example.com', role: 'authenticated' },
+      },
+    })
+    const storage = createMockStorage()
+    const auth = new DruviaProjectAuth('/api/v1', projectId, fetch, storage)
+
+    const result = await auth.issueTrustedSession({
+      userId: 'usr_proj_1',
+      trustedBackendKey: 'drutb_secret',
+    })
+
+    expect(result.error).toBeNull()
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/v1/projects/${projectId}/auth/trusted/issue-session`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ userId: 'usr_proj_1' }),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-druvia-trusted-backend-key': 'drutb_secret',
+        },
+      })
+    )
+    expect(storage.setItem).toHaveBeenCalledWith(projectSessionKey, expect.any(String))
   })
 
   it('supports generic provider login paths', async () => {

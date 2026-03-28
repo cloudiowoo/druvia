@@ -269,6 +269,7 @@ async function touchProjectUserLastLoginAt(
   userId: string
 ): Promise<ProjectUserRow | null> {
   validateSchemaName(schemaName);
+  const statusCondition = capabilities.hasStatus ? ` AND status = 'active'` : '';
 
   if (!capabilities.hasLastLoginAt) {
     return getProjectUserById(schemaName, capabilities, userId);
@@ -277,7 +278,7 @@ async function touchProjectUserLastLoginAt(
   return queryOne<ProjectUserRow>(
     `UPDATE ${schemaName}.users
      SET last_login_at = NOW()
-     WHERE id = $1
+     WHERE id = $1${statusCondition}
      RETURNING id,
                ${capabilities.hasEmail ? 'email' : 'NULL::text AS email'},
                ${capabilities.hasUsername ? 'username' : 'NULL::text AS username'},
@@ -499,6 +500,26 @@ export async function issueProjectSession(
       role: 'authenticated',
     },
   };
+}
+
+export async function issueTrustedProjectSession(
+  projectId: string,
+  userId: string
+): Promise<ProjectSession> {
+  const { schemaName, authConfig } = await getProjectContext(projectId);
+  const capabilities = await getSchemaCapabilities(schemaName);
+  const user = await touchProjectUserLastLoginAt(schemaName, capabilities, userId);
+
+  if (!user) {
+    throw new ProjectAuthError('USER_NOT_FOUND', 'Project user not found', 404);
+  }
+
+  return issueProjectSession(
+    projectId,
+    toProjectUser(user),
+    'trusted_backend',
+    authConfig
+  );
 }
 
 async function exchangeProviderCode(projectId: string, provider: string, code: string) {

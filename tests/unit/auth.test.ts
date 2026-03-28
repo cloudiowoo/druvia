@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
+  authenticate,
   signToken,
   signProjectUserToken,
   isPlatformUser,
@@ -101,6 +102,42 @@ describe('Auth Middleware', () => {
       expect(isProjectUser(platformUser)).toBe(false);
       expect(isPlatformUser(projectUser)).toBe(false);
       expect(isProjectUser(projectUser)).toBe(true);
+    });
+  });
+
+  describe('authenticate', () => {
+    it('rejects storage ticket style bearer tokens even if they share the JWT secret', async () => {
+      const ticketLikeToken = jwt.sign(
+        {
+          tokenType: 'storage_trusted_ticket',
+          purpose: 'upload',
+          projectId: 'proj_123',
+          projectUserId: 'usr_proj_123',
+          bucket: 'team-assets',
+          pathPrefix: 'user-avatars/',
+          issuedBy: 'drutb_123',
+          issuedVia: 'trusted_storage_ticket',
+        },
+        process.env.JWT_SECRET!
+      );
+
+      const request = {
+        headers: {
+          authorization: `Bearer ${ticketLikeToken}`,
+        },
+      } as Parameters<typeof authenticate>[0];
+      const reply = {
+        status: vi.fn().mockReturnThis(),
+        send: vi.fn().mockReturnThis(),
+      } as unknown as Parameters<typeof authenticate>[1];
+
+      await authenticate(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(401);
+      expect(reply.send).toHaveBeenCalledWith({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' },
+      });
     });
   });
 });

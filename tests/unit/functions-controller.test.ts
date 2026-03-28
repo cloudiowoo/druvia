@@ -134,7 +134,7 @@ describe('Functions Controller', () => {
         projectId: 'proj_123',
         authType: 'project_user' as const,
         role: 'authenticated' as const,
-        provider: 'wechat',
+        provider: 'trusted_backend',
       },
     }
 
@@ -149,7 +149,7 @@ describe('Functions Controller', () => {
         projectId: 'proj_123',
         role: 'authenticated',
         projectUserId: 'usr_proj_123',
-        provider: 'wechat',
+        provider: 'trusted_backend',
       }
     )
     expect(access.checkProjectAccess).not.toHaveBeenCalled()

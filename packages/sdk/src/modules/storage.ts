@@ -1,4 +1,4 @@
-import type { FetchFn, DruviaResponse } from '../types.js'
+import type { FetchFn, DruviaResponse, StorageRemoveTicket, StorageUploadTicket } from '../types.js'
 
 export interface StorageObject {
   objectId: string
@@ -142,5 +142,125 @@ export class DruviaStorage {
 
   from(bucketName: string): BucketClient {
     return new BucketClient(this.baseUrl, this.projectId, bucketName, this.fetchFn)
+  }
+
+  async issueUploadTicket(params: {
+    userId: string
+    bucket: string
+    pathPrefix: string
+    trustedBackendKey: string
+    contentTypes?: string[]
+    maxBytes?: number
+    expiresIn?: number
+  }): Promise<DruviaResponse<StorageUploadTicket>> {
+    try {
+      const response = await this.fetchFn(`${this.baseUrl}/projects/${this.projectId}/storage/trusted/upload-ticket`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-druvia-trusted-backend-key': params.trustedBackendKey,
+        },
+        body: JSON.stringify({
+          userId: params.userId,
+          bucket: params.bucket,
+          pathPrefix: params.pathPrefix,
+          contentTypes: params.contentTypes,
+          maxBytes: params.maxBytes,
+          expiresIn: params.expiresIn,
+        }),
+      })
+      const json = await response.json()
+      if (!response.ok) {
+        return { data: null, error: json.error ?? { code: 'STORAGE_TICKET_ERROR', message: 'Failed to issue upload ticket' } }
+      }
+      return { data: json.data ?? json, error: null }
+    } catch (err) {
+      return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
+    }
+  }
+
+  async issueRemoveTicket(params: {
+    userId: string
+    bucket: string
+    path: string
+    trustedBackendKey: string
+    expiresIn?: number
+  }): Promise<DruviaResponse<StorageRemoveTicket>> {
+    try {
+      const response = await this.fetchFn(`${this.baseUrl}/projects/${this.projectId}/storage/trusted/remove-ticket`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-druvia-trusted-backend-key': params.trustedBackendKey,
+        },
+        body: JSON.stringify({
+          userId: params.userId,
+          bucket: params.bucket,
+          path: params.path,
+          expiresIn: params.expiresIn,
+        }),
+      })
+      const json = await response.json()
+      if (!response.ok) {
+        return { data: null, error: json.error ?? { code: 'STORAGE_TICKET_ERROR', message: 'Failed to issue remove ticket' } }
+      }
+      return { data: json.data ?? json, error: null }
+    } catch (err) {
+      return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
+    }
+  }
+
+  async uploadWithTicket(
+    ticket: string,
+    file: Blob | File | ArrayBuffer,
+    options: { path: string; contentType?: string }
+  ): Promise<DruviaResponse<{ path: string; publicUrl: string | null; object: StorageObject }>> {
+    try {
+      const formData = new FormData()
+      let blob: Blob | File
+      if (file instanceof ArrayBuffer) {
+        blob = new Blob([file], options.contentType ? { type: options.contentType } : undefined)
+      } else if (options.contentType && !(file instanceof File)) {
+        blob = new Blob([file], { type: options.contentType })
+      } else {
+        blob = file
+      }
+      formData.append('file', blob, options.path.split('/').pop() || 'file')
+
+      const response = await this.fetchFn(`${this.baseUrl}/storage/upload-with-ticket?path=${encodeURIComponent(options.path)}`, {
+        method: 'POST',
+        headers: {
+          'x-druvia-storage-ticket': ticket,
+        },
+        body: formData as any,
+      })
+      const json = await response.json()
+      if (!response.ok) {
+        return { data: null, error: json.error ?? { code: 'STORAGE_ERROR', message: 'Upload with ticket failed' } }
+      }
+      return { data: json.data ?? json, error: null }
+    } catch (err) {
+      return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
+    }
+  }
+
+  async removeWithTicket(ticket: string, path: string): Promise<DruviaResponse<{ removed: boolean }>> {
+    try {
+      const response = await this.fetchFn(`${this.baseUrl}/storage/remove-with-ticket`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-druvia-storage-ticket': ticket,
+        },
+        body: JSON.stringify({ path }),
+      })
+      const json = await response.json()
+      if (!response.ok) {
+        return { data: null, error: json.error ?? { code: 'STORAGE_ERROR', message: 'Remove with ticket failed' } }
+      }
+      return { data: json.data ?? json, error: null }
+    } catch (err) {
+      return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
+    }
   }
 }

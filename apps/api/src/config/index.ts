@@ -35,4 +35,8 @@ export const config = {
     tokenSecret: process.env.PROJECT_AUTH_JWT_SECRET || process.env.JWT_SECRET || '',
     defaultAccessTokenTtlSeconds: parseInt(process.env.PROJECT_AUTH_ACCESS_TOKEN_TTL_SECONDS || '3600', 10),
   },
+  storage: {
+    trustedTicketSecret: process.env.STORAGE_TRUSTED_TICKET_SECRET || '',
+    trustedTicketMaxTtlSeconds: parseInt(process.env.STORAGE_TRUSTED_TICKET_MAX_TTL_SECONDS || '900', 10),
+  },
 };

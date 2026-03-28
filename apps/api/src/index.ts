@@ -28,6 +28,7 @@ import { internalFunctionsGraphqlRoutes } from './modules/functions/internal-gra
 import { internalFunctionsStorageRoutes } from './modules/functions/internal-storage.routes.js';
 import { openapiRoutes } from './modules/openapi/openapi.routes.js';
 import { apiKeysRoutes } from './modules/api-keys/api-keys.routes.js';
+import { trustedBackendKeysRoutes } from './modules/trusted-backend-keys/trusted-backend-keys.routes.js';
 import { environmentRoutes } from './modules/environment/environment.routes.js';
 import { rpcRoutes } from './modules/rpc/rpc.routes.js';
 
@@ -40,7 +41,7 @@ export const appCorsOptions: FastifyCorsOptions = {
         : false,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'apikey'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-druvia-storage-ticket', 'x-druvia-trusted-backend-key'],
 };
 
 export function buildApp() {
@@ -152,6 +153,7 @@ export function buildApp() {
   app.register(internalFunctionsStorageRoutes, { prefix: '/api' });
   app.register(openapiRoutes, { prefix: '/api/v1' });
   app.register(apiKeysRoutes, { prefix: '/api/v1' });
+  app.register(trustedBackendKeysRoutes, { prefix: '/api/v1' });
   app.register(environmentRoutes, { prefix: '/api/v1' });
   app.register(rpcRoutes, { prefix: '/api/v1' });
 

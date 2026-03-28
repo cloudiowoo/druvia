@@ -27,8 +27,10 @@ import {
   getProviderSecret,
 } from '../../apps/api/src/modules/auth-admin/auth-admin.service.js'
 import { createAuthAdapter } from '../../apps/api/src/adapters/auth/index.js'
+import { verifyProjectUserToken } from '../../apps/api/src/middleware/auth.js'
 import {
   ProjectAuthError,
+  issueTrustedProjectSession,
   providerLogin,
   providerSilentLogin,
   refreshProjectSession,
@@ -430,6 +432,94 @@ describe('Project Auth Service', () => {
     expect(mockQueryOne).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE druvia_project_refresh_tokens'),
       expect.arrayContaining(['proj_123'])
+    )
+  })
+
+  it('issues a trusted session for an existing project user id', async () => {
+    mockQuery.mockImplementation(async (sql) => {
+      if (sql.includes('information_schema.columns')) {
+        return [
+          { column_name: 'id' },
+          { column_name: 'email' },
+          { column_name: 'username' },
+          { column_name: 'avatar_url' },
+          { column_name: 'provider' },
+          { column_name: 'provider_id' },
+          { column_name: 'status' },
+          { column_name: 'last_login_at' },
+          { column_name: 'created_at' },
+        ]
+      }
+      return []
+    })
+
+    mockQueryOne.mockResolvedValueOnce({
+      id: 'usr_existing_issuer',
+      email: 'issuer@example.com',
+      username: 'Issuer User',
+      avatar_url: null,
+      provider: 'wechat',
+      provider_id: 'openid_issuer',
+      status: 'active',
+      last_login_at: new Date('2026-03-24T01:00:00Z'),
+      created_at: new Date('2026-03-24T00:00:00Z'),
+    })
+
+    const session = await issueTrustedProjectSession('proj_123', 'usr_existing_issuer')
+
+    expect(session.user.id).toBe('usr_existing_issuer')
+    expect(session.token).toBeTypeOf('string')
+    expect(session.refreshToken).toBeTypeOf('string')
+    expect(verifyProjectUserToken(session.token).provider).toBe('trusted_backend')
+    expect(mockQueryOne).toHaveBeenCalledWith(
+      expect.stringContaining(`WHERE id = $1 AND status = 'active'`),
+      ['usr_existing_issuer']
+    )
+  })
+
+  it('rejects trusted issuer requests for unknown project users', async () => {
+    mockQuery.mockImplementation(async (sql) => {
+      if (sql.includes('information_schema.columns')) {
+        return [
+          { column_name: 'id' },
+          { column_name: 'status' },
+          { column_name: 'last_login_at' },
+        ]
+      }
+      return []
+    })
+    mockQueryOne.mockResolvedValueOnce(null)
+
+    await expect(
+      issueTrustedProjectSession('proj_123', 'usr_missing')
+    ).rejects.toMatchObject<ProjectAuthError>({
+      code: 'USER_NOT_FOUND',
+      statusCode: 404,
+    })
+  })
+
+  it('rejects trusted issuer requests for disabled project users', async () => {
+    mockQuery.mockImplementation(async (sql) => {
+      if (sql.includes('information_schema.columns')) {
+        return [
+          { column_name: 'id' },
+          { column_name: 'status' },
+          { column_name: 'last_login_at' },
+        ]
+      }
+      return []
+    })
+    mockQueryOne.mockResolvedValueOnce(null)
+
+    await expect(
+      issueTrustedProjectSession('proj_123', 'usr_disabled')
+    ).rejects.toMatchObject<ProjectAuthError>({
+      code: 'USER_NOT_FOUND',
+      statusCode: 404,
+    })
+    expect(mockQueryOne).toHaveBeenCalledWith(
+      expect.stringContaining(`WHERE id = $1 AND status = 'active'`),
+      ['usr_disabled']
     )
   })
 

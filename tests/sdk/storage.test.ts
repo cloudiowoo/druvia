@@ -30,7 +30,7 @@ describe('DruviaStorage', () => {
     const storage = new DruviaStorage('/api/v1', projectId, fetch)
     const result = await storage.from('team-assets').upload('avatar.png', new Blob(['img']))
     expect(fetch).toHaveBeenCalledWith(
-      `/api/v1/projects/${projectId}/storage/buckets/team-assets/objects/avatar.png`,
+      `/api/v1/projects/${projectId}/storage/buckets/team-assets/objects?path=avatar.png`,
       expect.objectContaining({ method: 'POST' })
     )
     expect(result.error).toBeNull()
@@ -64,5 +64,100 @@ describe('DruviaStorage', () => {
       expect.objectContaining({ method: 'POST' })
     )
     expect(result.data?.signedUrl).toBeTruthy()
+  })
+
+  it('issueUploadTicket sends trusted backend key header', async () => {
+    const fetch = createMockFetch({
+      success: true,
+      data: {
+        ticket: 'upload-ticket',
+        expiresIn: 300,
+        expiresAt: '2026-03-28T12:00:00.000Z',
+        payload: {
+          purpose: 'upload',
+          projectId,
+          projectUserId: 'usr_proj_1',
+          bucket: 'team-assets',
+          pathPrefix: 'user-avatars/',
+          issuedBy: 'drutb_123',
+          issuedVia: 'trusted_storage_ticket',
+        },
+      },
+    })
+    const storage = new DruviaStorage('/api/v1', projectId, fetch)
+
+    const result = await storage.issueUploadTicket({
+      userId: 'usr_proj_1',
+      bucket: 'team-assets',
+      pathPrefix: 'user-avatars/',
+      trustedBackendKey: 'drutb_secret',
+    })
+
+    expect(result.error).toBeNull()
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/v1/projects/${projectId}/storage/trusted/upload-ticket`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-druvia-trusted-backend-key': 'drutb_secret',
+        },
+      })
+    )
+  })
+
+  it('uploadWithTicket sends storage ticket header', async () => {
+    const fetch = createMockFetch({
+      success: true,
+      data: {
+        path: 'user-avatars/avatar.png',
+        publicUrl: 'http://localhost:3001/api/v1/storage/public/proj_123/team-assets/user-avatars/avatar.png',
+        object: {
+          objectId: 'obj_123',
+          bucketId: 'bucket_123',
+          name: 'user-avatars/avatar.png',
+          size: 3,
+          mimeType: 'image/png',
+          createdAt: '2026-03-28T12:00:00.000Z',
+        },
+      },
+    })
+    const storage = new DruviaStorage('/api/v1', projectId, fetch)
+
+    const result = await storage.uploadWithTicket('storage-ticket', new Blob(['img']), {
+      path: 'user-avatars/avatar.png',
+      contentType: 'image/png',
+    })
+
+    expect(result.error).toBeNull()
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/v1/storage/upload-with-ticket?path=user-avatars%2Favatar.png`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          'x-druvia-storage-ticket': 'storage-ticket',
+        },
+      })
+    )
+  })
+
+  it('removeWithTicket sends storage ticket header', async () => {
+    const fetch = createMockFetch({ success: true, data: { removed: true } })
+    const storage = new DruviaStorage('/api/v1', projectId, fetch)
+
+    const result = await storage.removeWithTicket('storage-ticket', 'user-avatars/avatar.png')
+
+    expect(result.error).toBeNull()
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/v1/storage/remove-with-ticket`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-druvia-storage-ticket': 'storage-ticket',
+        },
+        body: JSON.stringify({ path: 'user-avatars/avatar.png' }),
+      })
+    )
   })
 })

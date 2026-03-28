@@ -205,6 +205,30 @@ describe('StorageService Integration', () => {
       expect(content.toString()).toBe('version 2');
     });
 
+    it('should persist trusted storage ticket audit metadata on upload', async () => {
+      await storageService.uploadObject(
+        testBucket,
+        'user-avatars/user-1.png',
+        Buffer.from('ticket upload'),
+        'image/png',
+        {
+          createdByType: 'trusted_backend_project_user',
+          projectUserId: 'usr_proj_1',
+          issuedBy: 'drutb_123',
+          issuedVia: 'trusted_storage_ticket',
+        }
+      );
+
+      const object = await storageService.getObject(testBucket.bucketId, 'user-avatars/user-1.png');
+      expect(object?.metadata).toMatchObject({
+        created_by_type: 'trusted_backend_project_user',
+        created_by_project_user_id: 'usr_proj_1',
+        issued_by: 'drutb_123',
+        issued_via: 'trusted_storage_ticket',
+      });
+      expect(object?.metadata.created_by_platform_user_id).toBeUndefined();
+    });
+
     it('should list objects', async () => {
       await storageService.uploadObject(testBucket, 'file1.txt', Buffer.from('1'), 'text/plain');
       await storageService.uploadObject(testBucket, 'file2.txt', Buffer.from('2'), 'text/plain');

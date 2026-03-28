@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS idx_trusted_backend_keys_project_key_prefix;
+DROP INDEX IF EXISTS idx_trusted_backend_keys_project_created_at;
+DROP TABLE IF EXISTS druvia_trusted_backend_keys;

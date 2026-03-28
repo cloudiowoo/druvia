@@ -98,6 +98,19 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   2. platform session token
 - `database/graphql` 与 `storage` 仍保持平台 token 路径，不自动切到 project token。
 - 新迁入应用应优先调用平台 project auth API，而不是继续依赖 Edge Function 自造 session。
+- `projectAuth.logout()` 现在必须显式带当前 project session Bearer token。
+- `trusted issue-session` 已落地：
+  - 路由为 `POST /api/v1/projects/:projectId/auth/trusted/issue-session`
+  - 只接受 `x-druvia-trusted-backend-key`
+  - 需要 scope `project_session:issue`
+  - 返回仍是标准 `ProjectSession`
+- trusted-issued session 不引入第二套生命周期：
+  - 继续复用现有 `/auth/refresh`
+  - 继续复用现有 `/auth/logout`
+  - 继续被同项目 `Functions jwt_required` / `RPC` 接受
+- trusted-issued session 的 token claim 中：
+  - `provider` 固定为 `trusted_backend`
+  - 不沿用已有业务用户的 `wechat/oidc/...` provider
 
 ## GraphQL 限流配置近期事实
 
@@ -166,6 +179,45 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - `created_by_project_user_id`
   - `source_function`
 - 同路径重传时，storage metadata 中的上述审计字段也必须刷新，不能沿用旧调用者信息。
+
+## Trusted Backend Access 近期事实
+
+- 新增了项目级 `trusted backend key` 模型，与匿名 `apikey` 分离：
+  - 管理路由为 `/api/v1/projects/:projectId/trusted-backend-keys`
+  - key prefix 为 `drutb_`
+  - 当前 scope：
+    - `project_session:issue`
+    - `storage_ticket:issue`
+- `trusted backend key` 的正式用途是服务端受控签发，不用于浏览器直连或匿名公开访问。
+- H5 类外部应用当前推荐双层模型：
+  - 身份统一优先走 trusted session issuer
+  - 上传图片优先走 trusted storage ticket
+- storage trusted ticket Phase 1 已落地：
+  - issuer routes:
+    - `POST /api/v1/projects/:projectId/storage/trusted/upload-ticket`
+    - `POST /api/v1/projects/:projectId/storage/trusted/remove-ticket`
+  - consume routes:
+    - `POST /api/v1/storage/upload-with-ticket`
+    - `POST /api/v1/storage/remove-with-ticket`
+  - consume route 只信任 ticket 内的 `projectId / projectUserId / bucket / pathPrefix|path`
+- trusted storage ticket 当前约束：
+  - issuer 鉴权只接受 `x-druvia-trusted-backend-key`
+  - consume 鉴权只接受 `x-druvia-storage-ticket`
+  - 上传 ticket 约束 `pathPrefix / contentTypes / maxBytes / exp`
+  - 删除 ticket 约束精确 `path`
+  - ticket 签名 secret 必须使用专用 `STORAGE_TRUSTED_TICKET_SECRET`
+  - 不能回退复用 platform/project JWT secret
+- trusted storage ticket 上传会把以下审计字段写入 `druvia_storage_objects.metadata`：
+  - `created_by_type = trusted_backend_project_user`
+  - `created_by_project_user_id`
+  - `issued_by`
+  - `issued_via = trusted_storage_ticket`
+- SDK 已补 trusted helper：
+  - `client.projectAuth.issueTrustedSession(...)`
+  - `client.storage.issueUploadTicket(...)`
+  - `client.storage.issueRemoveTicket(...)`
+  - `client.storage.uploadWithTicket(...)`
+  - `client.storage.removeWithTicket(...)`
 
 ## 管理端与迁移注意事项
 

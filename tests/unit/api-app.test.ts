@@ -18,6 +18,8 @@ import { getApiLogContext } from '../../apps/api/src/lib/log-context.js'
 describe('API app CORS', () => {
   it('includes the apikey header in the allowed CORS headers', () => {
     expect(appCorsOptions.allowedHeaders).toContain('apikey')
+    expect(appCorsOptions.allowedHeaders).toContain('x-druvia-storage-ticket')
+    expect(appCorsOptions.allowedHeaders).toContain('x-druvia-trusted-backend-key')
   })
 })
 
@@ -54,6 +56,38 @@ describe('API app internal functions route', () => {
       })
 
       expect(response.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('API app storage trusted access routes', () => {
+  it('registers trusted storage issuer and consume routes', async () => {
+    const app = buildApp()
+
+    try {
+      const uploadTicketResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/proj_123/storage/trusted/upload-ticket',
+        payload: {},
+      })
+
+      const uploadWithTicketResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/storage/upload-with-ticket',
+        payload: {},
+      })
+
+      const removeWithTicketResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/storage/remove-with-ticket',
+        payload: {},
+      })
+
+      expect(uploadTicketResponse.statusCode).toBe(401)
+      expect(uploadWithTicketResponse.statusCode).toBe(401)
+      expect(removeWithTicketResponse.statusCode).toBe(401)
     } finally {
       await app.close()
     }
@@ -100,6 +134,12 @@ describe('API app project auth routes', () => {
         payload: {},
       })
 
+      const trustedIssueResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/proj_123/auth/trusted/issue-session',
+        payload: {},
+      })
+
       const logoutResponse = await app.inject({
         method: 'POST',
         url: '/api/v1/projects/proj_123/auth/logout',
@@ -108,7 +148,38 @@ describe('API app project auth routes', () => {
       expect(loginResponse.statusCode).toBe(400)
       expect(refreshResponse.statusCode).toBe(400)
       expect(providerLoginResponse.statusCode).toBe(400)
+      expect(trustedIssueResponse.statusCode).toBe(401)
       expect(logoutResponse.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('API app trusted backend key routes', () => {
+  it('registers trusted backend key management routes', async () => {
+    const app = buildApp()
+
+    try {
+      const listResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/projects/proj_123/trusted-backend-keys',
+      })
+
+      const createResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/proj_123/trusted-backend-keys',
+        payload: { name: 'H5 Backend', scopes: ['project_session:issue'] },
+      })
+
+      const deleteResponse = await app.inject({
+        method: 'DELETE',
+        url: '/api/v1/projects/proj_123/trusted-backend-keys/1',
+      })
+
+      expect(listResponse.statusCode).toBe(401)
+      expect(createResponse.statusCode).toBe(401)
+      expect(deleteResponse.statusCode).toBe(401)
     } finally {
       await app.close()
     }
