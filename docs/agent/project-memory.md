@@ -87,6 +87,10 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - `Functions jwt_required` 已接受同项目 `project_user`
   - `RPC` 已接受同项目 `project_user`
   - GraphQL project-user 能力仍不在本阶段内
+- `RPC` 签名解析已补齐 `RETURNS TABLE / OUT` 兼容：
+  - 不能按 `proargnames` 全量补参数
+  - 需要基于 `proallargtypes + proargmodes + proargnames` 只保留输入参数 `i / b / v`
+  - 否则像 `batch_insert_score_events`、`calculate_all_season_aggregations` 这类函数会把输出列误当入参
 
 ## SDK Project Auth 近期事实
 

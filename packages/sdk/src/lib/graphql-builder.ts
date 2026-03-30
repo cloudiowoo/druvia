@@ -65,11 +65,17 @@ export function escapeGraphQLString(str: string): string {
   return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r')
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Object.prototype.toString.call(value) === '[object Object]'
+}
+
 function serializeValue(value: unknown): string {
   if (typeof value === 'string') return `"${escapeGraphQLString(value)}"`
   if (Array.isArray(value)) return `[${value.map(serializeValue).join(', ')}]`
   if (value === null) return 'null'
   if (typeof value === 'boolean') return String(value)
+  if (value instanceof Date) return `"${value.toISOString()}"`
+  if (isPlainObject(value)) return serializeObject(value)
   return String(value)
 }
 
@@ -129,28 +135,23 @@ export function buildQuery(state: QueryState): string {
 
 export interface MutationInsertOpts {
   objects: Record<string, unknown>[]
-  returning: string
+  returning?: string
   onConflict?: string
 }
 
 export interface MutationUpdateOpts {
   set: Record<string, unknown>
   where: Record<string, unknown>
-  returning: string
+  returning?: string
 }
 
 export interface MutationDeleteOpts {
   where: Record<string, unknown>
-  returning: string
+  returning?: string
 }
 
 function serializeObject(obj: Record<string, unknown>): string {
-  const entries = Object.entries(obj).map(([k, v]) => {
-    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-      return `${k}: {${Object.entries(v as Record<string, unknown>).map(([k2, v2]) => `${k2}: ${serializeValue(v2)}`).join(', ')}}`
-    }
-    return `${k}: ${serializeValue(v)}`
-  })
+  const entries = Object.entries(obj).map(([k, v]) => `${k}: ${serializeValue(v)}`)
   return `{${entries.join(', ')}}`
 }
 
@@ -159,7 +160,11 @@ export function buildMutation(
   type: 'insert' | 'update' | 'delete',
   opts: MutationInsertOpts | MutationUpdateOpts | MutationDeleteOpts,
 ): string {
-  const returning = 'returning' in opts ? parseSelectFields(opts.returning) : 'affected_rows'
+  const selection = opts.returning
+    ? `returning {
+    ${parseSelectFields(opts.returning)}
+  }`
+    : 'affected_rows'
 
   if (type === 'insert') {
     const { objects, onConflict } = opts as MutationInsertOpts
@@ -167,7 +172,7 @@ export function buildMutation(
     const conflictStr = onConflict ?? ''
     return `mutation {
   insert_${table}(objects: [${objectsStr}]${conflictStr}) {
-    ${returning}
+    ${selection}
   }
 }`
   }
@@ -178,7 +183,7 @@ export function buildMutation(
     const whereStr = serializeObject(where)
     return `mutation {
   update_${table}(where: ${whereStr}, _set: {${setStr}}) {
-    ${returning}
+    ${selection}
   }
 }`
   }
@@ -188,7 +193,7 @@ export function buildMutation(
   const whereStr = serializeObject(where)
   return `mutation {
   delete_${table}(where: ${whereStr}) {
-    ${returning}
+    ${selection}
   }
 }`
 }

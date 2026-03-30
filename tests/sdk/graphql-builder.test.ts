@@ -68,6 +68,7 @@ describe('buildMutation', () => {
     })
     expect(gql).toContain('mutation')
     expect(gql).toContain('insert_users')
+    expect(gql).toContain('returning')
     expect(gql).toContain('username')
   })
 
@@ -80,6 +81,7 @@ describe('buildMutation', () => {
     expect(gql).toContain('update_users')
     expect(gql).toContain('_set')
     expect(gql).toContain('where')
+    expect(gql).toContain('returning')
   })
 
   it('builds delete mutation with where', () => {
@@ -89,5 +91,59 @@ describe('buildMutation', () => {
     })
     expect(gql).toContain('delete_users')
     expect(gql).toContain('where')
+    expect(gql).toContain('returning')
+  })
+
+  it('falls back to affected_rows when no returning selection is provided', () => {
+    const gql = buildMutation('users', 'delete', {
+      where: { id: { _eq: 1 } },
+    })
+
+    expect(gql).toContain('delete_users')
+    expect(gql).toContain('affected_rows')
+    expect(gql).not.toContain('returning {')
+  })
+
+  it('serializes nested JSON objects in insert payloads', () => {
+    const gql = buildMutation('stats_match_result', 'insert', {
+      objects: [{
+        match_id: 'm1',
+        meta: {
+          activity_title: '第 12 轮',
+          snapshot: {
+            teams: [
+              { team_id: 't1', team_name: 'A 队' },
+              { team_id: 't2', team_name: 'B 队' },
+            ],
+          },
+          snapshot_hash: 'abc',
+        },
+      }],
+    })
+
+    expect(gql).toContain('insert_stats_match_result')
+    expect(gql).toContain('meta: {')
+    expect(gql).toContain('snapshot: {')
+    expect(gql).toContain('teams: [{team_id: "t1", team_name: "A 队"}, {team_id: "t2", team_name: "B 队"}]')
+    expect(gql).not.toContain('[object Object]')
+  })
+
+  it('serializes nested JSON objects in update payloads', () => {
+    const gql = buildMutation('stats_match_result', 'update', {
+      set: {
+        meta: {
+          snapshot: {
+            teams: [{ team_id: 't1', team_name: 'A 队' }],
+          },
+          snapshot_hash: 'abc',
+        },
+      },
+      where: { match_id: { _eq: 'm1' } },
+      returning: 'match_id',
+    })
+
+    expect(gql).toContain('update_stats_match_result')
+    expect(gql).toContain('_set: {meta: {snapshot: {teams: [{team_id: "t1", team_name: "A 队"}]}, snapshot_hash: "abc"}}')
+    expect(gql).not.toContain('[object Object]')
   })
 })

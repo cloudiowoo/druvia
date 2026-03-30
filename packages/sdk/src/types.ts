@@ -40,6 +40,10 @@ export interface DruviaError {
   message: string
 }
 
+export interface MutationAffectedRows {
+  affected_rows: number
+}
+
 /** Auth token pair */
 export interface Session {
   accessToken: string

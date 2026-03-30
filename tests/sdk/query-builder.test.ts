@@ -63,48 +63,146 @@ describe('QueryBuilder', () => {
   })
 
   it('insert sends mutation', async () => {
-    const fetch = mockFetch({ data: { insert_users: { returning: [{ id: 1 }] } } })
+    const fetch = mockFetch({ data: { insert_users: { affected_rows: 1 } } })
     const qb = new QueryBuilder('users', '/graphql', fetch)
     const result = await qb.insert({ username: 'test', user_id: 'u1' })
 
     const body = JSON.parse((fetch as any).mock.calls[0][1].body)
     expect(body.query).toContain('insert_users')
+    expect(body.query).toContain('affected_rows')
+    expect(body.query).not.toContain('returning {')
+    expect(result.data).toEqual({ affected_rows: 1 })
   })
 
   it('update sends mutation with where', async () => {
-    const fetch = mockFetch({ data: { update_users: { returning: [{ id: 1 }] } } })
+    const fetch = mockFetch({ data: { update_users: { affected_rows: 1 } } })
     const qb = new QueryBuilder('users', '/graphql', fetch)
     const result = await qb.update({ username: 'new' }).eq('id', 1)
 
     const body = JSON.parse((fetch as any).mock.calls[0][1].body)
     expect(body.query).toContain('update_users')
     expect(body.query).toContain('_set')
+    expect(body.query).toContain('affected_rows')
+    expect(result.data).toEqual({ affected_rows: 1 })
   })
 
   it('delete sends mutation with where', async () => {
-    const fetch = mockFetch({ data: { delete_users: { returning: [{ id: 1 }] } } })
+    const fetch = mockFetch({ data: { delete_users: { affected_rows: 1 } } })
     const qb = new QueryBuilder('users', '/graphql', fetch)
     const result = await qb.delete().eq('id', 1)
 
     const body = JSON.parse((fetch as any).mock.calls[0][1].body)
     expect(body.query).toContain('delete_users')
+    expect(body.query).toContain('affected_rows')
+    expect(result.data).toEqual({ affected_rows: 1 })
   })
 
   it('upsert sends insert mutation with on_conflict', async () => {
-    const fetch = mockFetch({ data: { insert_users: { returning: [{ id: 1 }] } } })
+    const fetch = mockFetch({ data: { insert_users: { affected_rows: 1 } } })
     const qb = new QueryBuilder('users', '/graphql', fetch)
     const result = await qb.upsert({ id: 1, username: 'test' })
 
     const body = JSON.parse((fetch as any).mock.calls[0][1].body)
     expect(body.query).toContain('insert_users')
     expect(body.query).toContain('on_conflict')
+    expect(body.query).toContain('affected_rows')
+    expect(result.data).toEqual({ affected_rows: 1 })
+  })
+
+  it('supports insert().select() with Hasura returning wrapper', async () => {
+    const fetch = mockFetch({ data: { insert_match_results: { returning: [{ match_id: 'm1' }] } } })
+    const qb = new QueryBuilder('match_results', '/graphql', fetch)
+    const result = await qb.insert({ match_id: 'm1' }).select('match_id')
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('insert_match_results')
+    expect(body.query).toContain('returning {')
+    expect(body.query).toContain('match_id')
+    expect(result.data).toEqual([{ match_id: 'm1' }])
+  })
+
+  it('supports select().insert() with Hasura returning wrapper', async () => {
+    const fetch = mockFetch({ data: { insert_match_results: { returning: [{ match_id: 'm1' }] } } })
+    const qb = new QueryBuilder('match_results', '/graphql', fetch)
+    const result = await qb.select('match_id').insert({ match_id: 'm1' })
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('insert_match_results')
+    expect(body.query).toContain('returning {')
+    expect(body.query).toContain('match_id')
+    expect(result.data).toEqual([{ match_id: 'm1' }])
+  })
+
+  it('supports update().select() with Hasura returning wrapper', async () => {
+    const fetch = mockFetch({ data: { update_match_results: { returning: [{ match_id: 'm1' }] } } })
+    const qb = new QueryBuilder('match_results', '/graphql', fetch)
+    const result = await qb.update({ status: 'done' }).eq('match_id', 'm1').select('match_id')
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('update_match_results')
+    expect(body.query).toContain('returning {')
+    expect(body.query).toContain('match_id')
+    expect(result.data).toEqual([{ match_id: 'm1' }])
+  })
+
+  it('supports delete().select() with Hasura returning wrapper', async () => {
+    const fetch = mockFetch({ data: { delete_match_results: { returning: [{ match_id: 'm1' }] } } })
+    const qb = new QueryBuilder('match_results', '/graphql', fetch)
+    const result = await qb.delete().eq('match_id', 'm1').select('match_id')
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('delete_match_results')
+    expect(body.query).toContain('returning {')
+    expect(body.query).toContain('match_id')
+    expect(result.data).toEqual([{ match_id: 'm1' }])
+  })
+
+  it('supports upsert().select() with Hasura returning wrapper', async () => {
+    const fetch = mockFetch({ data: { insert_match_results: { returning: [{ match_id: 'm1' }] } } })
+    const qb = new QueryBuilder('match_results', '/graphql', fetch)
+    const result = await qb.upsert({ match_id: 'm1', status: 'done' }, { onConflict: 'match_results_pkey' }).select('match_id')
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('insert_match_results')
+    expect(body.query).toContain('on_conflict')
+    expect(body.query).toContain('returning {')
+    expect(body.query).toContain('match_id')
+    expect(result.data).toEqual([{ match_id: 'm1' }])
+  })
+
+  it('serializes nested JSON objects in insert payloads', async () => {
+    const fetch = mockFetch({ data: { insert_stats_match_result: { affected_rows: 1 } } })
+    const qb = new QueryBuilder('stats_match_result', '/graphql', fetch)
+
+    await qb.insert({
+      match_id: 'm1',
+      meta: {
+        snapshot: {
+          teams: [{ team_id: 't1', team_name: 'A 队' }],
+        },
+        snapshot_hash: 'abc',
+      },
+    })
+
+    const body = JSON.parse((fetch as any).mock.calls[0][1].body)
+    expect(body.query).toContain('snapshot: {')
+    expect(body.query).toContain('teams: [{team_id: "t1", team_name: "A 队"}]')
+    expect(body.query).not.toContain('[object Object]')
   })
 
   it('select("*") triggers introspection to resolve fields', async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true, json: async () => ({
-          data: { __type: { fields: [{ name: 'id' }, { name: 'username' }, { name: 'email' }] } }
+          data: {
+            __type: {
+              fields: [
+                { name: 'id', type: { kind: 'SCALAR' } },
+                { name: 'username', type: { kind: 'SCALAR' } },
+                { name: 'email', type: { kind: 'SCALAR' } },
+              ]
+            }
+          }
         })
       } as Response)
       .mockResolvedValueOnce({

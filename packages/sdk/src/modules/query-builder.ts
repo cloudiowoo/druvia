@@ -1,5 +1,5 @@
 import { buildQuery, buildMutation, type QueryState, type FilterItem, type WhereItem, type OrFilter, type OrderByItem } from '../lib/graphql-builder.js'
-import type { FetchFn, DruviaResponse } from '../types.js'
+import type { FetchFn, DruviaResponse, MutationAffectedRows } from '../types.js'
 
 type PendingOp =
   | { type: 'select' }
@@ -8,7 +8,13 @@ type PendingOp =
   | { type: 'upsert'; data: Record<string, unknown> | Record<string, unknown>[]; constraint?: string }
   | { type: 'delete' }
 
-export class QueryBuilder<T = unknown> {
+type SingleResult<T> = T extends Array<infer U> ? U : T
+
+export class QueryBuilder<
+  TRow = unknown,
+  TResult = TRow[],
+  THasExplicitSelect extends boolean = false,
+> {
   private table: string
   private schema: string | undefined
   private graphqlUrl: string
@@ -20,6 +26,7 @@ export class QueryBuilder<T = unknown> {
   private limitVal: number | undefined
   private singleFlag = false
   private pendingOp: PendingOp = { type: 'select' }
+  private hasExplicitSelect = false
 
   constructor(table: string, graphqlUrl: string, fetchFn: FetchFn, schema?: string) {
     this.table = table
@@ -28,44 +35,62 @@ export class QueryBuilder<T = unknown> {
     this.schema = schema
   }
 
-  select(fields: string = '*'): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  select(fields: string = '*'): PromiseLike<DruviaResponse<TRow[]>> & QueryBuilder<TRow, TRow[], true> {
     this.selectStr = fields
-    this.pendingOp = { type: 'select' }
-    return this.makeThenable()
+    this.hasExplicitSelect = true
+    if (this.pendingOp.type === 'select') {
+      this.pendingOp = { type: 'select' }
+    }
+    return this.makeThenable() as PromiseLike<DruviaResponse<TRow[]>> & QueryBuilder<TRow, TRow[], true>
   }
 
-  insert(data: Record<string, unknown> | Record<string, unknown>[]): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  insert(
+    data: Record<string, unknown> | Record<string, unknown>[]
+  ): PromiseLike<DruviaResponse<THasExplicitSelect extends true ? TRow[] : MutationAffectedRows>>
+    & QueryBuilder<TRow, THasExplicitSelect extends true ? TRow[] : MutationAffectedRows, THasExplicitSelect> {
     this.pendingOp = { type: 'insert', data }
-    return this.makeThenable()
+    return this.makeThenable() as PromiseLike<DruviaResponse<THasExplicitSelect extends true ? TRow[] : MutationAffectedRows>>
+      & QueryBuilder<TRow, THasExplicitSelect extends true ? TRow[] : MutationAffectedRows, THasExplicitSelect>
   }
 
-  update(data: Record<string, unknown>): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  update(
+    data: Record<string, unknown>
+  ): PromiseLike<DruviaResponse<THasExplicitSelect extends true ? TRow[] : MutationAffectedRows>>
+    & QueryBuilder<TRow, THasExplicitSelect extends true ? TRow[] : MutationAffectedRows, THasExplicitSelect> {
     this.pendingOp = { type: 'update', data }
-    return this.makeThenable()
+    return this.makeThenable() as PromiseLike<DruviaResponse<THasExplicitSelect extends true ? TRow[] : MutationAffectedRows>>
+      & QueryBuilder<TRow, THasExplicitSelect extends true ? TRow[] : MutationAffectedRows, THasExplicitSelect>
   }
 
-  upsert(data: Record<string, unknown> | Record<string, unknown>[], opts?: { onConflict?: string }): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  upsert(
+    data: Record<string, unknown> | Record<string, unknown>[],
+    opts?: { onConflict?: string }
+  ): PromiseLike<DruviaResponse<THasExplicitSelect extends true ? TRow[] : MutationAffectedRows>>
+    & QueryBuilder<TRow, THasExplicitSelect extends true ? TRow[] : MutationAffectedRows, THasExplicitSelect> {
     this.pendingOp = { type: 'upsert', data, constraint: opts?.onConflict }
-    return this.makeThenable()
+    return this.makeThenable() as PromiseLike<DruviaResponse<THasExplicitSelect extends true ? TRow[] : MutationAffectedRows>>
+      & QueryBuilder<TRow, THasExplicitSelect extends true ? TRow[] : MutationAffectedRows, THasExplicitSelect>
   }
 
-  delete(): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  delete(): PromiseLike<DruviaResponse<THasExplicitSelect extends true ? TRow[] : MutationAffectedRows>>
+    & QueryBuilder<TRow, THasExplicitSelect extends true ? TRow[] : MutationAffectedRows, THasExplicitSelect> {
     this.pendingOp = { type: 'delete' }
-    return this.makeThenable()
+    return this.makeThenable() as PromiseLike<DruviaResponse<THasExplicitSelect extends true ? TRow[] : MutationAffectedRows>>
+      & QueryBuilder<TRow, THasExplicitSelect extends true ? TRow[] : MutationAffectedRows, THasExplicitSelect>
   }
 
   // --- Filters ---
-  eq(column: string, value: unknown): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  eq(column: string, value: unknown): PromiseLike<DruviaResponse<TResult>> & QueryBuilder<TRow, TResult, THasExplicitSelect> {
     this.filters.push({ column, op: '_eq', value })
     return this.makeThenable()
   }
 
-  neq(column: string, value: unknown): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  neq(column: string, value: unknown): PromiseLike<DruviaResponse<TResult>> & QueryBuilder<TRow, TResult, THasExplicitSelect> {
     this.filters.push({ column, op: '_neq', value })
     return this.makeThenable()
   }
 
-  in(column: string, values: unknown[]): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  in(column: string, values: unknown[]): PromiseLike<DruviaResponse<TResult>> & QueryBuilder<TRow, TResult, THasExplicitSelect> {
     this.filters.push({ column, op: '_in', value: values })
     return this.makeThenable()
   }
@@ -87,7 +112,7 @@ export class QueryBuilder<T = unknown> {
     return this
   }
 
-  range(from: number, to: number): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  range(from: number, to: number): PromiseLike<DruviaResponse<TResult>> & QueryBuilder<TRow, TResult, THasExplicitSelect> {
     this.offsetVal = from
     this.limitVal = to - from + 1
     return this.makeThenable()
@@ -95,12 +120,12 @@ export class QueryBuilder<T = unknown> {
 
   limit(count: number): this { this.limitVal = count; return this }
 
-  single(): PromiseLike<DruviaResponse<T>> {
+  single(): PromiseLike<DruviaResponse<SingleResult<TResult>>> {
     this.singleFlag = true
-    return { then: (resolve: any, reject: any) => this.execute().then(resolve, reject) } as PromiseLike<DruviaResponse<T>>
+    return { then: (resolve: any, reject: any) => this.execute().then(resolve, reject) } as PromiseLike<DruviaResponse<SingleResult<TResult>>>
   }
 
-  maybeSingle(): PromiseLike<DruviaResponse<T | null>> {
+  maybeSingle(): PromiseLike<DruviaResponse<SingleResult<TResult> | null>> {
     this.singleFlag = true
     return {
       then: (resolve: any, reject: any) =>
@@ -110,10 +135,10 @@ export class QueryBuilder<T = unknown> {
           }
           return result
         }).then(resolve, reject)
-    } as PromiseLike<DruviaResponse<T | null>>
+    } as PromiseLike<DruviaResponse<SingleResult<TResult> | null>>
   }
 
-  or(filterString: string): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  or(filterString: string): PromiseLike<DruviaResponse<TResult>> & QueryBuilder<TRow, TResult, THasExplicitSelect> {
     const conditions: FilterItem[] = filterString.split(',').map(part => {
       const [column, op, ...rest] = part.trim().split('.')
       const value = rest.join('.')
@@ -131,7 +156,7 @@ export class QueryBuilder<T = unknown> {
     return this.makeThenable()
   }
 
-  not(column: string, operator: string, value: unknown): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  not(column: string, operator: string, value: unknown): PromiseLike<DruviaResponse<TResult>> & QueryBuilder<TRow, TResult, THasExplicitSelect> {
     const negationMap: Record<string, string> = {
       eq: '_neq',
       neq: '_eq',
@@ -156,7 +181,7 @@ export class QueryBuilder<T = unknown> {
   }
 
   // --- Execution ---
-  private makeThenable(): PromiseLike<DruviaResponse<T[]>> & QueryBuilder<T> {
+  private makeThenable(): PromiseLike<DruviaResponse<TResult>> & QueryBuilder<TRow, TResult, THasExplicitSelect> {
     const self = this as any
     self.then = (resolve: any, reject: any) => this.execute().then(resolve, reject)
     return self
@@ -166,13 +191,15 @@ export class QueryBuilder<T = unknown> {
     return this.schema ? `${this.schema}_${this.table}` : this.table
   }
 
-  private async execute(): Promise<DruviaResponse<any>> {
+  private async execute(): Promise<DruviaResponse<TResult>> {
     try {
       const op = this.pendingOp
       const table = this.hasuraTable
 
-      if (op.type === 'select' && (this.selectStr === '*' || this.selectStr.includes('*'))) {
-        await this.resolveWildcardFields()
+      if (this.selectStr === '*' || this.selectStr.includes('*')) {
+        if (op.type === 'select' || this.hasExplicitSelect) {
+          await this.resolveWildcardFields()
+        }
       }
 
       let query: string
@@ -194,7 +221,7 @@ export class QueryBuilder<T = unknown> {
           : ''
         query = buildMutation(table, 'insert', {
           objects,
-          returning: this.selectStr === '*' ? 'id' : this.selectStr,
+          ...(this.hasExplicitSelect ? { returning: this.selectStr } : {}),
           onConflict,
         })
       } else if (op.type === 'update') {
@@ -202,13 +229,13 @@ export class QueryBuilder<T = unknown> {
         query = buildMutation(table, 'update', {
           set: op.data,
           where,
-          returning: this.selectStr === '*' ? 'id' : this.selectStr,
+          ...(this.hasExplicitSelect ? { returning: this.selectStr } : {}),
         })
       } else {
         const where = this.buildWhereObject()
         query = buildMutation(table, 'delete', {
           where,
-          returning: 'id',
+          ...(this.hasExplicitSelect ? { returning: this.selectStr } : {}),
         })
       }
 
