@@ -1,19 +1,25 @@
 {
   "name": "@druvia/sdk",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.0-beta.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "prepack": "pnpm build"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

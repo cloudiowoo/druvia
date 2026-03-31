@@ -28,6 +28,10 @@ export class DruviaProjectAuth {
     return `druvia.project_session:${this.projectId}`
   }
 
+  private get legacySessionKey(): string {
+    return 'druvia.project_session'
+  }
+
   async wechatLogin(params: {
     code: string
     userInfo?: {
@@ -83,7 +87,7 @@ export class DruviaProjectAuth {
       }
 
       const session = this.toProjectSession(json.data ?? json)
-      await this.storage.setItem(this.sessionKey, JSON.stringify(session))
+      await this.persistSession(session)
       this.notify('SIGNED_IN', session)
       return { data: { session }, error: null }
     } catch (err) {
@@ -103,7 +107,7 @@ export class DruviaProjectAuth {
         return { data: null, error: json.error ?? { code: 'LOGOUT_FAILED', message: 'Failed to logout project session' } }
       }
 
-      await this.storage.removeItem(this.sessionKey)
+      await this.clearStoredSession()
       this.notify('SIGNED_OUT', null)
       return { data: json.data ?? { loggedOut: true }, error: null }
     } catch (err) {
@@ -112,7 +116,7 @@ export class DruviaProjectAuth {
   }
 
   async getSession(): Promise<ProjectSessionResponse> {
-    const raw = await this.storage.getItem(this.sessionKey)
+    const raw = await this.readSessionRaw()
     if (!raw) return { data: { session: null }, error: null }
 
     try {
@@ -154,7 +158,7 @@ export class DruviaProjectAuth {
       }
 
       const session = this.toProjectSession(json.data ?? json)
-      await this.storage.setItem(this.sessionKey, JSON.stringify(session))
+      await this.persistSession(session)
       this.notify('SIGNED_IN', session)
       return { data: session, error: null }
     } catch (err) {
@@ -170,6 +174,32 @@ export class DruviaProjectAuth {
       expiresAt: sessionData.expiresAt as string | undefined,
       user: sessionData.user as ProjectSession['user'],
     }
+  }
+
+  private async readSessionRaw(): Promise<string | null> {
+    const currentRaw = await this.storage.getItem(this.sessionKey)
+    if (typeof currentRaw === 'string' && currentRaw.length > 0) {
+      return currentRaw
+    }
+
+    const legacyRaw = await this.storage.getItem(this.legacySessionKey)
+    if (typeof legacyRaw !== 'string' || legacyRaw.length === 0) {
+      return null
+    }
+
+    await this.storage.setItem(this.sessionKey, legacyRaw)
+    await this.storage.removeItem(this.legacySessionKey)
+    return legacyRaw
+  }
+
+  private async persistSession(session: ProjectSession): Promise<void> {
+    await this.storage.setItem(this.sessionKey, JSON.stringify(session))
+    await this.storage.removeItem(this.legacySessionKey)
+  }
+
+  private async clearStoredSession(): Promise<void> {
+    await this.storage.removeItem(this.sessionKey)
+    await this.storage.removeItem(this.legacySessionKey)
   }
 
   private notify(event: 'SIGNED_IN' | 'SIGNED_OUT', session: ProjectSession | null) {

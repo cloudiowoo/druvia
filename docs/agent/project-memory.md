@@ -103,12 +103,29 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - 否则像 `stats_player_combo_agg.player_ids` 这类数组列会在 `select('*')` 时被错误丢失
 - 项目侧 session 存储键为：
   - `druvia.project_session:${projectId}`
+- SDK 仍需兼容历史项目 session 存储键：
+  - 读取时需要接受旧的 `druvia.project_session`
+  - 新版读取后会迁移到 `druvia.project_session:${projectId}`
 - `functions` / `rpc` 的 token 选择顺序现在是：
   1. project session token
   2. platform session token
 - `database/graphql` 与 `storage` 仍保持平台 token 路径，不自动切到 project token。
 - 新迁入应用应优先调用平台 project auth API，而不是继续依赖 Edge Function 自造 session。
 - `projectAuth.logout()` 现在必须显式带当前 project session Bearer token。
+- SDK 发版前的最小验证命令应优先用：
+  - `pnpm --filter @druvia/sdk build`
+  - `pnpm test:sdk`
+- 根目录 `pnpm test` 跑的是整仓 `unit + integration + e2e + sdk`，不是 SDK 独立发版门槛。
+- SDK 当前发包约定：
+  - `packages/sdk/package.json` 的 `files` 仅包含 `dist`
+  - `prepack` 会先执行 `pnpm build`
+- 仓库会忽略 SDK 发布副产物：
+  - `*.tgz`
+  - `.npmrc`
+  - `package-lock.json`
+- SDK 通过 npm 正式发布到 `@druvia/sdk` 之前，必须先具备 npm scope `@druvia` 的所有权或发布权限：
+  - 若 scope 未创建或当前账号无权限，`npm publish` 会返回 `404 Scope not found`
+  - 当前测试分发可先用 tarball，或改用临时个人 scope
 - `trusted issue-session` 已落地：
   - 路由为 `POST /api/v1/projects/:projectId/auth/trusted/issue-session`
   - 只接受 `x-druvia-trusted-backend-key`

@@ -3,6 +3,7 @@
 # ================================
 node_modules/
 .pnpm-store/
+package-lock.json
 
 # ================================
 # Build outputs
@@ -30,6 +31,7 @@ out/
 .env.*.local
 !.env.example
 apps/admin/.env
+.npmrc
 
 # ================================
 # Logs
@@ -40,6 +42,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 logs/
+*.tgz
 
 # ================================
 # Testing

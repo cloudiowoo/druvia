@@ -72,6 +72,27 @@ describe('DruviaProjectAuth', () => {
     expect(userResult.data.user?.id).toBe('usr_proj_1')
   })
 
+  it('migrates legacy project session storage into the project-scoped key', async () => {
+    const fetch = createMockFetch({})
+    const storage = createMockStorage()
+    await storage.setItem('druvia.project_session', JSON.stringify({
+      accessToken: 'legacy-project-token',
+      refreshToken: 'legacy-refresh-token',
+      user: { id: 'usr_proj_legacy', email: 'user@example.com', role: 'authenticated' },
+      expiresIn: 3600,
+      expiresAt: '2026-03-24T01:00:00.000Z',
+    }))
+
+    const auth = new DruviaProjectAuth('/api/v1', projectId, fetch, storage)
+    const sessionResult = await auth.getSession()
+
+    expect(sessionResult.data.session?.accessToken).toBe('legacy-project-token')
+    expect(storage.getItem).toHaveBeenCalledWith(projectSessionKey)
+    expect(storage.getItem).toHaveBeenCalledWith('druvia.project_session')
+    expect(storage.setItem).toHaveBeenCalledWith(projectSessionKey, expect.any(String))
+    expect(storage.removeItem).toHaveBeenCalledWith('druvia.project_session')
+  })
+
   it('refreshSession rotates project session', async () => {
     const fetch = createMockFetch({
       success: true,

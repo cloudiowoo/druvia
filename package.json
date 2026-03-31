@@ -7,6 +7,8 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "test": "vitest run",
+    "test:sdk": "vitest run tests/sdk",
+    "test:sdk:watch": "vitest tests/sdk",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "turbo run lint",

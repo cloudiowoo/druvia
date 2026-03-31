@@ -55,6 +55,11 @@ export class DruviaClient {
     const initialProjectRaw = storageAdapter.getItem(`druvia.project_session:${options.projectId}`)
     if (typeof initialProjectRaw === 'string') {
       try { cachedProjectToken = JSON.parse(initialProjectRaw).accessToken } catch { /* ignore */ }
+    } else {
+      const legacyProjectRaw = storageAdapter.getItem('druvia.project_session')
+      if (typeof legacyProjectRaw === 'string') {
+        try { cachedProjectToken = JSON.parse(legacyProjectRaw).accessToken } catch { /* ignore */ }
+      }
     }
 
     this.platformFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedPlatformToken)
