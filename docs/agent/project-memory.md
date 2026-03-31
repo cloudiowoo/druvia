@@ -95,6 +95,8 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 ## SDK Project Auth 近期事实
 
 - SDK 已新增 `client.projectAuth`，与平台 `client.auth` 分离。
+- SDK 当前阶段的通用能力状态、接入路线与兼容风险对比文档见：
+  - `docs/plans/2026-03-31-sdk-capability-status-route-comparison.md`
 - SDK `select('*')` 的 introspection 展开不能只保留裸 `SCALAR/ENUM`：
   - 对 `text[]`、`uuid[]` 这类数组字段，Hasura 会以 `LIST/NON_NULL->LIST` 包装返回
   - wildcard 展开必须接受“叶子类型为 `SCALAR/ENUM`”的字段，而不是仅接受最外层 kind
