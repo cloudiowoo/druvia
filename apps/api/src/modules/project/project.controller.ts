@@ -2,6 +2,8 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as projectService from './project.service.js';
 import * as dbCredentialsService from './db-credentials.service.js';
 import type { CreateProjectInput, UpdateProjectInput } from '@druvia/shared';
+import { checkProjectAccess } from '../../lib/access.js';
+import { isPlatformUser } from '../../middleware/auth.js';
 
 interface ProjectParams {
   projectId: string;
@@ -16,6 +18,40 @@ interface TenantProjectParams {
 interface ListProjectsQuery {
   limit?: string;
   offset?: string;
+}
+
+async function verifyDeleteProjectAccess(
+  request: FastifyRequest<{ Params: ProjectParams }>,
+  reply: FastifyReply
+): Promise<boolean> {
+  const user = request.user;
+  if (!user || !isPlatformUser(user)) {
+    reply.status(401).send({
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+    });
+    return false;
+  }
+
+  const project = await projectService.getProjectById(request.params.projectId);
+  if (!project) {
+    reply.status(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'Project not found' },
+    });
+    return false;
+  }
+
+  const hasAccess = await checkProjectAccess(user.userId, request.params.projectId);
+  if (!hasAccess) {
+    reply.status(403).send({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'No access to this project' },
+    });
+    return false;
+  }
+
+  return true;
 }
 
 export async function createProject(
@@ -111,6 +147,10 @@ export async function deleteProject(
   request: FastifyRequest<{ Params: ProjectParams }>,
   reply: FastifyReply
 ) {
+  if (!(await verifyDeleteProjectAccess(request, reply))) {
+    return;
+  }
+
   const deleted = await projectService.deleteProject(request.params.projectId);
   if (!deleted) {
     return reply.status(404).send({

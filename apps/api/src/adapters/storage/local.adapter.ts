@@ -44,6 +44,8 @@ export class LocalAdapter implements StorageAdapter {
         throw error;
       }
     }
+
+    await this.cleanupEmptyParents(path.dirname(fullPath));
   }
 
   async exists(filePath: string): Promise<boolean> {
@@ -140,6 +142,33 @@ export class LocalAdapter implements StorageAdapter {
       return { size: stats.size, mtime: stats.mtime };
     } catch {
       return null;
+    }
+  }
+
+  private async cleanupEmptyParents(startDir: string): Promise<void> {
+    const basePath = path.resolve(this.basePath);
+    let currentDir = path.resolve(startDir);
+
+    while (currentDir.startsWith(basePath) && currentDir !== basePath) {
+      try {
+        const entries = await fs.readdir(currentDir);
+        if (entries.length > 0) {
+          return;
+        }
+
+        await fs.rmdir(currentDir);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'ENOENT') {
+          // Parent may already be gone from a previous cleanup step.
+        } else if (err.code === 'ENOTEMPTY') {
+          return;
+        } else {
+          throw error;
+        }
+      }
+
+      currentDir = path.dirname(currentDir);
     }
   }
 }

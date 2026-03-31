@@ -248,6 +248,12 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 
 ## 管理端与迁移注意事项
 
+- 项目删除的正式语义不是只删 `druvia_projects` 记录：
+  - Admin Settings 删除项目前，API 必须校验 `platform_user + checkProjectAccess()`
+  - 删除过程中必须同时清理项目 schema、项目数据库用户、Storage 对象目录、旧 `druvia_files` 物理路径、`druvia_backups` 对应备份文件
+  - `dropProjectDbUser()` 若失败，不能继续删除项目记录
+  - 物理文件 cleanup 不能早于 schema / db user 这类关键删除步骤
+  - 本地 `LocalAdapter.delete()` 需要回收空父目录，否则项目目录会残留在磁盘上
 - Admin 端 Functions 页面已经增加 `invokeAuthMode` 的展示与编辑能力。
 - 创建函数时不暴露该字段，默认保持 `JWT Required`。
 - Admin 端 Tables 页面现在要区分两类 Hasura 操作：

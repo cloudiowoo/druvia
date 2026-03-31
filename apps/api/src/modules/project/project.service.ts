@@ -8,6 +8,7 @@ import * as dbCredentialsService from './db-credentials.service.js';
 import { hasuraMetadataRequest } from '../realtime/realtime.service.js';
 import { validateAlias } from '../../lib/validation.js';
 import { createApiLogger } from '../../lib/logger.js';
+import { getDefaultStorageAdapter, type StorageAdapter } from '../../adapters/storage/index.js';
 
 const logger = createApiLogger({ module: 'project' });
 
@@ -143,34 +144,32 @@ export async function deleteProject(projectId: string): Promise<boolean> {
   }
 
   try {
-    // 1. 获取所有环境（不含主 schema）
+    // 1. 先删除项目数据库用户，避免后续失败时出现“项目仍在但 schema 已被删掉”的半删除状态
+    await dbCredentialsService.dropProjectDbUser(projectId);
+
+    // 2. 获取所有环境（不含主 schema）
     const environments = await environmentService.listEnvironments(projectId);
 
-    // 2. 从 Hasura 中 untrack 所有环境的表
+    // 3. 从 Hasura 中 untrack 所有环境的表
     for (const env of environments) {
       await untrackSchemaTablesFromHasura(env.schemaName);
     }
 
-    // 3. 删除所有环境的 Schema
+    // 4. 删除所有环境的 Schema
     for (const env of environments) {
       await schemaService.dropSchema(env.schemaName);
     }
 
-    // 4. 删除项目主 Schema（不在 environments 表中）
+    // 5. 删除项目主 Schema（不在 environments 表中）
     if (project.schemaName) {
       await untrackSchemaTablesFromHasura(project.schemaName);
       await schemaService.dropSchema(project.schemaName);
     }
 
-    // 5. 删除项目数据库用户（如果存在）
-    try {
-      await dbCredentialsService.dropProjectDbUser(projectId);
-    } catch (error) {
-      // 如果用户不存在或删除失败，记录警告但继续删除项目
-      logger.warn('failed to drop project database user', { projectId }, error);
-    }
+    // 6. 删除物理存储副产物，避免在前置关键步骤失败时先丢文件
+    await cleanupProjectPhysicalArtifacts(project);
 
-    // 5. 删除项目记录（会级联删除 API 密钥和环境记录）
+    // 7. 删除项目记录（会级联删除 API 密钥和环境记录）
     const rows = await query<{ project_id: string }>(
       'DELETE FROM druvia_projects WHERE project_id = $1 RETURNING project_id',
       [projectId]
@@ -180,6 +179,31 @@ export async function deleteProject(projectId: string): Promise<boolean> {
   } catch (error) {
     logger.error('failed to delete project', { projectId }, error);
     throw error;
+  }
+}
+
+async function cleanupProjectPhysicalArtifacts(project: Project): Promise<void> {
+  const storage = getDefaultStorageAdapter();
+
+  await deleteStoragePrefix(storage, `${project.projectId}/`);
+  await deleteStoragePrefix(storage, `${project.tenantId}/${project.projectId}/`);
+
+  const backups = await query<{ storage_key: string }>(
+    `SELECT storage_key
+     FROM druvia_backups
+     WHERE project_id = $1`,
+    [project.projectId]
+  );
+
+  for (const backup of backups) {
+    await storage.delete(backup.storage_key);
+  }
+}
+
+async function deleteStoragePrefix(storage: StorageAdapter, prefix: string): Promise<void> {
+  const filePaths = await storage.list(prefix);
+  for (const filePath of filePaths) {
+    await storage.delete(filePath);
   }
 }
 

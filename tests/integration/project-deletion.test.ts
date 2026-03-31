@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { pool } from '../../apps/api/src/db/index.js';
 import * as projectService from '../../apps/api/src/modules/project/project.service.js';
 import * as tenantService from '../../apps/api/src/modules/tenant/tenant.service.js';
@@ -6,6 +8,17 @@ import * as environmentService from '../../apps/api/src/modules/environment/envi
 import * as apiKeysService from '../../apps/api/src/modules/api-keys/api-keys.service.js';
 import * as dbCredentialsService from '../../apps/api/src/modules/project/db-credentials.service.js';
 import * as tableService from '../../apps/api/src/modules/table/table.service.js';
+import * as storageService from '../../apps/api/src/modules/storage/storage.service.js';
+
+const TEST_STORAGE_PATH = path.resolve(process.cwd(), 'tests/.storage');
+
+async function expectPathExists(targetPath: string): Promise<void> {
+  await expect(fs.access(targetPath)).resolves.toBeUndefined();
+}
+
+async function expectPathMissing(targetPath: string): Promise<void> {
+  await expect(fs.access(targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+}
 
 describe('Project Deletion Integration', () => {
   let testUserId: number;
@@ -41,6 +54,7 @@ describe('Project Deletion Integration', () => {
     await pool.query('DELETE FROM druvia_schema_registry WHERE tenant_id = $1', [testTenantId]);
     await pool.query('DELETE FROM druvia_tenants WHERE tenant_id = $1', [testTenantId]);
     await pool.query('DELETE FROM druvia_users WHERE user_id = $1', ['user_del_test']);
+    await fs.rm(TEST_STORAGE_PATH, { recursive: true, force: true });
   });
 
   beforeEach(async () => {
@@ -68,6 +82,7 @@ describe('Project Deletion Integration', () => {
 
     await pool.query('DELETE FROM druvia_projects WHERE tenant_id = $1', [testTenantId]);
     await pool.query('DELETE FROM druvia_schema_registry WHERE tenant_id = $1', [testTenantId]);
+    await fs.rm(TEST_STORAGE_PATH, { recursive: true, force: true });
 
     // 创建测试项目
     const project = await projectService.createProject({
@@ -313,6 +328,93 @@ describe('Project Deletion Integration', () => {
 
       const apiKeysAfter = await apiKeysService.listApiKeys(testProjectId);
       expect(apiKeysAfter.length).toBe(0);
+    });
+
+    it('should delete physical storage objects, legacy project files and project backups', async () => {
+      const bucket = await storageService.createBucket(testProjectId, {
+        name: 'team-assets',
+        public: true,
+      });
+
+      await storageService.uploadObject(
+        bucket,
+        'user-avatars/avatar.png',
+        Buffer.from('avatar'),
+        'image/png'
+      );
+
+      const objectPath = path.join(TEST_STORAGE_PATH, testProjectId, 'team-assets', 'user-avatars', 'avatar.png');
+      await expectPathExists(objectPath);
+
+      const legacyFilePath = path.join(TEST_STORAGE_PATH, testTenantId, testProjectId, 'legacy-assets', 'legacy.txt');
+      await fs.mkdir(path.dirname(legacyFilePath), { recursive: true });
+      await fs.writeFile(legacyFilePath, 'legacy-file');
+      await pool.query(
+        `INSERT INTO druvia_files
+         (file_id, tenant_id, project_id, bucket, path, filename, content_type, size_bytes, storage_provider, storage_key, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
+        [
+          `file_${Date.now()}`,
+          testTenantId,
+          testProjectId,
+          'legacy-assets',
+          `${testTenantId}/${testProjectId}/legacy-assets/legacy.txt`,
+          'legacy.txt',
+          'text/plain',
+          11,
+          'local',
+          null,
+          '{}',
+        ]
+      );
+
+      const backupId = `bkp_${Date.now()}`;
+      const backupStorageKey = `backups/${testTenantId}/${backupId}.dump`;
+      const backupPath = path.join(TEST_STORAGE_PATH, backupStorageKey);
+      await fs.mkdir(path.dirname(backupPath), { recursive: true });
+      await fs.writeFile(backupPath, 'backup');
+      await pool.query(
+        `INSERT INTO druvia_backups
+         (backup_id, tenant_id, project_id, schema_name, storage_key, status)
+         VALUES ($1, $2, $3, $4, $5, 'completed')`,
+        [backupId, testTenantId, testProjectId, testSchemaName, backupStorageKey]
+      );
+
+      const deleted = await projectService.deleteProject(testProjectId);
+      expect(deleted).toBe(true);
+
+      const bucketsAfter = await pool.query(
+        'SELECT 1 FROM druvia_storage_buckets WHERE project_id = $1',
+        [testProjectId]
+      );
+      expect(bucketsAfter.rows.length).toBe(0);
+
+      const objectsAfter = await pool.query(
+        `SELECT 1
+         FROM druvia_storage_objects o
+         JOIN druvia_storage_buckets b ON b.bucket_id = o.bucket_id
+         WHERE b.project_id = $1`,
+        [testProjectId]
+      );
+      expect(objectsAfter.rows.length).toBe(0);
+
+      const legacyFilesAfter = await pool.query(
+        'SELECT 1 FROM druvia_files WHERE project_id = $1',
+        [testProjectId]
+      );
+      expect(legacyFilesAfter.rows.length).toBe(0);
+
+      const backupsAfter = await pool.query(
+        'SELECT 1 FROM druvia_backups WHERE project_id = $1',
+        [testProjectId]
+      );
+      expect(backupsAfter.rows.length).toBe(0);
+
+      await expectPathMissing(objectPath);
+      await expectPathMissing(legacyFilePath);
+      await expectPathMissing(backupPath);
+      await expectPathMissing(path.join(TEST_STORAGE_PATH, testProjectId));
+      await expectPathMissing(path.join(TEST_STORAGE_PATH, testTenantId, testProjectId));
     });
   });
 

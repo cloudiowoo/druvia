@@ -111,6 +111,23 @@
   - Admin Tables 页面内的 `add/drop/rename column` 自动触发 `reload metadata`
   - 外部 SQL / migration 导致的 schema 漂移，由用户显式触发 `刷新 Hasura Schema`
 
+## 项目删除策略
+
+- 项目删除是“全量清理”操作，不是单纯删除 `druvia_projects` 行。
+- 平台管理接口删除项目时，必须同时满足：
+  - 调用者是 `platform_user`
+  - 调用者通过 `checkProjectAccess()` 校验
+- 删除路径必须覆盖三类残留资源：
+  - 项目 schema / 环境 schema
+  - 项目数据库用户
+  - 物理存储副产物，包括：
+    - `druvia_storage_objects` 对应对象文件
+    - 旧 `druvia_files` 项目路径
+    - `druvia_backups` 的备份文件
+- 如果项目数据库用户删除失败，项目删除流程必须中止，不能继续删除 `druvia_projects`。
+- 物理存储 cleanup 应放在 schema / db user 等关键数据库删除步骤之后，避免后置失败时先丢文件。
+- 对本地存储适配器，删除文件后应继续清理空目录，避免 Admin/UI 看似已删但磁盘目录残留。
+
 ## 文档策略
 
 - `AGENTS.md` 用于入口与索引。

@@ -2,6 +2,7 @@ import { pool, queryOne } from '../../db/index.js';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { config } from '../../config/index.js';
+import type { PoolClient } from 'pg';
 
 const SALT_ROUNDS = 10;
 
@@ -30,6 +31,23 @@ export interface DbCredentials {
   port: number;
   database: string;
   schemaName: string;
+}
+
+async function runOptionalTransactionStep(
+  client: PoolClient,
+  sql: string,
+  warningMessage: string
+): Promise<void> {
+  await client.query('SAVEPOINT project_db_user_optional_step');
+  try {
+    await client.query(sql);
+    await client.query('RELEASE SAVEPOINT project_db_user_optional_step');
+  } catch (error) {
+    await client.query('ROLLBACK TO SAVEPOINT project_db_user_optional_step').catch(() => {});
+    await client.query('RELEASE SAVEPOINT project_db_user_optional_step').catch(() => {});
+    const err = error as Error;
+    console.warn(`${warningMessage}: ${err.message}`);
+  }
 }
 
 // 为项目创建数据库用户
@@ -223,25 +241,31 @@ export async function dropProjectDbUser(projectId: string): Promise<boolean> {
         `SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I REVOKE ALL ON TABLES FROM %I', $1::text, $2::text) as sql`,
         [project.schema_name, project.db_user]
       );
-      await client.query(revokeDefTables.rows[0].sql).catch((err: Error) => {
-        console.warn(`Failed to revoke default table privileges: ${err.message}`);
-      });
+      await runOptionalTransactionStep(
+        client,
+        revokeDefTables.rows[0].sql,
+        'Failed to revoke default table privileges'
+      );
 
       const revokeDefSeqs = await client.query(
         `SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I REVOKE ALL ON SEQUENCES FROM %I', $1::text, $2::text) as sql`,
         [project.schema_name, project.db_user]
       );
-      await client.query(revokeDefSeqs.rows[0].sql).catch((err: Error) => {
-        console.warn(`Failed to revoke default sequence privileges: ${err.message}`);
-      });
+      await runOptionalTransactionStep(
+        client,
+        revokeDefSeqs.rows[0].sql,
+        'Failed to revoke default sequence privileges'
+      );
 
       const revokeDefFuncs = await client.query(
         `SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I REVOKE EXECUTE ON FUNCTIONS FROM %I', $1::text, $2::text) as sql`,
         [project.schema_name, project.db_user]
       );
-      await client.query(revokeDefFuncs.rows[0].sql).catch((err: Error) => {
-        console.warn(`Failed to revoke default function privileges: ${err.message}`);
-      });
+      await runOptionalTransactionStep(
+        client,
+        revokeDefFuncs.rows[0].sql,
+        'Failed to revoke default function privileges'
+      );
     }
 
     // 将该用户拥有的对象转移给 postgres
@@ -249,18 +273,22 @@ export async function dropProjectDbUser(projectId: string): Promise<boolean> {
       `SELECT format('REASSIGN OWNED BY %I TO postgres', $1::text) as sql`,
       [project.db_user]
     );
-    await client.query(reassignSql.rows[0].sql).catch((err: Error) => {
-      console.warn(`Failed to reassign owned objects: ${err.message}`);
-    });
+    await runOptionalTransactionStep(
+      client,
+      reassignSql.rows[0].sql,
+      'Failed to reassign owned objects'
+    );
 
     // 删除该用户拥有的权限
     const dropOwnedSql = await client.query(
       `SELECT format('DROP OWNED BY %I', $1::text) as sql`,
       [project.db_user]
     );
-    await client.query(dropOwnedSql.rows[0].sql).catch((err: Error) => {
-      console.warn(`Failed to drop owned objects: ${err.message}`);
-    });
+    await runOptionalTransactionStep(
+      client,
+      dropOwnedSql.rows[0].sql,
+      'Failed to drop owned objects'
+    );
 
     // 使用 format 函数安全地删除角色
     const dropSql = await client.query(
