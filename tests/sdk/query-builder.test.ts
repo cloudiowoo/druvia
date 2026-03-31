@@ -219,6 +219,53 @@ describe('QueryBuilder', () => {
     expect(dataBody.query).not.toContain('*')
   })
 
+  it('select("*") keeps scalar array fields resolved from introspection', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true, json: async () => ({
+          data: {
+            __type: {
+              fields: [
+                { name: 'combo_id', type: { kind: 'SCALAR' } },
+                {
+                  name: 'player_ids',
+                  type: {
+                    kind: 'NON_NULL',
+                    ofType: {
+                      kind: 'LIST',
+                      ofType: {
+                        kind: 'NON_NULL',
+                        ofType: { kind: 'SCALAR' },
+                      },
+                    },
+                  },
+                },
+                {
+                  name: 'player',
+                  type: {
+                    kind: 'OBJECT',
+                  },
+                },
+              ]
+            }
+          }
+        })
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true, json: async () => ({ data: { stats_player_combo_agg: [{ combo_id: 'c1', player_ids: ['u1', 'u2'] }] } })
+      } as Response) as unknown as FetchFn
+
+    const qb = new QueryBuilder('stats_player_combo_agg', '/graphql', fetch)
+    const result = await qb.select('*').limit(1)
+
+    expect(fetch).toHaveBeenCalledTimes(2)
+    const dataBody = JSON.parse((fetch as any).mock.calls[1][1].body)
+    expect(dataBody.query).toContain('combo_id')
+    expect(dataBody.query).toContain('player_ids')
+    expect(dataBody.query).not.toContain('player {')
+    expect(result.data).toEqual([{ combo_id: 'c1', player_ids: ['u1', 'u2'] }])
+  })
+
   it('handles GraphQL errors', async () => {
     const fetch = mockFetch({ errors: [{ message: 'field not found' }] })
     const qb = new QueryBuilder('users', '/graphql', fetch)

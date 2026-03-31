@@ -95,6 +95,10 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 ## SDK Project Auth 近期事实
 
 - SDK 已新增 `client.projectAuth`，与平台 `client.auth` 分离。
+- SDK `select('*')` 的 introspection 展开不能只保留裸 `SCALAR/ENUM`：
+  - 对 `text[]`、`uuid[]` 这类数组字段，Hasura 会以 `LIST/NON_NULL->LIST` 包装返回
+  - wildcard 展开必须接受“叶子类型为 `SCALAR/ENUM`”的字段，而不是仅接受最外层 kind
+  - 否则像 `stats_player_combo_agg.player_ids` 这类数组列会在 `select('*')` 时被错误丢失
 - 项目侧 session 存储键为：
   - `druvia.project_session:${projectId}`
 - `functions` / `rpc` 的 token 选择顺序现在是：

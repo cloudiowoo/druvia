@@ -9,6 +9,11 @@ type PendingOp =
   | { type: 'delete' }
 
 type SingleResult<T> = T extends Array<infer U> ? U : T
+type GraphQLTypeRef = {
+  kind: string
+  name?: string | null
+  ofType?: GraphQLTypeRef | null
+}
 
 export class QueryBuilder<
   TRow = unknown,
@@ -370,21 +375,52 @@ export class QueryBuilder<
       const response = await this.fetchFn(this.graphqlUrl, {
         method: 'POST',
         body: JSON.stringify({
-          query: `query { __type(name: "${typeName}") { fields { name type { kind ofType { kind } } } } }`
+          query: `query {
+            __type(name: "${typeName}") {
+              fields {
+                name
+                type {
+                  kind
+                  name
+                  ofType {
+                    kind
+                    name
+                    ofType {
+                      kind
+                      name
+                      ofType {
+                        kind
+                        name
+                        ofType {
+                          kind
+                          name
+                          ofType {
+                            kind
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`
         }),
       })
       const json = await response.json()
-      const rawFields = json.data?.__type?.fields as Array<{ name: string; type: { kind: string; ofType?: { kind: string } } }> | undefined
+      const rawFields = json.data?.__type?.fields as Array<{ name: string; type: GraphQLTypeRef }> | undefined
       if (rawFields && rawFields.length > 0) {
-        // Only scalar/enum fields — unwrap NON_NULL to check inner type
-        const isScalar = (f: { type: { kind: string; ofType?: { kind: string } } }) => {
-          const kind = f.type.kind
-          const innerKind = f.type.ofType?.kind
-          return kind === 'SCALAR' || kind === 'ENUM'
-            || (kind === 'NON_NULL' && (innerKind === 'SCALAR' || innerKind === 'ENUM'))
+        const isSelectableLeaf = (type: GraphQLTypeRef | null | undefined): boolean => {
+          if (!type) return false
+          if (type.kind === 'NON_NULL' || type.kind === 'LIST') {
+            return isSelectableLeaf(type.ofType)
+          }
+          return type.kind === 'SCALAR' || type.kind === 'ENUM'
         }
+
         const scalars = rawFields
-          .filter(f => !f.name.startsWith('__') && isScalar(f))
+          .filter(f => !f.name.startsWith('__') && isSelectableLeaf(f.type))
           .map(f => f.name)
         QueryBuilder.fieldCache.set(typeName, scalars)
         return scalars
