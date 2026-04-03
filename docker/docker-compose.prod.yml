@@ -29,6 +29,8 @@ services:
     command: redis-server --appendonly yes
     volumes:
       - ./redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -53,6 +55,8 @@ services:
       HASURA_GRAPHQL_CORS_DOMAIN: ${CORS_ORIGINS:-*}
       HASURA_GRAPHQL_ENABLE_TELEMETRY: "false"
       ACTION_BASE_URL: http://api:3001
+    ports:
+      - "${HASURA_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 30s
@@ -87,6 +91,8 @@ services:
       HASURA_ENDPOINT: http://hasura:8080
       HASURA_ADMIN_SECRET: ${HASURA_ADMIN_SECRET}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    ports:
+      - "${API_PORT:-3001}:3001"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
       interval: 30s
@@ -112,6 +118,8 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_MULTI_TENANT_ENABLED: ${NEXT_PUBLIC_MULTI_TENANT_ENABLED:-false}
       NEXT_PUBLIC_DEFAULT_TENANT_ID: ${NEXT_PUBLIC_DEFAULT_TENANT_ID:-default}
+    ports:
+      - "${ADMIN_PORT:-3000}:3000"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
       interval: 30s
@@ -136,6 +144,8 @@ services:
       DRUVIA_API_URL: http://api:3001
     working_dir: /app
     command: ["run", "--allow-net", "--allow-env", "--allow-read=/tmp,/app", "--allow-write=/tmp", "--unstable-worker-options", "main.ts"]
+    ports:
+      - "${DENO_PORT:-7133}:7133"
     deploy:
       resources:
         limits:

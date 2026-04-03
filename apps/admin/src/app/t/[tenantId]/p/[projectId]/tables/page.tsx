@@ -79,7 +79,7 @@ export default function TablesPage() {
     const [tablesRes, statusRes, realtimeRes] = await Promise.all([
       api.listTables(effectiveSchema),
       api.getHasuraStatus(effectiveSchema),
-      api.listRealtimeSubscriptions(projectId, currentEnv?.name),
+      api.listRealtimeSubscriptions(projectId, currentEnv?.envName),
     ]);
     if (tablesRes.success && tablesRes.data) {
       setTables(tablesRes.data);
