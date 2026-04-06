@@ -2,6 +2,7 @@ import { query, queryOne } from '../../db/index.js';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { signInternalFunctionToken } from './internal-token.js';
 import { createApiLogger } from '../../lib/logger.js';
+import { resolveWorkerApiBaseUrl } from './invoke-config.js';
 
 const logger = createApiLogger({ module: 'functions' });
 
@@ -226,7 +227,7 @@ export async function deleteFunction(projectId: string, name: string): Promise<b
 // ============================================
 
 const DENO_WORKER_URL = process.env.DENO_WORKER_URL || 'http://localhost:7133';
-const API_BASE_URL = process.env.API_BASE_URL || process.env.DRUVIA_API_URL;
+const WORKER_API_BASE_URL = resolveWorkerApiBaseUrl();
 
 export async function invokeFunction(
   projectId: string,
@@ -275,7 +276,7 @@ export async function invokeFunction(
         payload,
         caller,
         internalToken,
-        ...(API_BASE_URL ? { apiBaseUrl: API_BASE_URL } : {}),
+        ...(WORKER_API_BASE_URL ? { apiBaseUrl: WORKER_API_BASE_URL } : {}),
         timeout: 30000,
       }),
     });

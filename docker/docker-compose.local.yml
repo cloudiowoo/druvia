@@ -110,6 +110,8 @@ services:
       NODE_ENV: production
       PORT: 3001
       HOST: 0.0.0.0
+      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://api:3001}
+      DENO_WORKER_URL: ${DENO_WORKER_URL:-http://deno:7133}
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: postgres

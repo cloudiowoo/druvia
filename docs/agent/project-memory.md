@@ -193,6 +193,13 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - API internal storage proxy
   - 运行时内建 `druvia.storage.upload()` / `druvia.storage.remove()`
   - 平台级 storage 写权限只保留在 API 服务端
+- `API_BASE_URL` 仅用于对外 public URL / signed URL 生成，不应用作 Deno worker 内部回调地址。
+- Worker 内部 `druvia.storage.*` / `druvia.graphql()` 回调应优先走内网地址：
+  - API 侧显式传入 `INTERNAL_API_BASE_URL`
+  - Worker 侧回退 `DRUVIA_API_URL`
+- 当 API 与 Deno worker 都运行在 Docker Compose 网络中时：
+  - `DENO_WORKER_URL` 必须显式指向 `http://deno:7133`
+  - 不能依赖 `http://localhost:7133`，因为那会回到 API 容器自身
 - `DRUVIA_TOKEN` 不再是项目函数写 storage 的正式方案，只可视为历史临时兼容思路。
 - `druvia.storage.upload()` 当前是窄能力：
   - 当前支持 `upload()` 与受控 `remove()`
@@ -269,6 +276,10 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - 手工 migration
   - 数据库页直接执行的 schema 变更
   则不能假设 Hasura cache 已自动刷新；此时应显式点击 `刷新 Hasura Schema`。
+- 对 taro-app / Supabase init chain 或外部导入得到的项目 schema：
+  - 不要假设 schema 内已经存在 Druvia 的 `_meta_tables`
+  - Realtime 订阅页对应 API 现在会在读取/配置订阅前自动 bootstrap `_meta_tables`，并补齐 `realtime_enabled` 列
+  - 因此导入后的 schema 即使缺少这张元表，也应能先列出业务表，再继续配置 realtime
 - Admin 端项目级 Auth 页面
   - `/t/:tenantId/p/:projectId/auth`
   - 当前就是微信小程序 `project-auth` 的配置入口

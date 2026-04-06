@@ -32,6 +32,11 @@ export interface SubscriptionStats {
 const HASURA_METADATA_URL = `${config.hasura.endpoint}/v1/metadata`;
 const HASURA_GRAPHQL_URL = `${config.hasura.endpoint}/v1/graphql`;
 
+function getPublicGraphqlBaseUrl(): string | null {
+  const apiBaseUrl = process.env.API_BASE_URL?.trim().replace(/\/+$/, '');
+  return apiBaseUrl || null;
+}
+
 export async function hasuraMetadataRequest<T = unknown>(
   type: string,
   args: Record<string, unknown>
@@ -63,6 +68,7 @@ export async function hasuraMetadataRequest<T = unknown>(
  */
 export async function getTableSubscriptions(schemaName: string): Promise<TableSubscription[]> {
   validateSchemaName(schemaName);
+  await ensureRealtimeMetaTable(schemaName);
 
   // LEFT JOIN information_schema.tables with _meta_tables to get realtime_enabled
   // Tables not in _meta_tables default to realtime_enabled=false
@@ -111,6 +117,7 @@ export async function configureTableSubscription(
 ): Promise<TableSubscription> {
   validateSchemaName(schemaName);
   validateTableName(tableName);
+  await ensureRealtimeMetaTable(schemaName);
 
   // Upsert _meta_tables.realtime_enabled (handles tables not yet registered in _meta_tables)
   await query(
@@ -185,6 +192,15 @@ export async function configureTableSubscription(
  * 获取实时配置信息
  */
 export function getRealtimeConfig(schemaName: string): RealtimeConfig {
+  const publicBaseUrl = getPublicGraphqlBaseUrl();
+  if (publicBaseUrl) {
+    return {
+      schemaName,
+      websocketEndpoint: `${publicBaseUrl.replace(/^http/, 'ws')}/v1/graphql`,
+      graphqlEndpoint: `${publicBaseUrl}/v1/graphql`,
+    };
+  }
+
   const wsProtocol = config.hasura.endpoint.startsWith('https') ? 'wss' : 'ws';
   const wsEndpoint = config.hasura.endpoint.replace(/^https?/, wsProtocol);
 
@@ -287,6 +303,25 @@ const unsubscribe = client.subscribe(
 interface TableInfo {
   tableName: string;
   schemaName: string;
+}
+
+async function ensureRealtimeMetaTable(schemaName: string): Promise<void> {
+  await query(
+    `CREATE TABLE IF NOT EXISTS "${schemaName}"._meta_tables (
+       id SERIAL PRIMARY KEY,
+       table_name VARCHAR(128) NOT NULL UNIQUE,
+       description TEXT,
+       row_count BIGINT DEFAULT 0,
+       realtime_enabled BOOLEAN NOT NULL DEFAULT false,
+       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+       updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+     )`
+  );
+
+  await query(
+    `ALTER TABLE "${schemaName}"._meta_tables
+     ADD COLUMN IF NOT EXISTS realtime_enabled BOOLEAN NOT NULL DEFAULT false`
+  );
 }
 
 /**

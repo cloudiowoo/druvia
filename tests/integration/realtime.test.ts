@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { pool } from '../../apps/api/src/db/index.js';
 import * as realtimeService from '../../apps/api/src/modules/realtime/realtime.service.js';
 import * as projectService from '../../apps/api/src/modules/project/project.service.js';
@@ -62,6 +62,10 @@ describe('RealtimeService Integration', () => {
     await pool.query('DELETE FROM druvia_projects WHERE project_id = $1', [testProjectId]);
     await pool.query('DELETE FROM druvia_tenants WHERE tenant_id = $1', [testTenantId]);
     await pool.query('DELETE FROM druvia_users WHERE user_id = $1', ['user_test_realtime']);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   describe('Input Validation', () => {
@@ -202,6 +206,18 @@ describe('RealtimeService Integration', () => {
   });
 
   describe('realtime_enabled behavior', () => {
+    beforeEach(async () => {
+      await pool.query(
+        `UPDATE ${testSchemaName}._meta_tables
+         SET realtime_enabled = false, updated_at = NOW()
+         WHERE table_name = 'test_realtime_table'`
+      );
+      await pool.query(`DROP TABLE IF EXISTS ${testSchemaName}.unregistered_table`);
+      await pool.query(
+        `DELETE FROM ${testSchemaName}._meta_tables WHERE table_name = 'unregistered_table'`
+      );
+    });
+
     it('getTableSubscriptions should return enabled=false by default', async () => {
       const subscriptions = await realtimeService.getTableSubscriptions(testSchemaName);
       const testTable = subscriptions.find(s => s.tableName === 'test_realtime_table');
@@ -211,6 +227,12 @@ describe('RealtimeService Integration', () => {
     });
 
     it('configureTableSubscription should update _meta_tables.realtime_enabled', async () => {
+      vi.stubGlobal('fetch', vi.fn());
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({}),
+      } as never);
+
       // Enable
       const result = await realtimeService.configureTableSubscription(
         testSchemaName,
@@ -246,6 +268,12 @@ describe('RealtimeService Integration', () => {
     });
 
     it('configureTableSubscription should upsert for unregistered tables', async () => {
+      vi.stubGlobal('fetch', vi.fn());
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({}),
+      } as never);
+
       // Create a table not in _meta_tables
       await pool.query(`
         CREATE TABLE IF NOT EXISTS ${testSchemaName}.unregistered_table (
@@ -275,6 +303,80 @@ describe('RealtimeService Integration', () => {
         `DELETE FROM ${testSchemaName}._meta_tables WHERE table_name = $1`,
         ['unregistered_table']
       );
+    });
+  });
+
+  describe('imported schemas without _meta_tables', () => {
+    const importedSchemaName = 'test_realtime_imported_nometa';
+
+    beforeEach(async () => {
+      await pool.query(`DROP SCHEMA IF EXISTS "${importedSchemaName}" CASCADE`);
+      await pool.query(`CREATE SCHEMA "${importedSchemaName}"`);
+      await pool.query(`
+        CREATE TABLE "${importedSchemaName}".imported_players (
+          id SERIAL PRIMARY KEY,
+          nickname TEXT
+        )
+      `);
+    });
+
+    afterAll(async () => {
+      await pool.query(`DROP SCHEMA IF EXISTS "${importedSchemaName}" CASCADE`);
+    });
+
+    it('getTableSubscriptions should bootstrap _meta_tables when missing', async () => {
+      const subscriptions = await realtimeService.getTableSubscriptions(importedSchemaName);
+
+      expect(subscriptions).toEqual([
+        expect.objectContaining({
+          tableName: 'imported_players',
+          schemaName: importedSchemaName,
+          enabled: false,
+          hasSelectPermission: false,
+        }),
+      ]);
+
+      const metaColumns = await pool.query(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = $1 AND table_name = '_meta_tables'
+         ORDER BY ordinal_position`,
+        [importedSchemaName]
+      );
+      expect(metaColumns.rows.map((row: { column_name: string }) => row.column_name)).toEqual([
+        'id',
+        'table_name',
+        'description',
+        'row_count',
+        'realtime_enabled',
+        'created_at',
+        'updated_at',
+      ]);
+    });
+
+    it('configureTableSubscription should bootstrap _meta_tables when missing', async () => {
+      vi.stubGlobal('fetch', vi.fn());
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({}),
+      } as never);
+
+      const result = await realtimeService.configureTableSubscription(
+        importedSchemaName,
+        'imported_players',
+        true,
+      );
+
+      expect(result.enabled).toBe(true);
+
+      const metaRow = await pool.query(
+        `SELECT realtime_enabled
+         FROM "${importedSchemaName}"._meta_tables
+         WHERE table_name = $1`,
+        ['imported_players']
+      );
+      expect(metaRow.rows[0].realtime_enabled).toBe(true);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
   });
 });
