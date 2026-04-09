@@ -23,6 +23,30 @@ describe('API app CORS', () => {
   })
 })
 
+describe('API app proxy awareness', () => {
+  it('honors X-Forwarded-For when trust proxy is enabled', async () => {
+    const app = buildApp({ trustProxy: true })
+
+    app.get('/__test/ip', async (request) => ({ ip: request.ip }))
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/__test/ip',
+        remoteAddress: '172.20.0.10',
+        headers: {
+          'x-forwarded-for': '198.51.100.24, 172.20.0.10',
+        },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ ip: '198.51.100.24' })
+    } finally {
+      await app.close()
+    }
+  })
+})
+
 describe('API app internal functions route', () => {
   it('registers the internal functions graphql route', async () => {
     const app = buildApp()

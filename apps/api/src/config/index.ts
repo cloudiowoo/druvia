@@ -5,10 +5,19 @@ import { dirname, resolve } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: resolve(__dirname, '../../../../.env') });
 
+function parseBooleanEnv(value: string | undefined, defaultValue = false): boolean {
+  if (typeof value !== 'string' || value.length === 0) {
+    return defaultValue;
+  }
+
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   host: process.env.HOST || '0.0.0.0',
   nodeEnv: process.env.NODE_ENV || 'development',
+  trustProxy: parseBooleanEnv(process.env.TRUST_PROXY, false),
   corsOrigins: process.env.CORS_ORIGINS?.split(',').map((s) => s.trim()) || [],
   database: {
     host: process.env.DB_HOST || 'localhost',

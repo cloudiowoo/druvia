@@ -276,6 +276,91 @@ describe('QueryBuilder', () => {
     expect(result.error!.message).toContain('field not found')
   })
 
+  it('preserves non-standard top-level error payloads instead of misclassifying them as network errors', async () => {
+    const fetch = mockFetch({
+      data: null,
+      error: {
+        code: 'FORBIDDEN',
+        message: 'permission denied',
+      },
+    })
+    const qb = new QueryBuilder('users', '/graphql', fetch)
+    const result = await qb.select('id').eq('id', 'user_123')
+
+    expect(result.data).toBeNull()
+    expect(result.error).toEqual({
+      code: 'FORBIDDEN',
+      message: 'permission denied',
+    })
+  })
+
+  it('returns BAD_RESPONSE when GraphQL payload is malformed', async () => {
+    const fetch = mockFetch({ success: false })
+    const qb = new QueryBuilder('users', '/graphql', fetch)
+    const result = await qb.select('id').maybeSingle()
+
+    expect(result.data).toBeNull()
+    expect(result.error).toEqual({
+      code: 'BAD_RESPONSE',
+      message: 'GraphQL response did not contain a data field',
+    })
+  })
+
+  it('returns BAD_RESPONSE when response JSON cannot be parsed', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => {
+        throw new Error('Unexpected token < in JSON')
+      },
+    } as Response) as unknown as FetchFn
+    const qb = new QueryBuilder('users', '/graphql', fetch)
+    const result = await qb.select('id')
+
+    expect(result.data).toBeNull()
+    expect(result.error).toEqual({
+      code: 'BAD_RESPONSE',
+      message: 'GraphQL response was empty or malformed',
+    })
+  })
+
+  it('returns BAD_RESPONSE when wildcard introspection payload is malformed', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => null,
+    } as Response) as unknown as FetchFn
+
+    const qb = new QueryBuilder('users', '/graphql', fetch)
+    const result = await qb.select('*')
+
+    expect(result.data).toBeNull()
+    expect(result.error).toEqual({
+      code: 'BAD_RESPONSE',
+      message: '@druvia/sdk: Introspection failed for type "users": GraphQL response was empty or malformed. Specify fields explicitly.',
+    })
+  })
+
+  it('preserves non-standard top-level errors during wildcard introspection', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({
+        data: null,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'permission denied',
+        },
+      }),
+    } as Response) as unknown as FetchFn
+
+    const qb = new QueryBuilder('users', '/graphql', fetch)
+    const result = await qb.select('*')
+
+    expect(result.data).toBeNull()
+    expect(result.error).toEqual({
+      code: 'FORBIDDEN',
+      message: '@druvia/sdk: Introspection failed for type "users": permission denied. Specify fields explicitly.',
+    })
+  })
+
   it('handles network errors', async () => {
     const fetch = vi.fn().mockRejectedValue(new Error('Network error'))
     const qb = new QueryBuilder('users', '/graphql', fetch as FetchFn)

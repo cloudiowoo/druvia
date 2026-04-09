@@ -27,6 +27,7 @@
   - Redis key 必须包含 `projectId`
   - `perUser` 实际是“项目内 actor”限额，不是跨项目全局用户限额
   - 当前匿名 `apikey` 流量按 `request.ip` 归并，除非认证上下文先扩展出 API key identity
+  - 若 API 部署在 nginx / ingress 后，必须开启 `TRUST_PROXY`；否则 `request.ip` 会退化为代理地址，匿名 GraphQL 限流会把多用户错误合并
 
 ## 近期风险
 

@@ -1,4 +1,5 @@
 import { buildQuery, buildMutation, type QueryState, type FilterItem, type WhereItem, type OrFilter, type OrderByItem } from '../lib/graphql-builder.js'
+import { parseGraphqlResponsePayload, readGraphqlResponsePayload } from '../lib/graphql-response.js'
 import type { FetchFn, DruviaResponse, MutationAffectedRows } from '../types.js'
 
 type PendingOp =
@@ -13,6 +14,16 @@ type GraphQLTypeRef = {
   kind: string
   name?: string | null
   ofType?: GraphQLTypeRef | null
+}
+
+class QueryBuilderExecutionError extends Error {
+  code: string
+
+  constructor(code: string, message: string) {
+    super(message)
+    this.code = code
+    this.name = 'QueryBuilderExecutionError'
+  }
 }
 
 export class QueryBuilder<
@@ -249,31 +260,38 @@ export class QueryBuilder<
         body: JSON.stringify({ query }),
       })
 
-      const json = await response.json()
-
-      if (json.errors) {
+      const payload = await readGraphqlResponsePayload(response)
+      const parsed = parseGraphqlResponsePayload(payload)
+      if (parsed.error) {
         return {
           data: null,
-          error: { code: 'GRAPHQL_ERROR', message: json.errors[0].message },
+          error: parsed.error,
         }
       }
 
-      const dataKey = Object.keys(json.data)[0]
-      let data = json.data[dataKey]
+      const dataKey = Object.keys(parsed.data)[0]
+      let data: unknown = parsed.data[dataKey]
 
-      if (data?.returning) {
-        data = data.returning
+      if (typeof data === 'object' && data !== null && 'returning' in data) {
+        data = (data as { returning: unknown }).returning
       }
 
       if (this.singleFlag) {
         if (Array.isArray(data) && data.length === 0) {
           return { data: null, error: { code: 'PGRST116', message: 'No rows found' } }
         }
-        return { data: Array.isArray(data) ? data[0] : data, error: null }
+        return { data: (Array.isArray(data) ? data[0] : data) as TResult, error: null }
       }
 
-      return { data, error: null }
+      return { data: data as TResult, error: null }
     } catch (err) {
+      if (err instanceof QueryBuilderExecutionError) {
+        return {
+          data: null,
+          error: { code: err.code, message: err.message },
+        }
+      }
+
       return {
         data: null,
         error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) },
@@ -408,8 +426,13 @@ export class QueryBuilder<
           }`
         }),
       })
-      const json = await response.json()
-      const rawFields = json.data?.__type?.fields as Array<{ name: string; type: GraphQLTypeRef }> | undefined
+      const payload = await readGraphqlResponsePayload(response)
+      const parsed = parseGraphqlResponsePayload(payload)
+      if (parsed.error) {
+        throw new QueryBuilderExecutionError(parsed.error.code, parsed.error.message)
+      }
+
+      const rawFields = (parsed.data.__type as { fields?: Array<{ name: string; type: GraphQLTypeRef }> } | null | undefined)?.fields
       if (rawFields && rawFields.length > 0) {
         const isSelectableLeaf = (type: GraphQLTypeRef | null | undefined): boolean => {
           if (!type) return false
@@ -425,10 +448,14 @@ export class QueryBuilder<
         QueryBuilder.fieldCache.set(typeName, scalars)
         return scalars
       }
-      throw new Error(`No fields found`)
+      throw new QueryBuilderExecutionError('BAD_RESPONSE', 'No fields found')
     } catch (err) {
+      const code = err instanceof QueryBuilderExecutionError ? err.code : 'BAD_RESPONSE'
       const cause = err instanceof Error ? err.message : String(err)
-      throw new Error(`@druvia/sdk: Introspection failed for type "${typeName}": ${cause}. Specify fields explicitly.`)
+      throw new QueryBuilderExecutionError(
+        code,
+        `@druvia/sdk: Introspection failed for type "${typeName}": ${cause}. Specify fields explicitly.`
+      )
     }
   }
 

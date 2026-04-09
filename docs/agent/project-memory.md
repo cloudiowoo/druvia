@@ -106,10 +106,15 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 - SDK 仍需兼容历史项目 session 存储键：
   - 读取时需要接受旧的 `druvia.project_session`
   - 新版读取后会迁移到 `druvia.project_session:${projectId}`
-- `functions` / `rpc` 的 token 选择顺序现在是：
+- `functions` / `rpc` / `database/graphql` 的 token 选择顺序现在是：
   1. project session token
   2. platform session token
-- `database/graphql` 与 `storage` 仍保持平台 token 路径，不自动切到 project token。
+- `storage` 仍保持平台 token 路径，不自动切到 project token。
+- SDK `query builder` / `database.graphql()` 现在共用 GraphQL 响应解析：
+  - 平台已返回 HTTP 响应但 payload 为空、缺失 `data`、或非预期结构时，返回 `BAD_RESPONSE`
+  - 只有 `fetch` 本身抛错时才返回 `NETWORK_ERROR`
+  - 对平台非标准 `{ error: { code, message } }` 响应会保留原始 `code/message`，不再因 `Object.keys(json.data)` 抛错而误报网络错误
+  - `select('*')` 的 introspection 路径也已接入同一套解析与错误分类，不再单独走旧的裸 `response.json()`
 - 新迁入应用应优先调用平台 project auth API，而不是继续依赖 Edge Function 自造 session。
 - `projectAuth.logout()` 现在必须显式带当前 project session Bearer token。
 - SDK 发版前的最小验证命令应优先用：
@@ -119,6 +124,17 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 - SDK 当前发包约定：
   - `packages/sdk/package.json` 的 `files` 仅包含 `dist`
   - `prepack` 会先执行 `pnpm build`
+  - prerelease 版本如 `0.1.0-beta.3` 不能直接裸跑 `npm publish`
+  - npm 11 下必须显式指定 dist-tag；beta 通道当前最新版本应使用 `npm publish --tag beta`
+  - 发布后可用 `npm dist-tag ls @druvia/sdk` 确认 tag 指向
+  - 若要把 beta 版本切成默认 `latest`，必须显式执行 `npm dist-tag add @druvia/sdk@<version> latest`
+  - 该动作属于例外操作，不应作为常规 beta 发版默认步骤
+  - beta 持续期内，应用侧推荐显式消费 `beta` 通道，而不是依赖默认 `latest`
+  - 迁移项目联调可使用 `@druvia/sdk@beta` 并通过显式 update 命令拉新版本
+  - 主分支或待发布版本更适合锁定到具体 beta 号，避免未验证升级
+  - 当前 taro-app 迁移仓库实际使用 `npm + package-lock.json`，不是 `pnpm`
+  - 该仓库当前存在既有 RN/Taro peer 冲突；仅升级 SDK 时可临时使用 `npm install @druvia/sdk@beta --legacy-peer-deps`
+  - 该做法只用于绕过历史 peer 校验，不代表根因已修复
 - 仓库会忽略 SDK 发布副产物：
   - `*.tgz`
   - `.npmrc`
@@ -152,7 +168,9 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - `platform_user` -> `platform:${userId}`
   - `project_user` -> `project:${sub}`
   - `apikey` -> `anon-ip:${request.ip}`
+- SDK `database/graphql` 现在优先带 `projectAuth` session Bearer token；项目终端用户已登录时，请求应落入 `project:${sub}` 桶，而不是继续归到匿名 IP。
 - 因此当前匿名 `apikey` 流量仍按来源 IP 聚合，不是按 API key id 独立计数。
+- 若 API 部署在 nginx / ingress 后，必须开启 `TRUST_PROXY`；否则匿名 `apikey` 的 `request.ip` 会退化为代理地址，导致 GraphQL 限流误合并。
 - GraphQL 限流 Redis key 必须包含 `projectId`，否则会把跨项目流量错误合并。
 - 项目设置保存虽已改为 `settings` 顶层 JSONB merge，但 `rateLimits` 内部仍不是深合并：
   - 前端保存 `rateLimits.graphql` 时必须保留同级其他子键

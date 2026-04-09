@@ -44,8 +44,9 @@ export const appCorsOptions: FastifyCorsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-druvia-storage-ticket', 'x-druvia-trusted-backend-key'],
 };
 
-export function buildApp() {
+export function buildApp(options: { trustProxy?: boolean } = {}) {
   const app = Fastify({
+    trustProxy: options.trustProxy ?? config.trustProxy,
     logger: {
       level: config.nodeEnv === 'development' ? 'debug' : 'info',
       messageKey: 'msg',

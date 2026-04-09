@@ -72,6 +72,34 @@ describe('createClient', () => {
     expect(headers.get('apikey')).toBe('test-key')
   })
 
+  it('graphql() prefers the project session token over the platform session token', async () => {
+    const store = new Map<string, string>([
+      ['druvia.session', JSON.stringify({ accessToken: 'platform-token', user: { id: 1 } })],
+      ['druvia.project_session:proj_123', JSON.stringify({ accessToken: 'project-token', user: { id: 'usr_proj_1' } })],
+    ])
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { __typename: 'query_root' }, error: null }),
+    })
+    const storage = {
+      getItem: vi.fn((key: string) => store.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => { store.set(key, value) }),
+      removeItem: vi.fn((key: string) => { store.delete(key) }),
+    }
+
+    const client = createClient('http://localhost:3001/api/v1', 'test-key', {
+      projectId: 'proj_123',
+      fetch: fetch as any,
+      storage,
+    })
+
+    await client.graphql('query { __typename }')
+
+    const headers = new Headers((fetch as any).mock.calls[0][1].headers)
+    expect(headers.get('Authorization')).toBe('Bearer project-token')
+    expect(headers.get('apikey')).toBe('test-key')
+  })
+
   it('functions() falls back to the platform token when no project session exists', async () => {
     const store = new Map<string, string>([
       ['druvia.session', JSON.stringify({ accessToken: 'platform-token', user: { id: 1 } })],

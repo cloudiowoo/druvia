@@ -1,5 +1,6 @@
 import { QueryBuilder } from './query-builder.js'
 import type { FetchFn, DruviaResponse } from '../types.js'
+import { parseGraphqlResponsePayload, readGraphqlResponsePayload } from '../lib/graphql-response.js'
 
 export class DruviaDatabase {
   private graphqlUrl: string
@@ -22,11 +23,12 @@ export class DruviaDatabase {
         method: 'POST',
         body: JSON.stringify({ query, variables }),
       })
-      const json = await response.json()
-      if (json.errors) {
-        return { data: null, error: { code: 'GRAPHQL_ERROR', message: json.errors[0].message } }
+      const payload = await readGraphqlResponsePayload(response)
+      const parsed = parseGraphqlResponsePayload(payload)
+      if (parsed.error) {
+        return { data: null, error: parsed.error }
       }
-      return { data: json.data as T, error: null }
+      return { data: parsed.data as T, error: null }
     } catch (err) {
       return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
     }
