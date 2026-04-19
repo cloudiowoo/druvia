@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { api } from '@/lib/api';
 import { useAppStore } from '@/store';
@@ -22,6 +23,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { toast } from '@/hooks/use-toast';
+import { canResetUserPassword } from './permissions';
 
 interface User {
   userId: string;
@@ -464,12 +466,21 @@ export default function UsersPage() {
                           >
                             编辑
                           </button>
-                          <button
-                            onClick={() => handleResetPassword(user.userId)}
-                            className="text-sm text-purple-600 hover:underline"
-                          >
-                            重置密码
-                          </button>
+                          {canResetUserPassword(currentUser, user) ? (
+                            <button
+                              onClick={() => handleResetPassword(user.userId)}
+                              className="text-sm text-purple-600 hover:underline"
+                            >
+                              重置密码
+                            </button>
+                          ) : isSelf(user.userId) ? (
+                            <Link
+                              href="/settings"
+                              className="text-sm text-gray-500 hover:underline"
+                            >
+                              到设置页改密
+                            </Link>
+                          ) : null}
                         </>
                       )}
                       {canOperateUser(user) && (

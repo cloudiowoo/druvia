@@ -176,6 +176,15 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - 前端保存 `rateLimits.graphql` 时必须保留同级其他子键
   - 不能只提交一个孤立的 `graphql` 子对象并假设后端会自动深合并
 
+## Backup 运行近期事实
+
+- Backup / Restore 的正式执行路径应优先使用直连数据库的 `pg_dump` / `pg_restore`，而不是把 API 服务绑定到宿主机 `docker exec`。
+- `docker exec <postgres-container>` 当前只作为本地开发兜底：
+  - 适用于 API 进程所在环境缺少 `pg_dump` / `pg_restore` 二进制但可访问本机 Docker CLI 的场景
+- 生产 API 镜像必须包含 PostgreSQL client tools；否则备份/恢复会因命令缺失失败：
+  - 旧实现会直接表现为 `spawn docker ENOENT`
+  - 新实现若镜像也缺少 `pg_dump` / `pg_restore`，则会在直连命令缺失后再回退兜底
+
 ## Functions / API Key 近期事实
 
 - API 已支持 `apikey` fallback 认证。

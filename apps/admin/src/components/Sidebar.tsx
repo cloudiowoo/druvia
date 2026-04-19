@@ -6,10 +6,12 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useAppStore } from '@/store';
 import { isMultiTenantEnabled, getDefaultTenantId } from '@/lib/tenant-config';
+import { buildGlobalNav, buildProjectNav, buildTenantNav, type NavIconKey } from './sidebar-nav';
 import {
   LayoutDashboard,
   Building2,
   Users,
+  User,
   HardDrive,
   Settings,
   FolderKanban,
@@ -24,38 +26,20 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-interface NavItem {
-  href: string;
-  label: string;
-  icon: React.ReactNode;
-}
-
-// Global navigation (no tenant context)
-// In single-tenant mode, hide tenant management and redirect dashboard to default tenant
-const getGlobalNav = (): NavItem[] => {
-  const multiTenant = isMultiTenantEnabled();
-  const defaultTenant = getDefaultTenantId();
-
-  const nav: NavItem[] = [
-    {
-      href: multiTenant ? '/dashboard' : `/t/${defaultTenant}`,
-      label: multiTenant ? '仪表板' : '首页',
-      icon: <LayoutDashboard className="h-4 w-4" />
-    },
-  ];
-
-  // Only show tenant management in multi-tenant mode
-  if (multiTenant) {
-    nav.push({ href: '/tenants', label: '租户管理', icon: <Building2 className="h-4 w-4" /> });
-  }
-
-  nav.push(
-    { href: '/users', label: '用户管理', icon: <Users className="h-4 w-4" /> },
-    { href: '/backups', label: '备份管理', icon: <HardDrive className="h-4 w-4" /> },
-    { href: '/settings', label: '设置', icon: <Settings className="h-4 w-4" /> },
-  );
-
-  return nav;
+const navIcons: Record<NavIconKey, React.ReactNode> = {
+  dashboard: <LayoutDashboard className="h-4 w-4" />,
+  tenant: <Building2 className="h-4 w-4" />,
+  users: <Users className="h-4 w-4" />,
+  profile: <User className="h-4 w-4" />,
+  storage: <HardDrive className="h-4 w-4" />,
+  settings: <Settings className="h-4 w-4" />,
+  project: <FolderKanban className="h-4 w-4" />,
+  table: <Table2 className="h-4 w-4" />,
+  database: <Database className="h-4 w-4" />,
+  key: <Key className="h-4 w-4" />,
+  shield: <Shield className="h-4 w-4" />,
+  realtime: <Radio className="h-4 w-4" />,
+  functions: <Code className="h-4 w-4" />,
 };
 
 export function Sidebar() {
@@ -70,36 +54,8 @@ export function Sidebar() {
   const projectId = projectMatch?.[2];
 
   // Build navigation based on context
-  const getTenantNav = (tid: string): NavItem[] => {
-    const nav: NavItem[] = [
-      { href: `/t/${tid}`, label: '概览', icon: <LayoutDashboard className="h-4 w-4" /> },
-      { href: `/t/${tid}/projects`, label: '项目', icon: <FolderKanban className="h-4 w-4" /> },
-    ];
-    // 单租户模式下添加用户管理
-    if (!isMultiTenantEnabled()) {
-      nav.push({ href: '/users', label: '用户管理', icon: <Users className="h-4 w-4" /> });
-    }
-    nav.push(
-      { href: `/t/${tid}/backups`, label: '备份', icon: <HardDrive className="h-4 w-4" /> },
-      { href: `/t/${tid}/settings`, label: '设置', icon: <Settings className="h-4 w-4" /> },
-    );
-    return nav;
-  };
-
-  const getProjectNav = (tid: string, pid: string): NavItem[] => [
-    { href: `/t/${tid}/p/${pid}`, label: '概览', icon: <LayoutDashboard className="h-4 w-4" /> },
-    { href: `/t/${tid}/p/${pid}/tables`, label: '数据表', icon: <Table2 className="h-4 w-4" /> },
-    { href: `/t/${tid}/p/${pid}/database`, label: '数据库', icon: <Database className="h-4 w-4" /> },
-    { href: `/t/${tid}/p/${pid}/storage`, label: '存储', icon: <HardDrive className="h-4 w-4" /> },
-    { href: `/t/${tid}/p/${pid}/auth`, label: '认证', icon: <Shield className="h-4 w-4" /> },
-    { href: `/t/${tid}/p/${pid}/realtime`, label: '实时', icon: <Radio className="h-4 w-4" /> },
-    { href: `/t/${tid}/p/${pid}/functions`, label: 'Functions', icon: <Code className="h-4 w-4" /> },
-    { href: `/t/${tid}/p/${pid}/api`, label: 'API', icon: <Key className="h-4 w-4" /> },
-    { href: `/t/${tid}/p/${pid}/settings`, label: '设置', icon: <Settings className="h-4 w-4" /> },
-  ];
-
   // Determine which nav to show
-  let navItems: NavItem[];
+  let navItems: ReturnType<typeof buildGlobalNav>;
   let contextTitle: string | null = null;
   let contextSubtitle: string | null = null;
   let backHref: string | null = null;
@@ -108,24 +64,24 @@ export function Sidebar() {
   const defaultTenant = getDefaultTenantId();
 
   if (projectId && tenantId) {
-    navItems = getProjectNav(tenantId, projectId);
+    navItems = buildProjectNav(tenantId, projectId);
     contextTitle = currentProject?.name || '项目';
     contextSubtitle = multiTenant ? (currentTenant?.name ?? null) : null;
     backHref = `/t/${tenantId}`;
   } else if (tenantId) {
-    navItems = getTenantNav(tenantId);
+    navItems = buildTenantNav(tenantId, multiTenant);
     contextTitle = multiTenant ? (currentTenant?.name || '租户') : 'Druvia';
     contextSubtitle = multiTenant ? (currentTenant?.alias ?? null) : null;
     // In single-tenant mode, don't show back button from tenant view
     backHref = multiTenant ? '/tenants' : null;
   } else if (!multiTenant) {
     // 单租户模式下，全局页面也使用租户导航菜单
-    navItems = getTenantNav(defaultTenant);
+    navItems = buildTenantNav(defaultTenant, multiTenant);
     contextTitle = 'Druvia';
     contextSubtitle = null;
     backHref = null;
   } else {
-    navItems = getGlobalNav();
+    navItems = buildGlobalNav(multiTenant, defaultTenant);
   }
 
   const handleBack = () => {
@@ -189,7 +145,7 @@ export function Sidebar() {
                 : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
             )}
           >
-            {item.icon}
+            {navIcons[item.icon]}
             <span>{item.label}</span>
           </Link>
         ))}

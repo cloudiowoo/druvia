@@ -4,6 +4,14 @@ import { generateBackupId } from '@druvia/shared';
 import { getDefaultStorageAdapter } from '../../adapters/storage/index.js';
 import { config } from '../../config/index.js';
 import { createApiLogger } from '../../lib/logger.js';
+import {
+  buildDirectPgDumpCommand,
+  buildDirectPgRestoreCommand,
+  buildDockerPgDumpCommand,
+  buildDockerPgRestoreCommand,
+  runWithEnoentFallback,
+  type CommandSpec,
+} from './backup-command.js';
 
 const logger = createApiLogger({ module: 'backup' });
 
@@ -61,73 +69,88 @@ function toBackup(row: BackupRow): Backup {
   };
 }
 
-// Run pg_dump command via Docker
-async function runPgDump(schemaName: string): Promise<Buffer> {
+const BACKUP_POSTGRES_CONTAINER = process.env.BACKUP_POSTGRES_CONTAINER || 'druvia-postgres';
+
+async function runCommandForBuffer(
+  spec: CommandSpec,
+  commandLabel: 'pg_dump' | 'pg_restore',
+  schemaName: string
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-
-    // Use docker exec to run pg_dump inside the postgres container
-    const pgDump = spawn('docker', [
-      'exec',
-      'druvia-postgres',
-      'pg_dump',
-      '-U', config.database.user,
-      '-d', config.database.database,
-      '-n', schemaName,
-      '-F', 'c',  // Custom format (compressed)
-      '--no-owner',
-      '--no-acl',
-    ]);
-
-    pgDump.stdout.on('data', (chunk) => chunks.push(chunk));
-    pgDump.stderr.on('data', (data) => {
-      logger.error('pg_dump stderr', { schemaName }, String(data));
+    const child = spawn(spec.command, spec.args, {
+      env: spec.env,
     });
 
-    pgDump.on('close', (code) => {
+    child.stdout.on('data', (chunk) => chunks.push(chunk));
+    child.stderr.on('data', (data) => {
+      logger.error(`${commandLabel} stderr`, { schemaName, command: spec.command }, String(data));
+    });
+
+    child.on('close', (code) => {
       if (code === 0) {
         resolve(Buffer.concat(chunks));
       } else {
-        reject(new Error(`pg_dump exited with code ${code}`));
+        reject(new Error(`${commandLabel} exited with code ${code}`));
       }
     });
 
-    pgDump.on('error', reject);
+    child.on('error', reject);
   });
 }
 
-// Run pg_restore command via Docker
-async function runPgRestore(schemaName: string, data: Buffer): Promise<void> {
+async function runCommandForRestore(
+  spec: CommandSpec,
+  schemaName: string,
+  data: Buffer
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Use docker exec to run pg_restore inside the postgres container
-    const pgRestore = spawn('docker', [
-      'exec',
-      '-i',  // Interactive mode to accept stdin
-      'druvia-postgres',
-      'pg_restore',
-      '-U', config.database.user,
-      '-d', config.database.database,
-      '-n', schemaName,
-      '--no-owner',
-      '--no-acl',
-      '--clean',
-      '--if-exists',
-    ]);
-
-    pgRestore.stdin.write(data);
-    pgRestore.stdin.end();
-
-    pgRestore.stderr.on('data', (data) => {
-      logger.error('pg_restore stderr', { schemaName }, String(data));
+    const child = spawn(spec.command, spec.args, {
+      env: spec.env,
     });
 
-    pgRestore.on('close', (code) => {
+    child.stdin.write(data);
+    child.stdin.end();
+
+    child.stderr.on('data', (stderr) => {
+      logger.error('pg_restore stderr', { schemaName, command: spec.command }, String(stderr));
+    });
+
+    child.on('close', (_code) => {
       // pg_restore may return non-zero even on success with warnings
       resolve();
     });
 
-    pgRestore.on('error', reject);
+    child.on('error', reject);
   });
+}
+
+async function runPgDump(schemaName: string): Promise<Buffer> {
+  const directCommand = buildDirectPgDumpCommand(config.database, schemaName);
+  const dockerCommand = buildDockerPgDumpCommand(
+    BACKUP_POSTGRES_CONTAINER,
+    config.database,
+    schemaName
+  );
+
+  return runWithEnoentFallback(
+    () => runCommandForBuffer(directCommand, 'pg_dump', schemaName),
+    () => runCommandForBuffer(dockerCommand, 'pg_dump', schemaName)
+  );
+}
+
+async function runPgRestore(schemaName: string, data: Buffer): Promise<void> {
+  const directCommand = buildDirectPgRestoreCommand(config.database, schemaName);
+  const dockerCommand = buildDockerPgRestoreCommand(
+    BACKUP_POSTGRES_CONTAINER,
+    config.database,
+    schemaName
+  );
+
+  return runWithEnoentFallback(
+    () => runCommandForRestore(directCommand, schemaName, data),
+    () => runCommandForRestore(dockerCommand, schemaName, data)
+  );
 }
 
 // Get tables in schema

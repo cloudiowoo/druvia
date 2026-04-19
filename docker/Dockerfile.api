@@ -30,8 +30,8 @@ WORKDIR /app
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
-# Add wget for healthcheck
-RUN apk add --no-cache wget
+# Add wget for healthcheck and PostgreSQL client tools for backups/restores
+RUN apk add --no-cache wget postgresql-client
 
 # Copy built files
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
