@@ -4,11 +4,12 @@ import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { getPublicApiBaseUrl, getPublicHasuraBaseUrl } from '@/lib/public-env';
 import { isMultiTenantEnabled } from '@/lib/tenant-config';
 import { toast } from '@/hooks/use-toast';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-const HASURA_URL = process.env.NEXT_PUBLIC_HASURA_URL || 'http://localhost:8080';
+const API_URL = getPublicApiBaseUrl();
+const HASURA_URL = getPublicHasuraBaseUrl();
 
 interface PlatformSettings {
   defaultPlan: string;

@@ -7,6 +7,7 @@ import dynamic from 'next/dynamic';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
+import { getPublicApiBaseUrl, getPublicHasuraBaseUrl } from '@/lib/public-env';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Copy, Check, Eye, EyeOff, Database, RefreshCw, Trash2, Plus } from 'lucide-react';
 
@@ -26,8 +27,8 @@ const ApiDocumentation = dynamic(
   { ssr: false, loading: () => <div className="flex items-center justify-center h-96">加载中...</div> }
 );
 
-const HASURA_URL = process.env.NEXT_PUBLIC_HASURA_URL || 'http://localhost:8080';
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const HASURA_URL = getPublicHasuraBaseUrl();
+const API_URL = getPublicApiBaseUrl();
 
 interface DbInfo {
   username: string | null;

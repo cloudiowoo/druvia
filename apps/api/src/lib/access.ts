@@ -1,5 +1,19 @@
 import { queryOne } from '../db/index.js';
 
+export async function checkTenantAccess(userId: string, tenantId: string): Promise<boolean> {
+  const result = await queryOne<{ exists: boolean }>(
+    `SELECT EXISTS(
+      SELECT 1
+      FROM druvia_tenants t
+      WHERE t.tenant_id = $1
+        AND t.owner_uid = (SELECT id FROM druvia_users WHERE user_id = $2)
+    ) AS exists`,
+    [tenantId, userId]
+  );
+
+  return result?.exists || false;
+}
+
 export async function checkProjectAccess(userId: string, projectId: string): Promise<boolean> {
   // 检查用户是否属于项目所属的租户
   const result = await queryOne<{ exists: boolean }>(

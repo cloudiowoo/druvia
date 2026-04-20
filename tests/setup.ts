@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import '@testing-library/jest-dom/vitest'
 
 function applyDefaultEnv(key: string, value: string) {
   if (process.env[key] == null) {

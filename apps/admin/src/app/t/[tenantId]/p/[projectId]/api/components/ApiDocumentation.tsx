@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ApiReferenceReact } from '@scalar/api-reference-react';
 import '@scalar/api-reference-react/style.css';
 import { api } from '@/lib/api';
+import { getPublicApiBaseUrl } from '@/lib/public-env';
 
 interface ApiDocumentationProps {
   projectId: string;
@@ -14,11 +15,12 @@ export function ApiDocumentation({ projectId }: ApiDocumentationProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const apiBaseUrl = getPublicApiBaseUrl();
   useEffect(() => {
     async function fetchOpenApiSpec() {
       try {
         const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/v1/projects/${projectId}/openapi`,
+          `${apiBaseUrl}/api/v1/projects/${projectId}/openapi`,
           {
             headers: {
               Authorization: `Bearer ${api.getToken()}`,
@@ -40,7 +42,7 @@ export function ApiDocumentation({ projectId }: ApiDocumentationProps) {
     }
 
     fetchOpenApiSpec();
-  }, [projectId]);
+  }, [apiBaseUrl, projectId]);
 
   if (loading) {
     return (

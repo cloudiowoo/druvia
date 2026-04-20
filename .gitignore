@@ -140,3 +140,6 @@ temp/
 # ================================
 hasura/.env
 hasura/metadata/databases/*/tables/*.yaml.bak
+
+.playwright-mcp/
+.superpowers/

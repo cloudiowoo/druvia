@@ -8,6 +8,7 @@ import { keymap } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 import { createGraphiQLFetcher } from '@graphiql/toolkit';
 import { api } from '@/lib/api';
+import { getPublicApiBaseUrl } from '@/lib/public-env';
 import { Button } from '@/components/ui/button';
 import { Play, Loader2 } from 'lucide-react';
 
@@ -24,12 +25,13 @@ export function GraphQLEditor({ projectId }: GraphQLEditorProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const apiBaseUrl = getPublicApiBaseUrl();
   const fetcher = useMemo(() => createGraphiQLFetcher({
-    url: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/v1/projects/${projectId}/graphql`,
+    url: `${apiBaseUrl}/api/v1/projects/${projectId}/graphql`,
     headers: {
       'Authorization': `Bearer ${api.getToken()}`,
     },
-  }), [projectId]);
+  }), [apiBaseUrl, projectId]);
 
   const executeQuery = useCallback(async () => {
     setLoading(true);

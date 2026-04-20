@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/select';
 import { AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { getPublicApiBaseUrl } from '@/lib/public-env';
 import { FAKER_RULES, inferFakerRule } from '@/lib/faker-mapping';
 
 interface Column {
@@ -160,7 +161,7 @@ export function DataGeneratorDialog({
 
       // Batch insert using existing import API
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/v1/schemas/${schemaName}/tables/${tableName}/import`,
+        `${apiBaseUrl}/api/v1/schemas/${schemaName}/tables/${tableName}/import`,
         {
           method: 'POST',
           headers: {
@@ -348,3 +349,4 @@ export function DataGeneratorDialog({
     </Dialog>
   );
 }
+  const apiBaseUrl = getPublicApiBaseUrl();

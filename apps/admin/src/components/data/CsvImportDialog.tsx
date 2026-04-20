@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select';
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { api } from '@/lib/api';
+import { getPublicApiBaseUrl } from '@/lib/public-env';
 
 interface Column {
   name: string;
@@ -155,7 +156,7 @@ export function CsvImportDialog({
 
         try {
           const response = await fetch(
-            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/v1/schemas/${schemaName}/tables/${tableName}/import`,
+            `${apiBaseUrl}/api/v1/schemas/${schemaName}/tables/${tableName}/import`,
             {
               method: 'POST',
               headers: {
@@ -374,3 +375,4 @@ export function CsvImportDialog({
     </Dialog>
   );
 }
+  const apiBaseUrl = getPublicApiBaseUrl();

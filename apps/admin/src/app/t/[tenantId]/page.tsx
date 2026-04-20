@@ -5,133 +5,116 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
-import { useAuth } from '@/lib/auth';
-import { api } from '@/lib/api';
+import { api, type TenantDashboardOverviewData, type TenantDashboardProjectRowData, type TenantDashboardTimelineEntryData } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { isMultiTenantEnabled } from '@/lib/tenant-config';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-} from 'recharts';
+import { WorkspaceHealthSummary } from '@/components/dashboard/WorkspaceHealthSummary';
+import { WorkspaceActionItems } from '@/components/dashboard/WorkspaceActionItems';
+import { WorkspaceMetricsRow } from '@/components/dashboard/WorkspaceMetricsRow';
+import { ProjectHealthList } from '@/components/dashboard/ProjectHealthList';
+import { CapabilityCoverageCard } from '@/components/dashboard/CapabilityCoverageCard';
+import { ActivityTimelineCard } from '@/components/dashboard/ActivityTimelineCard';
 
-interface Project {
+interface LegacyProject {
   projectId: string;
   alias: string;
   name: string;
   status: string;
 }
 
-interface Stats {
-  projects: number;
-  users: number;
-  backups: number;
-  storage: { used: number; total: number };
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return '暂无';
+  return new Date(value).toLocaleString('zh-CN');
 }
-
-interface Activity {
-  id: string;
-  action: string;
-  targetType: string | null;
-  targetId: string | null;
-  createdAt: string;
-}
-
-interface TrendData {
-  date: string;
-  users: number;
-  backups: number;
-}
-
-const COLORS = ['#6366f1', '#e5e7eb'];
 
 export default function TenantOverviewPage() {
-  const params = useParams();
-  const tenantId = params.tenantId as string;
+  const params = useParams() as { tenantId?: string } | null;
+  const tenantId = params?.tenantId ?? 'default';
   const { currentTenant } = useAppStore();
-  const { user } = useAuth();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [trends, setTrends] = useState<TrendData[]>([]);
+  const [legacyProjects, setLegacyProjects] = useState<LegacyProject[]>([]);
+  const [overview, setOverview] = useState<TenantDashboardOverviewData | null>(null);
+  const [projectRows, setProjectRows] = useState<TenantDashboardProjectRowData[]>([]);
+  const [timeline, setTimeline] = useState<TenantDashboardTimelineEntryData[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [partialLoadMessages, setPartialLoadMessages] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   const multiTenant = isMultiTenantEnabled();
 
   useEffect(() => {
-    async function fetchData() {
-      const [projectsRes, statsRes, activitiesRes, trendsRes] = await Promise.all([
-        api.listProjects(tenantId),
-        api.getDashboardStats(),
-        api.getDashboardActivities(5, 0),
-        api.getDashboardTrends(7),
-      ]);
+    let cancelled = false;
+
+    async function fetchLegacyTenantOverview() {
+      setLoadError(null);
+      setPartialLoadMessages([]);
+      const projectsRes = await api.listProjects(tenantId);
+
+      if (cancelled) return;
 
       if (projectsRes.success && projectsRes.data) {
-        setProjects(projectsRes.data);
-      }
-      if (statsRes.success && statsRes.data) {
-        setStats({
-          projects: projectsRes.data?.length || 0,
-          users: statsRes.data.users?.total || 0,
-          backups: statsRes.data.backups?.total || 0,
-          storage: statsRes.data.storage || { used: 0, total: 0 },
-        });
-      }
-      if (activitiesRes.success && activitiesRes.data) {
-        setActivities(activitiesRes.data.activities || []);
-      }
-      if (trendsRes.success && trendsRes.data) {
-        setTrends(trendsRes.data);
+        setLegacyProjects(projectsRes.data);
+      } else {
+        setLoadError(projectsRes.error?.message || '首页加载失败');
       }
       setLoading(false);
     }
-    fetchData();
-  }, [tenantId]);
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
+    async function fetchTenantDashboard() {
+      setLoadError(null);
+      setPartialLoadMessages([]);
+      try {
+        const [overviewRes, projectsRes, timelineRes] = await Promise.all([
+          api.getTenantDashboardOverview(tenantId),
+          api.getTenantDashboardProjects(tenantId),
+          api.getTenantDashboardTimeline(tenantId, 10),
+        ]);
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString('zh-CN');
-  };
+        if (cancelled) return;
 
-  const getActionLabel = (action: string) => {
-    const labels: Record<string, string> = {
-      'user.login': '用户登录',
-      'user.logout': '用户登出',
-      'project.create': '创建项目',
-      'project.delete': '删除项目',
-      'backup.create': '创建备份',
-      'backup.restore': '恢复备份',
+        const partialMessages: string[] = [];
+        if (overviewRes.success && overviewRes.data) {
+          setOverview(overviewRes.data);
+        } else {
+          setLoadError(overviewRes.error?.message || '首页加载失败');
+        }
+        if (projectsRes.success && projectsRes.data) {
+          setProjectRows(projectsRes.data);
+        } else {
+          setProjectRows([]);
+          partialMessages.push(projectsRes.error?.message || '项目健康加载失败');
+        }
+        if (timelineRes.success && timelineRes.data) {
+          setTimeline(timelineRes.data);
+        } else {
+          setTimeline([]);
+          partialMessages.push(timelineRes.error?.message || '时间线加载失败');
+        }
+        setPartialLoadMessages(partialMessages);
+      } catch {
+        if (!cancelled) {
+          setLoadError('首页加载失败');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    setLoading(true);
+
+    if (multiTenant) {
+      fetchLegacyTenantOverview();
+    } else {
+      fetchTenantDashboard();
+    }
+
+    return () => {
+      cancelled = true;
     };
-    return labels[action] || action;
-  };
-
-  const storagePercent = stats ? Math.round((stats.storage.used / stats.storage.total) * 100) || 0 : 0;
-  const storageData = [
-    { name: '已用', value: stats?.storage.used || 0 },
-    { name: '可用', value: (stats?.storage.total || 0) - (stats?.storage.used || 0) },
-  ];
-
-  const chartTrends = trends.map((t) => ({
-    ...t,
-    date: t.date.slice(5),
-  }));
+  }, [tenantId, multiTenant]);
 
   if (loading) {
     return (
@@ -149,7 +132,6 @@ export default function TenantOverviewPage() {
     );
   }
 
-  // 多租户模式：保持原有租户概览
   if (multiTenant) {
     return (
       <DashboardLayout>
@@ -182,11 +164,11 @@ export default function TenantOverviewPage() {
               <Link href={`/t/${tenantId}/projects/new`}>创建项目</Link>
             </Button>
           </div>
-          {projects.length === 0 ? (
+          {legacyProjects.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">暂无项目</div>
           ) : (
             <div className="divide-y">
-              {projects.map((project) => (
+              {legacyProjects.map((project) => (
                 <Link
                   key={project.projectId}
                   href={`/t/${tenantId}/p/${project.projectId}`}
@@ -208,222 +190,66 @@ export default function TenantOverviewPage() {
     );
   }
 
-  // 单租户模式：完整首页
+  if (loadError && !overview) {
+    return (
+      <DashboardLayout>
+        <div className="rounded-xl border bg-white p-8">
+          <h1 className="text-2xl font-bold">首页加载失败</h1>
+          <p className="mt-3 text-sm text-muted-foreground">{loadError}</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout>
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Druvia</h1>
-        <p className="text-muted-foreground">
-          欢迎回来，{user?.username || user?.email}
-        </p>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard title="项目数" value={stats?.projects || 0} icon="folder" />
-        <StatCard title="用户数" value={stats?.users || 0} icon="users" />
-        <StatCard title="备份数" value={stats?.backups || 0} icon="database" />
-        <div className="border rounded-lg p-4 bg-white">
-          <p className="text-sm text-muted-foreground mb-2">存储使用</p>
-          <p className="text-2xl font-bold">{formatBytes(stats?.storage.used || 0)}</p>
-          <div className="mt-2">
-            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-indigo-500 transition-all"
-                style={{ width: `${storagePercent}%` }}
-              />
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              共 {formatBytes(stats?.storage.total || 0)} ({storagePercent}%)
+      <div className="space-y-6">
+        <header className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">运营概览</h1>
+            <p className="text-sm text-muted-foreground">
+              {overview?.workspace.label ?? `${tenantId} workspace`} · 单租户模式
             </p>
           </div>
-        </div>
-      </div>
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            <HeaderMetric label="项目数" value={String(overview?.metrics.totalProjects ?? 0)} />
+            <HeaderMetric label="能力域" value={String(overview?.capabilities.length ?? 5)} />
+            <HeaderMetric label="更新时间" value={formatDateTime(overview?.updatedAt)} />
+          </div>
+        </header>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-        {/* Trends Chart */}
-        <div className="border rounded-lg p-4 bg-white lg:col-span-2">
-          <h2 className="font-semibold mb-4">7日趋势</h2>
-          {chartTrends.length === 0 ? (
-            <div className="h-[200px] flex items-center justify-center text-muted-foreground">
-              暂无数据
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={chartTrends}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="date" fontSize={12} tickLine={false} />
-                <YAxis fontSize={12} tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Line
-                  type="monotone"
-                  dataKey="users"
-                  name="用户"
-                  stroke="#6366f1"
-                  strokeWidth={2}
-                  dot={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="backups"
-                  name="备份"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
+        {partialLoadMessages.length > 0 ? (
+          <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <p className="font-medium">部分数据加载失败</p>
+            <p className="mt-1">{partialLoadMessages.join('；')}</p>
+          </section>
+        ) : null}
+
+        <WorkspaceHealthSummary
+          score={overview?.health.score ?? 0}
+          summary={overview?.health.summary ?? '正在计算健康状态。'}
+          factors={overview?.health.factors ?? { availability: 0, stability: 0, risk: 0 }}
+        />
+
+        <WorkspaceActionItems items={overview?.actionItems ?? []} />
+        <WorkspaceMetricsRow metrics={overview?.metrics} />
+
+        <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+          <ProjectHealthList tenantId={tenantId} projects={projectRows} />
+          <CapabilityCoverageCard capabilities={overview?.capabilities ?? []} />
         </div>
 
-        {/* Storage Pie Chart */}
-        <div className="border rounded-lg p-4 bg-white">
-          <h2 className="font-semibold mb-4">存储分布</h2>
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
-              <Pie
-                data={storageData}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                innerRadius={50}
-                outerRadius={70}
-              >
-                {storageData.map((_, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value) => formatBytes(Number(value))} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="flex justify-center gap-4 text-sm">
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded-full bg-indigo-500" />
-              已用
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded-full bg-gray-200" />
-              可用
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Projects List */}
-      <div className="border rounded-lg mb-6 bg-white">
-        <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="font-semibold">我的项目</h2>
-          <Button asChild size="sm">
-            <Link href={`/t/${tenantId}/projects/new`}>创建项目</Link>
-          </Button>
-        </div>
-        {projects.length === 0 ? (
-          <div className="p-8 text-center text-muted-foreground">暂无项目</div>
-        ) : (
-          <div className="divide-y">
-            {projects.map((project) => (
-              <Link
-                key={project.projectId}
-                href={`/t/${tenantId}/p/${project.projectId}`}
-                className="flex items-center justify-between p-4 hover:bg-muted/50 transition-colors"
-              >
-                <div>
-                  <p className="font-medium">{project.name}</p>
-                  <p className="text-sm text-muted-foreground">{project.alias}</p>
-                </div>
-                <Badge variant={project.status === 'active' ? 'default' : 'secondary'}>
-                  {project.status === 'active' ? '活跃' : project.status}
-                </Badge>
-              </Link>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Bottom Grid: Activities & System Status */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Activities */}
-        <div className="border rounded-lg bg-white">
-          <div className="p-4 border-b">
-            <h2 className="font-semibold">最近活动</h2>
-          </div>
-          <div className="p-4">
-            {activities.length === 0 ? (
-              <p className="text-muted-foreground text-center py-4">暂无活动</p>
-            ) : (
-              <div className="space-y-3">
-                {activities.map((activity) => (
-                  <div key={activity.id} className="flex justify-between text-sm py-1">
-                    <span>{getActionLabel(activity.action)}</span>
-                    <span className="text-muted-foreground">{formatDate(activity.createdAt)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* System Status */}
-        <div className="border rounded-lg bg-white">
-          <div className="p-4 border-b">
-            <h2 className="font-semibold">系统状态</h2>
-          </div>
-          <div className="p-4 space-y-2">
-            <StatusItem label="API 服务" status="online" />
-            <StatusItem label="数据库" status="online" />
-            <StatusItem label="Hasura" status="online" />
-            <StatusItem label="Redis" status="online" />
-          </div>
-        </div>
+        <ActivityTimelineCard items={timeline} />
       </div>
     </DashboardLayout>
   );
 }
 
-function StatCard({ title, value, icon }: { title: string; value: number; icon: string }) {
-  const iconMap: Record<string, React.ReactNode> = {
-    folder: (
-      <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-      </svg>
-    ),
-    users: (
-      <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-      </svg>
-    ),
-    database: (
-      <svg className="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-      </svg>
-    ),
-  };
-
+function HeaderMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border rounded-lg p-4 bg-white">
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-sm text-muted-foreground">{title}</p>
-        {iconMap[icon]}
-      </div>
-      <p className="text-2xl font-bold">{value}</p>
-    </div>
-  );
-}
-
-function StatusItem({ label, status }: { label: string; status: 'online' | 'offline' }) {
-  return (
-    <div className="flex items-center justify-between py-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span
-        className={`px-2 py-1 rounded-full text-xs font-medium ${
-          status === 'online' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-        }`}
-      >
-        {status === 'online' ? '正常' : '离线'}
-      </span>
+    <div className="rounded-lg border bg-white px-3 py-2 text-right">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-medium">{value}</p>
     </div>
   );
 }

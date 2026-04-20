@@ -54,6 +54,49 @@ describe('DashboardService Integration', () => {
       });
     });
   });
+
+  describe('Tenant dashboard', () => {
+    it('returns tenant-scoped overview with health and action items', async () => {
+      const overview = await dashboardService.getTenantOverview('default');
+
+      expect(overview.workspace.tenantId).toBe('default');
+      expect(overview.health.score).toBeGreaterThanOrEqual(0);
+      expect(overview.health.score).toBeLessThanOrEqual(100);
+      expect(['healthy', 'attention', 'risk']).toContain(overview.health.status);
+      expect(Array.isArray(overview.actionItems)).toBe(true);
+      expect(overview.metrics.totalProjects).toBeGreaterThanOrEqual(0);
+      expect(overview.metrics.activeProjects).toBeGreaterThanOrEqual(0);
+      expect(Array.isArray(overview.capabilities)).toBe(true);
+    });
+
+    it('returns tenant project health rows with capability statuses', async () => {
+      const rows = await dashboardService.getTenantProjectHealth('default');
+
+      expect(Array.isArray(rows)).toBe(true);
+      rows.forEach((row) => {
+        expect(row.projectId).toBeTruthy();
+        expect(row.healthScore).toBeGreaterThanOrEqual(0);
+        expect(row.capabilities).toMatchObject({
+          database: expect.any(String),
+          auth: expect.any(String),
+          storage: expect.any(String),
+          realtime: expect.any(String),
+          functions: expect.any(String),
+        });
+      });
+    });
+
+    it('returns tenant timeline entries ordered by newest first', async () => {
+      const timeline = await dashboardService.getTenantTimeline('default', 10);
+
+      expect(Array.isArray(timeline)).toBe(true);
+      for (let i = 1; i < timeline.length; i += 1) {
+        expect(new Date(timeline[i - 1].createdAt).getTime()).toBeGreaterThanOrEqual(
+          new Date(timeline[i].createdAt).getTime()
+        );
+      }
+    });
+  });
 });
 
 describe('ActivityService Integration', () => {

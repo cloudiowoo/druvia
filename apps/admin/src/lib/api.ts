@@ -19,6 +19,76 @@ interface ApiResponse<T> {
   };
 }
 
+export interface TenantDashboardCapability {
+  key: 'database' | 'auth' | 'storage' | 'realtime' | 'functions';
+  label: string;
+  coveredProjects: number;
+  totalProjects: number;
+  status: 'healthy' | 'attention' | 'risk';
+}
+
+export interface TenantDashboardOverviewData {
+  workspace: { tenantId: string; label: string };
+  health: {
+    score: number;
+    status: 'healthy' | 'attention' | 'risk';
+    summary: string;
+    factors: { availability: number; stability: number; risk: number };
+  };
+  actionItems: Array<{
+    severity: 'high' | 'medium' | 'low';
+    scope: 'workspace' | 'project';
+    title: string;
+    description: string;
+    href: string;
+  }>;
+  metrics: {
+    totalProjects: number;
+    activeProjects: number;
+    capabilityCoverage: number;
+    backupCoverage: number;
+    storageUsageBytes: number;
+    backupUsageBytes: number;
+  };
+  capabilities: TenantDashboardCapability[];
+  serviceStatus: {
+    api: 'healthy' | 'risk' | 'unknown';
+    database: 'healthy' | 'risk' | 'unknown';
+    redis: 'healthy' | 'risk' | 'unknown';
+    hasura: 'healthy' | 'risk' | 'unknown';
+    worker: 'healthy' | 'risk' | 'unknown';
+  };
+  updatedAt: string;
+}
+
+export interface TenantDashboardProjectRowData {
+  projectId: string;
+  name: string;
+  alias: string;
+  status: string;
+  healthScore: number;
+  healthStatus: 'healthy' | 'attention' | 'risk';
+  capabilities: {
+    database: 'ready' | 'configured' | 'missing' | 'attention';
+    auth: 'ready' | 'configured' | 'missing' | 'attention';
+    storage: 'ready' | 'configured' | 'missing' | 'attention';
+    realtime: 'ready' | 'configured' | 'missing' | 'attention';
+    functions: 'ready' | 'configured' | 'missing' | 'attention';
+  };
+  latestSignalAt: string | null;
+  latestBackupAt: string | null;
+  riskTags: string[];
+}
+
+export interface TenantDashboardTimelineEntryData {
+  id: string;
+  kind: 'activity' | 'incident';
+  title: string;
+  description: string | null;
+  createdAt: string;
+  href: string | null;
+}
+
 // Functions Types
 interface EdgeFunction {
   id: string;
@@ -647,6 +717,27 @@ class ApiClient {
       topTenants: Array<{ name: string; size: number }>;
       storageByTenant: Array<{ name: string; size: number }>;
     }>('GET', '/api/v1/dashboard/resources');
+  }
+
+  async getTenantDashboardOverview(tenantId: string) {
+    return this.request<TenantDashboardOverviewData>(
+      'GET',
+      `/api/v1/tenants/${tenantId}/dashboard/overview`
+    );
+  }
+
+  async getTenantDashboardProjects(tenantId: string) {
+    return this.request<TenantDashboardProjectRowData[]>(
+      'GET',
+      `/api/v1/tenants/${tenantId}/dashboard/projects`
+    );
+  }
+
+  async getTenantDashboardTimeline(tenantId: string, limit = 20) {
+    return this.request<TenantDashboardTimelineEntryData[]>(
+      'GET',
+      `/api/v1/tenants/${tenantId}/dashboard/timeline?limit=${limit}`
+    );
   }
 
   // Backups (global)
