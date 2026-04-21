@@ -16,6 +16,7 @@ interface LoginBody {
 }
 
 interface UpdateProfileBody {
+  email?: string;
   username?: string;
   avatarUrl?: string;
 }
@@ -127,16 +128,27 @@ export async function updateProfile(
     });
   }
 
-  const user = await userService.updateUser((request.user as JwtPayload).userId, request.body);
+  try {
+    const user = await userService.updateUser((request.user as JwtPayload).userId, request.body);
 
-  if (!user) {
-    return reply.status(404).send({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'User not found' },
-    });
+    if (!user) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'User not found' },
+      });
+    }
+
+    return reply.send({ success: true, data: user });
+  } catch (error: unknown) {
+    const err = error as { code?: string };
+    if (err.code === '23505') {
+      return reply.status(409).send({
+        success: false,
+        error: { code: 'CONFLICT', message: 'Email already registered' },
+      });
+    }
+    throw error;
   }
-
-  return reply.send({ success: true, data: user });
 }
 
 export async function changePassword(

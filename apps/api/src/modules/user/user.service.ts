@@ -108,12 +108,16 @@ export async function getUserByEmail(email: string): Promise<User | null> {
 
 export async function updateUser(
   userId: string,
-  input: { username?: string; avatarUrl?: string }
+  input: { email?: string; username?: string; avatarUrl?: string }
 ): Promise<User | null> {
   const updates: string[] = [];
   const values: unknown[] = [];
   let paramIndex = 1;
 
+  if (input.email !== undefined) {
+    updates.push(`email = $${paramIndex++}`);
+    values.push(input.email);
+  }
   if (input.username !== undefined) {
     updates.push(`username = $${paramIndex++}`);
     values.push(input.username);

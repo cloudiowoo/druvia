@@ -114,6 +114,20 @@ describe('UserService Integration', () => {
 
       expect(updated?.username).toBe('newname');
     });
+
+    it('should update email', async () => {
+      const created = await userService.register({
+        email: 'update-email@test-user.com',
+        password: 'password123',
+        username: 'updatemail',
+      });
+
+      const updated = await userService.updateUser(created.userId, {
+        email: 'updated-email@test-user.com',
+      });
+
+      expect(updated?.email).toBe('updated-email@test-user.com');
+    });
   });
 
   describe('changePassword', () => {

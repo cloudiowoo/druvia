@@ -12,6 +12,7 @@ dist/
 build/
 .next/
 out/
+apps/admin/next-env.d.ts
 
 # ================================
 # Turbo
