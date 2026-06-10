@@ -28,7 +28,7 @@ issue_certificate() {
   fi
 
   set -- certonly \
-    --dns-dnspod \
+    --authenticator dns-dnspod \
     --dns-dnspod-credentials "${CREDENTIALS_FILE}" \
     -d "${PRIMARY_DOMAIN}"
 

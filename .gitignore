@@ -144,3 +144,5 @@ hasura/metadata/databases/*/tables/*.yaml.bak
 
 .playwright-mcp/
 .superpowers/
+
+bak/
