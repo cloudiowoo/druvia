@@ -4,25 +4,25 @@
 #   2. Start: docker compose -f docker-compose.local.yml up -d
 #   3. After code changes: pnpm build && docker compose -f docker-compose.local.yml restart api admin
 
-# 使用方式总结：                                                                                                                                                                       
-                                                                                                                                                                                       
-#   # 1. 本地构建                                                                                                                                                                        
-#   pnpm build                                                                                                                                                                           
-                                                                                                                                                                                       
-#   # 2. 复制 static 和 public 到 standalone（构建后需要执行一次）                                                                                                                       
-#   cp -r apps/admin/public apps/admin/.next/standalone/apps/admin/                                                                                                                      
-#   cp -r apps/admin/.next/static apps/admin/.next/standalone/apps/admin/.next/                                                                                                          
-                                                                                                                                                                                       
-#   # 3. 启动服务                                                                                                                                                                        
-#   cd docker                                                                                                                                                                            
-#   docker compose -f docker-compose.local.yml --profile with-nginx up -d                                                                                                                
-                                                                                                                                                                                       
-#   # 4. 代码修改后，只需重新构建并重启容器                                                                                                                                              
-#   pnpm build                                                                                                                                                                           
-#   cp -r apps/admin/public apps/admin/.next/standalone/apps/admin/                                                                                                                      
-#   cp -r apps/admin/.next/static apps/admin/.next/standalone/apps/admin/.next/                                                                                                          
-#   docker compose -f docker-compose.local.yml restart api admin                                                                                                                         
-                                                                  
+# 使用方式总结：
+
+#   # 1. 本地构建
+#   pnpm build
+
+#   # 2. 复制 static 和 public 到 standalone（构建后需要执行一次）
+#   cp -r apps/admin/public apps/admin/.next/standalone/apps/admin/
+#   cp -r apps/admin/.next/static apps/admin/.next/standalone/apps/admin/.next/
+
+#   # 3. 启动服务
+#   cd docker
+#   docker compose -f docker-compose.local.yml --profile with-nginx up -d
+
+#   # 4. 代码修改后，只需重新构建并重启容器
+#   pnpm build
+#   cp -r apps/admin/public apps/admin/.next/standalone/apps/admin/
+#   cp -r apps/admin/.next/static apps/admin/.next/standalone/apps/admin/.next/
+#   docker compose -f docker-compose.local.yml restart api admin
+
 
 services:
   postgres:
@@ -36,7 +36,7 @@ services:
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"  
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -76,6 +76,8 @@ services:
       HASURA_GRAPHQL_CORS_DOMAIN: "*"
       HASURA_GRAPHQL_ENABLE_TELEMETRY: "false"
       ACTION_BASE_URL: http://api:3001
+    ports:
+      - "${HASURA_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 30s
@@ -125,6 +127,8 @@ services:
       HASURA_ADMIN_SECRET: ${HASURA_ADMIN_SECRET}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
     command: ["node", "apps/api/dist/index.js"]
+    ports:
+      - "${API_PORT:-3001}:3001"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -145,7 +149,7 @@ services:
     volumes:
       # Mount Next.js standalone build
       # Note: After `pnpm build`, run: cp -r apps/admin/public apps/admin/.next/standalone/apps/admin/
-      # Note: After `pnpm build`, run: cp -r apps/admin/.next/static apps/admin/.next/standalone/apps/admin/.next/   
+      # Note: After `pnpm build`, run: cp -r apps/admin/.next/static apps/admin/.next/standalone/apps/admin/.next/
       - ../apps/admin/.next/standalone:/app:ro
       - ../apps/admin/.next/static:/app/apps/admin/.next/static:ro
     environment:
@@ -255,10 +259,9 @@ services:
         condition: service_healthy
     ports:
       - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/conf.d.local:/etc/nginx/conf.d:ro
     networks:
       - druvia-network
     profiles:
