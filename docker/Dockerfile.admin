@@ -7,13 +7,15 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
 # Copy package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/admin/package.json ./apps/admin/
+COPY packages/shared/package.json ./packages/shared/
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
 # Copy source code
+COPY packages/shared ./packages/shared
 COPY apps/admin ./apps/admin
 
 # Build arguments for environment variables
@@ -28,6 +30,7 @@ ENV NEXT_PUBLIC_MULTI_TENANT_ENABLED=$NEXT_PUBLIC_MULTI_TENANT_ENABLED
 ENV NEXT_PUBLIC_DEFAULT_TENANT_ID=$NEXT_PUBLIC_DEFAULT_TENANT_ID
 
 # Build
+RUN pnpm --filter @druvia/shared build
 RUN pnpm --filter @druvia/admin build
 
 # Production stage

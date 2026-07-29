@@ -1,0 +1,11 @@
+FROM denoland/deno:alpine-2.0.6
+
+WORKDIR /app
+
+ENV DENO_DIR=/deno-dir
+
+COPY *.ts ./
+
+EXPOSE 7133
+
+CMD ["run", "--allow-net", "--allow-env", "--allow-read=/tmp,/app", "--allow-write=/tmp", "--unstable-worker-options", "main.ts"]

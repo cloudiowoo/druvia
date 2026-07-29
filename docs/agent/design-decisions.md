@@ -128,6 +128,27 @@
 - 物理存储 cleanup 应放在 schema / db user 等关键数据库删除步骤之后，避免后置失败时先丢文件。
 - 对本地存储适配器，删除文件后应继续清理空目录，避免 Admin/UI 看似已删但磁盘目录残留。
 
+## Docker Compose 在线升级策略
+
+- Druvia 生产在线升级采用 Compose-native 模型，不采用 Sub2API 式容器内替换单个可执行文件模型。
+- 系统升级控制面必须独立为 `updater` 服务：
+  - `updater` 持有 Docker socket、部署目录和 update state volume
+  - API 只做 `platform_user + super_admin` 鉴权代理
+  - Admin 只做通知、状态展示和确认操作
+- API、Admin、Deno Worker 不挂载 Docker socket。
+- 生产在线升级发布物以 release manifest 为准：
+  - `api/admin/worker/updater` 使用版本化镜像
+  - 实际应用镜像使用 digest
+  - 不依赖 `latest`
+  - 不依赖生产节点本地 `build:`
+- 外部管理 API 的系统更新接口继续使用 Druvia 标准响应 envelope：
+  - 成功：`{ success: true, data }`
+  - 失败：`{ success: false, error }`
+  - updater 内部接口才使用裸 `DruviaUpdateStatus` / `UpdateOperationAccepted`
+- Deno Worker 生产升级对象是 worker 镜像，不是宿主机挂载源码目录。
+- 数据库迁移前由 updater 执行完整 `pg_dump`。不可逆迁移失败时，自动回滚范围限定为镜像和 compose 状态，数据库恢复需要使用升级前 dump 人工执行。
+- Updater 通过宿主 Docker socket 执行 `docker compose`，所以 release 部署目录必须以宿主绝对路径 `DRUVIA_DEPLOY_DIR` 挂入 updater 的同一个绝对路径；不能只挂载到容器内 `/deploy`，否则 compose bind mount 源会被宿主 Docker daemon 解析成错误路径。
+
 ## 文档策略
 
 - `AGENTS.md` 用于入口与索引。

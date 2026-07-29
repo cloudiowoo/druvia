@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
 import { GitBranch, ChevronDown } from 'lucide-react';
+import { SystemUpdateNotice } from '@/components/system-update/SystemUpdateNotice';
 
 interface Environment {
   id: number;
@@ -178,6 +179,7 @@ export function DashboardLayout({
             <EnvironmentSwitcher disabled={isProjectLevel} />
           </div>
         )}
+        <SystemUpdateNotice />
         <div className="p-8 pt-4">{children}</div>
       </main>
     </div>

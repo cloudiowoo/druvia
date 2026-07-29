@@ -65,6 +65,12 @@
   - 新增 `刷新 Hasura Schema` 按钮
   - `addColumn` / `dropColumn` / `renameColumn` 后自动 reload metadata
   - 与原有 `同步 GraphQL 权限` 操作分离
+- Docker Compose 在线升级初版已落地：
+  - 新增 release-mode compose、worker/updater Dockerfile、`.env.release.example`
+  - 新增 `apps/updater` 内部服务，支持 manifest 校验、镜像拉取、staged release、apply、restart、rollback
+  - 新增 GitHub release workflow 和 manifest 生成脚本
+  - API 新增 super_admin-only system update 代理路由
+  - Admin 新增被动更新通知和系统设置页更新操作面板
 
 ## Current Next Steps
 
@@ -78,3 +84,7 @@
 - 继续扩展平台日志覆盖面：
   - 更多 API 模块的 `console.*` 收敛
   - 可选日志栈的 dashboard / 告警模板
+- Docker Compose 在线升级后续需要补生产演练：
+  - 构建并发布真实 GHCR 镜像
+  - 用 release manifest 从旧版本升到新版本
+  - 验证故障 release 的自动回滚和数据库 dump 可恢复性

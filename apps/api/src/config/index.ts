@@ -48,4 +48,9 @@ export const config = {
     trustedTicketSecret: process.env.STORAGE_TRUSTED_TICKET_SECRET || '',
     trustedTicketMaxTtlSeconds: parseInt(process.env.STORAGE_TRUSTED_TICKET_MAX_TTL_SECONDS || '900', 10),
   },
+  updater: {
+    url: process.env.DRUVIA_UPDATER_URL || '',
+    secret: process.env.DRUVIA_UPDATER_SECRET || '',
+  },
+  version: process.env.DRUVIA_VERSION || process.env.npm_package_version || '0.1.0',
 };

@@ -8,3 +8,6 @@ export * from './utils/id.js';
 
 // Logging
 export * from './logging/index.js';
+
+// Updates
+export * from './update.js';

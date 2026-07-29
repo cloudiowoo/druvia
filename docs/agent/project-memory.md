@@ -185,6 +185,35 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - 旧实现会直接表现为 `spawn docker ENOENT`
   - 新实现若镜像也缺少 `pg_dump` / `pg_restore`，则会在直连命令缺失后再回退兜底
 
+## Docker Compose 在线升级方向
+
+- 生产环境在线升级目标参考 Sub2API 的界面体验，但不能照搬“容器内替换单二进制”机制。
+- Druvia 的正式方向是 Compose-native OTA：
+  - 新增独立 `updater` 服务持有 Docker socket 和部署目录挂载
+  - API 只做 `platform_user + super_admin` 鉴权代理
+  - Admin 只展示通知、状态和操作按钮
+- API、Admin、Deno Worker 不应挂载 Docker socket。
+- 生产在线升级应使用 release-mode compose 和版本化镜像：
+  - `api/admin/worker/updater` 均由 release manifest 指向镜像 digest
+  - 不依赖 `latest`
+  - 不依赖生产机器本地 `build:`
+- Deno Worker 的生产升级对象应是版本化 worker 镜像，不是宿主机挂载的 `docker/deno-worker` 源码目录。
+- 升级前数据库保护应由 updater 直连 PostgreSQL 执行完整 `pg_dump`，并保存到 update state volume。
+- 不可逆数据库迁移失败时，只承诺自动回滚镜像和 compose 状态；数据库恢复需要使用升级前 dump 人工执行。
+- 截至 2026-07-28，Compose OTA 初版代码已落地：
+  - `packages/shared/src/update.ts` 提供 release manifest / update status 共享契约
+  - `apps/updater` 提供内部 updater Fastify 服务、状态文件、manifest 校验、镜像拉取、staged env/compose、apply、restart、rollback
+  - `docker/docker-compose.release.yml`、`.env.release.example`、`Dockerfile.worker`、`Dockerfile.updater` 已新增
+  - API 已新增 `/api/v1/system/update/*` 和 `/api/v1/system/restart`，只允许 `platform_user + super_admin`
+  - Admin 已新增全局更新通知和系统设置页更新面板
+  - GitHub release workflow 与 `scripts/release/generate-manifest.mjs` 已新增
+- 外部 API 返回仍遵循 Druvia 标准 `{ success, data/error }` envelope；只有 updater 内部 `/internal/*` 使用裸状态 / 裸错误响应。
+- `DRUVIA_MANAGED_SERVICES` 默认仍是 `api,admin,deno,hasura`；内置 `nginx` 只在明确 opt-in 时加入，`certbot` 不进入常规 managed services。
+- `DRUVIA_DEPLOY_DIR` 必须是宿主机上 `docker/` 部署目录的绝对路径，并以同一个绝对路径挂入 updater；不要回退到只把宿主目录挂为容器内 `/deploy`，否则 updater 通过 Docker socket 执行 compose 时会把 bind mount 源解析成宿主不存在的 `/deploy/...`。
+- 完整实施文档见：
+  - `docs/plans/2026-07-28-compose-ota-update-implementation.md`
+  - `docs/superpowers/plans/2026-07-28-druvia-compose-ota-update.md`
+
 ## Functions / API Key 近期事实
 
 - API 已支持 `apikey` fallback 认证。

@@ -31,6 +31,7 @@ import { apiKeysRoutes } from './modules/api-keys/api-keys.routes.js';
 import { trustedBackendKeysRoutes } from './modules/trusted-backend-keys/trusted-backend-keys.routes.js';
 import { environmentRoutes } from './modules/environment/environment.routes.js';
 import { rpcRoutes } from './modules/rpc/rpc.routes.js';
+import { systemUpdateRoutes } from './modules/system-update/system-update.routes.js';
 
 export const appCorsOptions: FastifyCorsOptions = {
   origin:
@@ -157,6 +158,7 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
   app.register(trustedBackendKeysRoutes, { prefix: '/api/v1' });
   app.register(environmentRoutes, { prefix: '/api/v1' });
   app.register(rpcRoutes, { prefix: '/api/v1' });
+  app.register(systemUpdateRoutes, { prefix: '/api/v1' });
 
   return app;
 }

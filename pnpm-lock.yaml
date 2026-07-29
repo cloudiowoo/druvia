@@ -68,6 +68,9 @@ importers:
       '@dagrejs/dagre':
         specifier: ^2.0.4
         version: 2.0.4
+      '@druvia/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@faker-js/faker':
         specifier: ^10.3.0
         version: 10.3.0
@@ -301,6 +304,28 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.0.18
         version: 4.0.18(vitest@4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.34)(jiti@1.21.7)(jsdom@26.1.0)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2))
+      tsx:
+        specifier: ^4.7.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.34)(jiti@1.21.7)(jsdom@26.1.0)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2)
+
+  apps/updater:
+    dependencies:
+      '@druvia/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      fastify:
+        specifier: ^5.2.0
+        version: 5.7.4
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.34
       tsx:
         specifier: ^4.7.0
         version: 4.21.0

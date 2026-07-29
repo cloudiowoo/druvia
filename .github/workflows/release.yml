@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, with or without leading v
+        required: true
+        default: 0.1.0
+      channel:
+        description: Release channel
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - beta
+          - nightly
+      migration_required:
+        description: Whether this release requires database migrations
+        required: true
+        default: 'false'
+      migration_from:
+        description: Current migration floor
+        required: true
+        default: '0'
+      migration_to:
+        description: Target migration ceiling
+        required: true
+        default: '0'
+      migration_requires_backup:
+        description: Whether updater must take a database backup before apply
+        required: true
+        default: 'false'
+      migration_reversible:
+        description: Whether database migrations are automatically reversible
+        required: true
+        default: 'false'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      API_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-api
+      ADMIN_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-admin
+      WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-worker
+      UPDATER_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-updater
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare release metadata
+        shell: bash
+        run: |
+          INPUT_VERSION="${{ inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            RELEASE_VERSION="${INPUT_VERSION#v}"
+          else
+            RELEASE_VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "RELEASE_VERSION=${RELEASE_VERSION}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v${RELEASE_VERSION}" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build API image
+        id: build-api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.api
+          push: true
+          tags: |
+            ${{ env.API_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.API_IMAGE }}:${{ env.SHORT_SHA }}
+
+      - name: Build Admin image
+        id: build-admin
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.admin
+          push: true
+          build-args: |
+            NEXT_PUBLIC_MULTI_TENANT_ENABLED=false
+            NEXT_PUBLIC_DEFAULT_TENANT_ID=default
+          tags: |
+            ${{ env.ADMIN_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.ADMIN_IMAGE }}:${{ env.SHORT_SHA }}
+
+      - name: Build Worker image
+        id: build-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/deno-worker
+          file: docker/Dockerfile.worker
+          push: true
+          tags: |
+            ${{ env.WORKER_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.WORKER_IMAGE }}:${{ env.SHORT_SHA }}
+
+      - name: Build Updater image
+        id: build-updater
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.updater
+          push: true
+          tags: |
+            ${{ env.UPDATER_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.UPDATER_IMAGE }}:${{ env.SHORT_SHA }}
+
+      - name: Generate release manifest
+        env:
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+          GITHUB_REF_NAME: ${{ env.RELEASE_TAG }}
+          DRUVIA_RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          DRUVIA_MIN_UPDATER_VERSION: 0.1.0
+          DRUVIA_API_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/druvia-api
+          DRUVIA_ADMIN_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/druvia-admin
+          DRUVIA_WORKER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/druvia-worker
+          DRUVIA_UPDATER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/druvia-updater
+          DRUVIA_API_IMAGE_DIGEST: ${{ steps.build-api.outputs.digest }}
+          DRUVIA_ADMIN_IMAGE_DIGEST: ${{ steps.build-admin.outputs.digest }}
+          DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.build-worker.outputs.digest }}
+          DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.build-updater.outputs.digest }}
+          DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'false' }}
+          DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '0' }}
+          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '0' }}
+          DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'false' }}
+          DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
+        run: node scripts/release/generate-manifest.mjs
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            release-manifest.json
+            docker/docker-compose.release.yml

@@ -1,5 +1,6 @@
 // Use relative path (empty string) for same-origin requests in production
 // Falls back to localhost:3001 for local development without Docker
+import type { DruviaUpdateStatus } from '@druvia/shared';
 import { createAdminServerLogger } from './server-logger';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
@@ -154,6 +155,12 @@ export interface ForeignKeyDetail {
 export type { EdgeFunction, FunctionSecret, FunctionSchedule, FunctionLog, InvokeResult };
 
 export type TrustedBackendKeyScope = 'project_session:issue' | 'storage_ticket:issue';
+export type { DruviaUpdateStatus };
+
+export interface DruviaUpdateOperation {
+  operationId: string;
+  status: DruviaUpdateStatus;
+}
 
 class ApiClient {
   private token: string | null = null;
@@ -663,6 +670,30 @@ class ApiClient {
       backupRetentionDays: number;
       backupMaxCount: number;
     }>('PATCH', '/api/v1/settings', data);
+  }
+
+  async getSystemUpdateStatus() {
+    return this.request<DruviaUpdateStatus>('GET', '/api/v1/system/update/status');
+  }
+
+  async checkSystemUpdate() {
+    return this.request<DruviaUpdateOperation>('POST', '/api/v1/system/update/check', {});
+  }
+
+  async downloadSystemUpdate() {
+    return this.request<DruviaUpdateOperation>('POST', '/api/v1/system/update/download', {});
+  }
+
+  async applySystemUpdate() {
+    return this.request<DruviaUpdateOperation>('POST', '/api/v1/system/update/apply', {});
+  }
+
+  async rollbackSystemUpdate() {
+    return this.request<DruviaUpdateOperation>('POST', '/api/v1/system/update/rollback', {});
+  }
+
+  async restartSystemServices() {
+    return this.request<DruviaUpdateOperation>('POST', '/api/v1/system/restart', {});
   }
 
   // Profile
