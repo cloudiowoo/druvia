@@ -51,6 +51,7 @@ logs/
 coverage/
 .nyc_output/
 .vitest/
+.test-token
 
 # ================================
 # IDE/Editor
@@ -82,9 +83,14 @@ docker/loki_data/
 docker/promtail_data/
 docker/grafana_data/
 docker/nginx/ssl/
+docker/nginx/secrets/
 docker/.env
+docker/.env.prod
+docker/.env.release
+docker/.env.*.local
 !docker/.env.example
 !docker/.env.prod.example
+!docker/.env.release.example
 
 # ================================
 # Database

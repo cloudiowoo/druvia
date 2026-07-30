@@ -217,7 +217,7 @@ Manifest 示例：
 - `deno` 从基础 Deno 镜像加源码挂载改为 `image: ${DRUVIA_WORKER_IMAGE}`。
 - 新增 `updater` 服务。
 - 新增 `update_state` volume。
-- 保留 `postgres_data`、`redis_data`、`deno_cache`、`with-nginx`、`with-logs` 等既有生产部署语义。
+- 保留 `postgres_data`、`redis_data`、`deno_cache`、`with-nginx`、`with-local-nginx`、`with-logs` 等既有部署语义。
 
 基础启动命令：
 
@@ -233,6 +233,25 @@ cd docker
 DRUVIA_DEPLOY_DIR="$(pwd)" docker compose --env-file .env.prod --env-file .env.release -f docker-compose.release.yml --profile with-nginx up -d
 ```
 
+如果在本地用 GHCR/GitHub Release 发布物演练 OTA，但不希望启用生产域名和证书：
+
+```bash
+cd docker
+DRUVIA_DEPLOY_DIR="$(pwd)" docker compose --env-file .env.prod --env-file .env.release -f docker-compose.release.yml --profile with-local-nginx up -d
+```
+
+本地访问入口为 `http://localhost:${LOCAL_HTTP_PORT:-8088}`。`with-local-nginx` 复用 `docker/nginx/conf.d.local`，只提供 HTTP 同源反代；生产 HTTPS / certbot 仍使用 `with-nginx`。
+
+本地要通过 Admin UI 执行“重启并应用”时，`.env.release` 还需要让 updater 的后续 compose 命令继续带上本地 profile：
+
+```dotenv
+DRUVIA_COMPOSE_PROFILES=with-local-nginx
+DRUVIA_MANAGED_SERVICES=api,admin,deno,hasura,local-nginx
+LOCAL_HTTP_PORT=8088
+```
+
+否则手工启动时的 `local-nginx` 可能不会被 updater 的 apply/restart 流程继续管理。
+
 `.env.release` 初始内容示例：
 
 ```dotenv
@@ -247,6 +266,7 @@ DRUVIA_RELEASE_ENV_FILE=
 DRUVIA_COMPOSE_FILE=
 DRUVIA_COMPOSE_PROFILES=
 DRUVIA_MANAGED_SERVICES=api,admin,deno,hasura
+LOCAL_HTTP_PORT=8088
 DRUVIA_API_IMAGE=ghcr.io/druvia/druvia-api:0.1.0
 DRUVIA_ADMIN_IMAGE=ghcr.io/druvia/druvia-admin:0.1.0
 DRUVIA_WORKER_IMAGE=ghcr.io/druvia/druvia-worker:0.1.0
@@ -799,6 +819,7 @@ DRUVIA_DEPLOY_DIR="$(pwd)" docker compose --env-file .env.prod --env-file .env.r
 ```bash
 cd docker
 docker compose --env-file .env.prod.example --env-file .env.release.example -f docker-compose.release.yml config --quiet
+docker compose --env-file .env.prod.example --env-file .env.release.example -f docker-compose.release.yml --profile with-local-nginx config --quiet
 ```
 
 升级演练：
@@ -806,6 +827,7 @@ docker compose --env-file .env.prod.example --env-file .env.release.example -f d
 ```bash
 cd docker
 DRUVIA_DEPLOY_DIR="$(pwd)" docker compose --env-file .env.prod --env-file .env.release -f docker-compose.release.yml up -d
+DRUVIA_DEPLOY_DIR="$(pwd)" docker compose --env-file .env.prod --env-file .env.release -f docker-compose.release.yml --profile with-local-nginx up -d
 DRUVIA_DEPLOY_DIR="$(pwd)" docker compose --env-file .env.prod --env-file .env.release -f docker-compose.release.yml ps
 ```
 

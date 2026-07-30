@@ -71,6 +71,7 @@
   - 新增 GitHub release workflow 和 manifest 生成脚本
   - API 新增 super_admin-only system update 代理路由
   - Admin 新增被动更新通知和系统设置页更新操作面板
+  - release-mode compose 已新增 `with-local-nginx` profile，可用 GHCR/GitHub Release 发布物在本地通过 `http://localhost:8088` 同源演练 OTA
 
 ## Current Next Steps
 

@@ -209,6 +209,8 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - GitHub release workflow 与 `scripts/release/generate-manifest.mjs` 已新增
 - 外部 API 返回仍遵循 Druvia 标准 `{ success, data/error }` envelope；只有 updater 内部 `/internal/*` 使用裸状态 / 裸错误响应。
 - `DRUVIA_MANAGED_SERVICES` 默认仍是 `api,admin,deno,hasura`；内置 `nginx` 只在明确 opt-in 时加入，`certbot` 不进入常规 managed services。
+- 本地演练 GitHub/GHCR 发布物 OTA 时，使用 `docker-compose.release.yml --profile with-local-nginx`，入口为 `http://localhost:${LOCAL_HTTP_PORT:-8088}`；该 profile 复用 `docker/nginx/conf.d.local`，不使用生产域名、HTTPS 证书或 certbot。若要从 Admin UI 执行 apply，`.env.release` 也要设置 `DRUVIA_COMPOSE_PROFILES=with-local-nginx` 和 `DRUVIA_MANAGED_SERVICES=api,admin,deno,hasura,local-nginx`，让 updater 后续 compose 命令继续管理本地反代。
+- 生产内置 nginx 仍使用 `--profile with-nginx`；不要把本地 `with-local-nginx` 当成生产入口。
 - `DRUVIA_DEPLOY_DIR` 必须是宿主机上 `docker/` 部署目录的绝对路径，并以同一个绝对路径挂入 updater；不要回退到只把宿主目录挂为容器内 `/deploy`，否则 updater 通过 Docker socket 执行 compose 时会把 bind mount 源解析成宿主不存在的 `/deploy/...`。
 - 完整实施文档见：
   - `docs/plans/2026-07-28-compose-ota-update-implementation.md`

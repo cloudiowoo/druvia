@@ -4,6 +4,8 @@
 #   DRUVIA_DEPLOY_DIR="$(pwd)" docker compose --env-file .env.prod --env-file .env.release -f docker-compose.release.yml up -d
 # Optional nginx profile:
 #   DRUVIA_DEPLOY_DIR="$(pwd)" docker compose --env-file .env.prod --env-file .env.release -f docker-compose.release.yml --profile with-nginx up -d
+# Optional local HTTP nginx profile for release-image OTA testing:
+#   DRUVIA_DEPLOY_DIR="$(pwd)" docker compose --env-file .env.prod --env-file .env.release -f docker-compose.release.yml --profile with-local-nginx up -d
 
 services:
   postgres:
@@ -304,6 +306,28 @@ services:
       - druvia-network
     profiles:
       - with-nginx
+
+  # Local HTTP reverse proxy for testing release-mode OTA without production domains or certificates.
+  local-nginx:
+    image: nginx:alpine
+    container_name: druvia-local-nginx
+    restart: unless-stopped
+    depends_on:
+      admin:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      hasura:
+        condition: service_healthy
+    ports:
+      - "${LOCAL_HTTP_PORT:-8088}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d.local:/etc/nginx/conf.d:ro
+    networks:
+      - druvia-network
+    profiles:
+      - with-local-nginx
 
 volumes:
   update_state:

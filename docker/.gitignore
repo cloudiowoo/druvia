@@ -4,3 +4,12 @@ redis_data/
 
 # Environment files
 .env
+.env.prod
+.env.release
+.env.*.local
+!.env.example
+!.env.prod.example
+!.env.release.example
+
+# Local certificate/provider credentials
+nginx/secrets/

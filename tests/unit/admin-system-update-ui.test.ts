@@ -51,4 +51,16 @@ describe('admin system update UI contract', () => {
     expect(panel).toContain('busyPhases.has(status.phase)');
     expect(panel).toContain('window.setInterval(pollStatus, 2 * 1000)');
   });
+
+  it('surfaces final updater messages after background operations complete', () => {
+    const panel = read('apps/admin/src/components/system-update/SystemUpdatePanel.tsx');
+
+    expect(panel).toContain('formatStatusMessage(status)');
+    expect(panel).toContain('lastCompletedStatusRef');
+    expect(panel).toContain('status.finishedAt');
+    expect(panel).toContain('toast({ title: message');
+    expect(panel).toContain('已是最新版本');
+    expect(panel).toContain('发现新版本');
+    expect(panel).toContain('更新状态');
+  });
 });

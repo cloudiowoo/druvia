@@ -53,4 +53,18 @@ describe('release-mode compose and Dockerfiles', () => {
     expect(releaseEnv).not.toContain('DRUVIA_DEPLOY_DIR=/deploy');
     expect(releaseEnv).not.toContain('DRUVIA_BASE_ENV_FILE=/deploy/.env.prod');
   });
+
+  it('provides a local nginx profile for same-origin OTA testing', () => {
+    const compose = read('docker/docker-compose.release.yml');
+    const start = compose.indexOf('  local-nginx:');
+    const end = compose.indexOf('\nvolumes:', start);
+    const localNginxBlock = compose.slice(start, end);
+
+    expect(localNginxBlock).toContain('container_name: druvia-local-nginx');
+    expect(localNginxBlock).toContain('- "${LOCAL_HTTP_PORT:-8088}:80"');
+    expect(localNginxBlock).toContain('- ./nginx/conf.d.local:/etc/nginx/conf.d:ro');
+    expect(localNginxBlock).toContain('- with-local-nginx');
+    expect(localNginxBlock).not.toContain('./nginx/ssl:/etc/nginx/ssl:ro');
+    expect(localNginxBlock).not.toContain('certbot:');
+  });
 });

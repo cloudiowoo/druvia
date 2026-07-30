@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -58,10 +58,59 @@ function statusBadgeClass(phase: DruviaUpdateStatus['phase']): string {
   return 'border-gray-200 bg-gray-50 text-gray-700';
 }
 
+function statusMessageClass(phase: DruviaUpdateStatus['phase']): string {
+  if (phase === 'available' || phase === 'ready_to_apply') return 'border-blue-200 bg-blue-50 text-blue-900';
+  if (phase === 'succeeded' || phase === 'idle') return 'border-green-200 bg-green-50 text-green-900';
+  if (phase === 'rolled_back') return 'border-amber-200 bg-amber-50 text-amber-900';
+  return 'border-gray-200 bg-gray-50 text-gray-800';
+}
+
+function formatStatusMessage(status: DruviaUpdateStatus): string | null {
+  if (status.error?.message) return status.error.message;
+  if (!status.message) return null;
+
+  if (status.message === 'Current version is up to date') {
+    return '已是最新版本';
+  }
+  if (status.message === 'Services restarted') {
+    return '服务已重启';
+  }
+  if (status.message === 'Verifying services after update') {
+    return '正在验证更新后的服务状态';
+  }
+  if (status.message === 'Verifying services after rollback') {
+    return '正在验证回滚后的服务状态';
+  }
+  if (status.phase === 'available') {
+    return `发现新版本 ${status.availableVersion ?? ''}`.trim();
+  }
+  if (status.phase === 'ready_to_apply') {
+    return `版本 ${status.availableVersion ?? ''} 已下载，等待重启应用`.trim();
+  }
+
+  const selfUpdateFailedMatch = status.message.match(/^Updated to (.+); updater self-update failed/);
+  if (selfUpdateFailedMatch) {
+    return `已更新到 ${selfUpdateFailedMatch[1]}，但 updater 自更新失败，可稍后手动重试`;
+  }
+
+  const updatedMatch = status.message.match(/^Updated to (.+)$/);
+  if (updatedMatch) {
+    return `已更新到 ${updatedMatch[1]}`;
+  }
+
+  if (status.message.startsWith('Rolled back')) {
+    return '已回滚到升级前版本';
+  }
+
+  return status.message;
+}
+
 export function SystemUpdatePanel() {
   const [status, setStatus] = useState<DruviaUpdateStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<ActionKey | null>(null);
+  const pendingOperationRef = useRef<string | null>(null);
+  const lastCompletedStatusRef = useRef<string | null>(null);
 
   const refreshStatus = useCallback(async () => {
     setLoading(true);
@@ -99,10 +148,31 @@ export function SystemUpdatePanel() {
     };
   }, [status?.phase]);
 
+  useEffect(() => {
+    if (!status || busyPhases.has(status.phase) || !pendingOperationRef.current || !status.finishedAt) return;
+
+    const completionKey = `${status.phase}:${status.finishedAt}:${status.message ?? ''}:${status.error?.message ?? ''}`;
+    if (lastCompletedStatusRef.current === completionKey) return;
+
+    lastCompletedStatusRef.current = completionKey;
+    pendingOperationRef.current = null;
+
+    const message = formatStatusMessage(status);
+    if (!message) return;
+
+    if (status.error) {
+      toast({ title: '更新操作失败', description: message, variant: 'destructive' });
+      return;
+    }
+
+    toast({ title: message });
+  }, [status]);
+
   const busy = Boolean(action) || (status ? busyPhases.has(status.phase) : false);
   const canDownload = status?.phase === 'available' || status?.phase === 'failed' || status?.phase === 'rolled_back';
   const canApply = status?.phase === 'ready_to_apply';
   const canRollback = status?.phase === 'failed';
+  const statusMessage = status ? formatStatusMessage(status) : null;
 
   const migrationText = useMemo(() => {
     if (!status?.migration) return '无';
@@ -119,6 +189,10 @@ export function SystemUpdatePanel() {
     try {
       const res = await operation();
       if (res.success) {
+        if (res.data?.operationId) {
+          pendingOperationRef.current = res.data.operationId;
+          lastCompletedStatusRef.current = null;
+        }
         if (res.data?.status) setStatus(res.data.status);
         toast({ title: successTitle });
       } else {
@@ -184,6 +258,16 @@ export function SystemUpdatePanel() {
                 )}
               </div>
             </div>
+
+            {statusMessage && !status.error && (
+              <div className={`flex items-start gap-2 rounded-md border p-3 text-sm ${statusMessageClass(status.phase)}`}>
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <p className="font-medium">更新状态</p>
+                  <p className="mt-0.5">{statusMessage}</p>
+                </div>
+              </div>
+            )}
 
             {status.error && (
               <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
