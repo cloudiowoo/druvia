@@ -44,6 +44,7 @@ export type DruviaUpdatePhase =
   | 'applying'
   | 'restarting'
   | 'verifying'
+  | 'finalizing'
   | 'succeeded'
   | 'failed'
   | 'rolled_back';
@@ -54,6 +55,7 @@ export const DRUVIA_MUTATING_UPDATE_PHASES = [
   'applying',
   'restarting',
   'verifying',
+  'finalizing',
 ] as const satisfies readonly DruviaUpdatePhase[];
 
 export interface DruviaUpdateStatus {

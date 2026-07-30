@@ -266,6 +266,8 @@ DRUVIA_RELEASE_ENV_FILE=
 DRUVIA_COMPOSE_FILE=
 DRUVIA_COMPOSE_PROFILES=
 DRUVIA_MANAGED_SERVICES=api,admin,deno,hasura
+DRUVIA_UPDATER_CONTAINER_NAME=druvia-updater
+DRUVIA_UPDATER_FINALIZER_DELAY_SECONDS=2
 LOCAL_HTTP_PORT=8088
 DRUVIA_API_IMAGE=ghcr.io/druvia/druvia-api:0.1.0
 DRUVIA_ADMIN_IMAGE=ghcr.io/druvia/druvia-admin:0.1.0
@@ -310,6 +312,8 @@ DRUVIA_RELEASE_ENV_FILE: ${DRUVIA_RELEASE_ENV_FILE:-}
 DRUVIA_COMPOSE_FILE: ${DRUVIA_COMPOSE_FILE:-}
 DRUVIA_COMPOSE_PROFILES: ${DRUVIA_COMPOSE_PROFILES:-}
 DRUVIA_MANAGED_SERVICES: ${DRUVIA_MANAGED_SERVICES:-api,admin,deno,hasura}
+DRUVIA_UPDATER_CONTAINER_NAME: ${DRUVIA_UPDATER_CONTAINER_NAME:-druvia-updater}
+DRUVIA_UPDATER_FINALIZER_DELAY_SECONDS: ${DRUVIA_UPDATER_FINALIZER_DELAY_SECONDS:-2}
 DB_HOST: postgres
 DB_PORT: 5432
 DB_USER: postgres
@@ -447,11 +451,13 @@ docker compose --project-directory <deploy> --env-file <deploy>/.env.prod --env-
 docker compose --project-directory <deploy> --env-file <deploy>/.env.prod --env-file <deploy>/.env.release -f <deploy>/docker-compose.release.yml restart api admin deno
 ```
 
-Updater 自升级：
+Updater 自升级不由 updater 直接同步替换自己。标准 OTA 流程中，核心服务健康后 updater 会启动一个一次性 finalizer 容器，并把状态切到 `finalizing`；finalizer 使用新 updater 镜像，通过 `--volumes-from druvia-updater:rw` 继承旧 updater 的 Docker socket、部署目录和 `/state` 挂载，延迟数秒后执行：
 
 ```bash
 docker compose --project-directory <deploy> --env-file <deploy>/.env.prod --env-file <deploy>/.env.release -f <deploy>/docker-compose.release.yml up -d updater
 ```
+
+这样 `docker compose up -d updater` 的执行进程不再属于被替换的 updater 容器，避免旧 updater 被停止后命令中断，导致新 updater 只停在 `Created`。finalizer 等 replacement updater 进入 `healthy`（无 healthcheck 时为 `running`）后写回 `succeeded + updater finalizer completed`，失败后写回 `succeeded + updater finalizer failed`，并保持核心服务升级结果不被误判为可自动回滚失败。手工执行上面的命令只作为 finalizer 异常时的故障恢复步骤，不属于标准 OTA 路径。
 
 ## 9. 更新流程
 
@@ -498,8 +504,10 @@ docker compose --project-directory <deploy> --env-file <deploy>/.env.prod --env-
    - `http://admin:3000`
    - `http://deno:7133/health`
    - `http://hasura:8080/healthz`
-12. 所有健康检查通过后，状态变为 `succeeded`。
-13. Updater 执行自身服务更新。该步骤是最终 best-effort 动作；如果核心服务已健康但 updater 自升级失败，状态保持 `succeeded` 并记录 warning。
+12. 所有健康检查通过后，状态变为 `finalizing`。
+13. Updater 启动一次性 finalizer 容器完成 updater 自身替换。该步骤是最终 best-effort 动作；如果 finalizer 启动失败，核心服务不回滚，状态变为 `succeeded` 并记录 warning。
+14. finalizer 容器延迟数秒后执行 `docker compose up -d updater`，由 Compose 负责按新镜像 recreate updater。该执行体独立于旧 updater，因此不会因旧 updater 被停止而中断。
+15. finalizer 通过 `docker inspect` 等 replacement updater healthcheck 变为 `healthy`，再通过共享 update state 写回 `updater finalizer completed`；失败或超时则写回 `updater finalizer failed`。Admin 在 `finalizing` 阶段持续轮询直到看到最终结果。
 
 ### 9.4 失败回滚
 

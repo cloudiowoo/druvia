@@ -5,7 +5,7 @@ import type { DruviaReleaseManifest, DruviaUpdateStatus } from '@druvia/shared';
 import { isDruviaUpdateMutatingPhase } from '@druvia/shared';
 import { runCommand, type CommandRunner } from './command.js';
 import type { UpdaterConfig } from './config.js';
-import { buildComposeArgs, buildDockerImagePullArgs } from './compose.js';
+import { buildComposeArgs, buildDockerImagePullArgs, buildUpdaterFinalizerRunArgs } from './compose.js';
 import {
   buildImageRef,
   UpdateManifestError,
@@ -113,6 +113,10 @@ function mergeEnvContent(content: string, updates: Record<string, string>): stri
   }
 
   return `${merged.join('\n')}\n`;
+}
+
+function sanitizeDockerNameSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 120);
 }
 
 export class UpdateService implements UpdateRouteService {
@@ -273,21 +277,30 @@ export class UpdateService implements UpdateRouteService {
       }
 
       await this.writeState({
-        phase: 'succeeded',
+        phase: 'finalizing',
         currentVersion: manifest.version,
         availableVersion: null,
         releaseNotesUrl: manifest.releaseNotesUrl,
         migration: manifest.migrations,
-        finishedAt: this.now().toISOString(),
-        message: `Updated to ${manifest.version}`,
-        operationId: null,
+        finishedAt: null,
+        message: `Updated to ${manifest.version}; updater finalizer scheduled`,
       });
 
       try {
-        await this.runCommandImpl('docker', buildComposeArgs('selfUpdate', this.config.compose));
+        await this.runCommandImpl('docker', buildUpdaterFinalizerRunArgs({
+          compose: this.config.compose,
+          delaySeconds: this.config.updaterFinalizerDelaySeconds,
+          finalizerImage: buildImageRef(manifest.images.updater),
+          finalizerName: `druvia-updater-finalizer-${sanitizeDockerNameSegment(operationId)}`,
+          targetVersion: manifest.version,
+          updaterContainerName: this.config.updaterContainerName,
+        }));
       } catch {
         await this.writeState({
-          message: `Updated to ${manifest.version}; updater self-update failed and can be retried manually`,
+          phase: 'succeeded',
+          finishedAt: this.now().toISOString(),
+          operationId: null,
+          message: `Updated to ${manifest.version}; updater finalizer failed and can be retried manually`,
         });
       }
     }, (current) => {

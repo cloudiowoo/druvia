@@ -72,6 +72,7 @@
   - API 新增 super_admin-only system update 代理路由
   - Admin 新增被动更新通知和系统设置页更新操作面板
   - release-mode compose 已新增 `with-local-nginx` profile，可用 GHCR/GitHub Release 发布物在本地通过 `http://localhost:8088` 同源演练 OTA
+  - updater 自更新已改为一次性 finalizer 容器执行；apply 后进入 `finalizing`，finalizer 写回 completed/failed 状态并自动清理自身容器
 
 ## Current Next Steps
 

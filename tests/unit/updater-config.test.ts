@@ -13,6 +13,8 @@ describe('updater config', () => {
       DRUVIA_STATE_DIR: '/state',
       DRUVIA_COMPOSE_PROFILES: 'with-nginx,with-logs',
       DRUVIA_MANAGED_SERVICES: 'api,admin,deno,hasura,nginx',
+      DRUVIA_UPDATER_CONTAINER_NAME: 'druvia-updater',
+      DRUVIA_UPDATER_FINALIZER_DELAY_SECONDS: '3',
       POSTGRES_PASSWORD: 'postgres-password',
     });
 
@@ -27,6 +29,8 @@ describe('updater config', () => {
     expect(config.stagedReleaseEnvPath).toBe('/deploy/.env.release.staged');
     expect(config.compose.profiles).toEqual(['with-nginx', 'with-logs']);
     expect(config.compose.managedServices).toEqual(['api', 'admin', 'deno', 'hasura', 'nginx']);
+    expect(config.updaterContainerName).toBe('druvia-updater');
+    expect(config.updaterFinalizerDelaySeconds).toBe(3);
     expect(config.database.password).toBe('postgres-password');
   });
 

@@ -200,6 +200,7 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
 - Deno Worker 的生产升级对象应是版本化 worker 镜像，不是宿主机挂载的 `docker/deno-worker` 源码目录。
 - 升级前数据库保护应由 updater 直连 PostgreSQL 执行完整 `pg_dump`，并保存到 update state volume。
 - 不可逆数据库迁移失败时，只承诺自动回滚镜像和 compose 状态；数据库恢复需要使用升级前 dump 人工执行。
+- Updater 不能在自身容器进程内同步执行 `docker compose up -d updater` 替换自己；标准 OTA 应由一次性 finalizer 容器负责 updater 自更新。apply 启动 finalizer 后状态进入 `finalizing`，finalizer 使用 `--volumes-from` 继承旧 updater 的 `/state` 并写回 completed/failed，手工 `up -d updater` 只作为 finalizer 异常后的故障恢复命令。
 - 截至 2026-07-28，Compose OTA 初版代码已落地：
   - `packages/shared/src/update.ts` 提供 release manifest / update status 共享契约
   - `apps/updater` 提供内部 updater Fastify 服务、状态文件、manifest 校验、镜像拉取、staged env/compose、apply、restart、rollback

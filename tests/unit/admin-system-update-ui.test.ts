@@ -61,6 +61,11 @@ describe('admin system update UI contract', () => {
     expect(panel).toContain('toast({ title: message');
     expect(panel).toContain('已是最新版本');
     expect(panel).toContain('发现新版本');
+    expect(panel).toContain('finalizing');
+    expect(panel).toContain('updater finalizer scheduled');
+    expect(panel).toContain('updater finalizer running');
+    expect(panel).toContain('updater finalizer completed');
+    expect(panel).toContain('updater 自更新已完成');
     expect(panel).toContain('更新状态');
   });
 });

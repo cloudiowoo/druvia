@@ -27,6 +27,7 @@ describe('release-mode compose and Dockerfiles', () => {
     expect(updaterBlock).toContain('"${DRUVIA_DEPLOY_DIR:?Set DRUVIA_DEPLOY_DIR to an absolute host path}:${DRUVIA_DEPLOY_DIR:?Set DRUVIA_DEPLOY_DIR to an absolute host path}"');
     expect(updaterBlock).toContain('update_state:/state');
     expect(updaterBlock).toContain('DRUVIA_MANAGED_SERVICES: ${DRUVIA_MANAGED_SERVICES:-api,admin,deno,hasura}');
+    expect(updaterBlock).toContain('DRUVIA_UPDATER_CONTAINER_NAME: ${DRUVIA_UPDATER_CONTAINER_NAME:-druvia-updater}');
     expect(updaterBlock).not.toContain('ports:');
     expect(updaterBlock).not.toContain('./:/deploy');
   });

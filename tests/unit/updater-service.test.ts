@@ -386,14 +386,28 @@ describe('updater service', () => {
     await Promise.all(backgroundTasks);
 
     await expect(readFile(releaseEnvPath, 'utf8')).resolves.toBe('DRUVIA_VERSION=0.2.0\n');
-    expect(commands.map((item) => `${item.command} ${item.args.join(' ')}`)).toEqual([
+    expect(commands.slice(0, 2).map((item) => `${item.command} ${item.args.join(' ')}`)).toEqual([
       'docker compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' run --rm api node apps/api/dist/cli/migrate.js up',
       'docker compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --remove-orphans api admin deno hasura',
-      'docker compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d updater',
     ]);
+    const finalizerCommand = commands[2];
+    expect(finalizerCommand?.command).toBe('docker');
+    expect(finalizerCommand?.args.slice(0, 5)).toEqual([
+      'run',
+      '-d',
+      '--rm',
+      '--name',
+      'druvia-updater-finalizer-op-apply',
+    ]);
+    expect(finalizerCommand?.args).toContain(`ghcr.io/druvia/druvia-updater@${digest('d')}`);
+    expect(finalizerCommand?.args).toContain('--volumes-from');
+    expect(finalizerCommand?.args).toContain('druvia-updater:rw');
+    expect(finalizerCommand?.args).toContain('DRUVIA_FINALIZER_TARGET_VERSION=0.2.0');
+    expect(finalizerCommand?.args.join(' ')).toContain('up -d updater');
     const status = await service.getStatus();
-    expect(status.phase).toBe('succeeded');
+    expect(status.phase).toBe('finalizing');
     expect(status.currentVersion).toBe('0.2.0');
+    expect(status.message).toBe('Updated to 0.2.0; updater finalizer scheduled');
   });
 
   it('rolls back active release files from the failed operation backup and restarts managed services', async () => {

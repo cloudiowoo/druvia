@@ -40,6 +40,8 @@ export interface UpdaterConfig {
   healthCheckUrls: string[];
   healthCheckTimeoutMs: number;
   healthCheckIntervalMs: number;
+  updaterContainerName: string;
+  updaterFinalizerDelaySeconds: number;
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -124,5 +126,7 @@ export function parseUpdaterConfig(env: NodeJS.ProcessEnv = process.env): Update
       : DEFAULT_HEALTH_CHECK_URLS,
     healthCheckTimeoutMs: parsePositiveInteger(env.DRUVIA_HEALTH_CHECK_TIMEOUT_MS, 180_000),
     healthCheckIntervalMs: parsePositiveInteger(env.DRUVIA_HEALTH_CHECK_INTERVAL_MS, 2_000),
+    updaterContainerName: env.DRUVIA_UPDATER_CONTAINER_NAME || 'druvia-updater',
+    updaterFinalizerDelaySeconds: parsePositiveInteger(env.DRUVIA_UPDATER_FINALIZER_DELAY_SECONDS, 2),
   };
 }

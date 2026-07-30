@@ -148,6 +148,7 @@
 - Deno Worker 生产升级对象是 worker 镜像，不是宿主机挂载源码目录。
 - 数据库迁移前由 updater 执行完整 `pg_dump`。不可逆迁移失败时，自动回滚范围限定为镜像和 compose 状态，数据库恢复需要使用升级前 dump 人工执行。
 - Updater 通过宿主 Docker socket 执行 `docker compose`，所以 release 部署目录必须以宿主绝对路径 `DRUVIA_DEPLOY_DIR` 挂入 updater 的同一个绝对路径；不能只挂载到容器内 `/deploy`，否则 compose bind mount 源会被宿主 Docker daemon 解析成错误路径。
+- Updater 不允许在自身容器进程内同步执行 `docker compose up -d updater` 替换自己；标准 OTA 使用一次性 finalizer 容器执行 updater 自更新。启动 finalizer 后状态进入 `finalizing`，finalizer 通过继承旧 updater 挂载写回共享 update state，成功后再置为 `succeeded`。
 
 ## 文档策略
 

@@ -37,6 +37,7 @@ const phaseLabels: Record<DruviaUpdateStatus['phase'], string> = {
   applying: '应用中',
   restarting: '重启中',
   verifying: '验证中',
+  finalizing: '收尾中',
   succeeded: '已完成',
   failed: '失败',
   rolled_back: '已回滚',
@@ -48,6 +49,7 @@ const busyPhases = new Set<DruviaUpdateStatus['phase']>([
   'applying',
   'restarting',
   'verifying',
+  'finalizing',
 ]);
 
 function statusBadgeClass(phase: DruviaUpdateStatus['phase']): string {
@@ -86,6 +88,31 @@ function formatStatusMessage(status: DruviaUpdateStatus): string | null {
   }
   if (status.phase === 'ready_to_apply') {
     return `版本 ${status.availableVersion ?? ''} 已下载，等待重启应用`.trim();
+  }
+
+  const finalizerScheduledMatch = status.message.match(/^Updated to (.+); updater finalizer scheduled/);
+  if (finalizerScheduledMatch) {
+    return `已更新到 ${finalizerScheduledMatch[1]}，正在准备 updater 自更新`;
+  }
+
+  const finalizerRunningMatch = status.message.match(/^Updated to (.+); updater finalizer running/);
+  if (finalizerRunningMatch) {
+    return `已更新到 ${finalizerRunningMatch[1]}，正在替换 updater`;
+  }
+
+  const finalizerCompletedMatch = status.message.match(/^Updated to (.+); updater finalizer completed/);
+  if (finalizerCompletedMatch) {
+    return `已更新到 ${finalizerCompletedMatch[1]}，updater 自更新已完成`;
+  }
+
+  const finalizerFailedAfterStartMatch = status.message.match(/^Updated to (.+); updater finalizer failed:/);
+  if (finalizerFailedAfterStartMatch) {
+    return `已更新到 ${finalizerFailedAfterStartMatch[1]}，但 updater 自更新执行失败，可稍后手动恢复`;
+  }
+
+  const finalizerFailedMatch = status.message.match(/^Updated to (.+); updater finalizer failed/);
+  if (finalizerFailedMatch) {
+    return `已更新到 ${finalizerFailedMatch[1]}，但 updater 自更新调度失败，可稍后手动恢复`;
   }
 
   const selfUpdateFailedMatch = status.message.match(/^Updated to (.+); updater self-update failed/);

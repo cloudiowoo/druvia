@@ -9,6 +9,15 @@ export interface ComposeOptions {
   managedServices: string[];
 }
 
+export interface UpdaterFinalizerOptions {
+  compose: ComposeOptions;
+  delaySeconds: number;
+  finalizerImage: string;
+  finalizerName: string;
+  targetVersion: string;
+  updaterContainerName: string;
+}
+
 export function parseCsvEnv(value: string | undefined): string[] {
   if (!value) return [];
   return value
@@ -55,4 +64,34 @@ export function buildComposeArgs(action: ComposeAction, options: ComposeOptions)
 
 export function buildDockerImagePullArgs(imageRef: string): string[] {
   return ['image', 'pull', imageRef];
+}
+
+export function buildUpdaterFinalizerRunArgs(options: UpdaterFinalizerOptions): string[] {
+  return [
+    'run',
+    '-d',
+    '--rm',
+    '--name',
+    options.finalizerName,
+    '--label',
+    'com.druvia.role=updater-finalizer',
+    '--volumes-from',
+    `${options.updaterContainerName}:rw`,
+    '-w',
+    options.compose.projectDirectory,
+    '--env',
+    'DRUVIA_FINALIZER_STATE_PATH=/state/update-state.json',
+    '--env',
+    `DRUVIA_FINALIZER_TARGET_VERSION=${options.targetVersion}`,
+    '--env',
+    `DRUVIA_FINALIZER_UPDATER_CONTAINER_NAME=${options.updaterContainerName}`,
+    '--env',
+    `DRUVIA_FINALIZER_DELAY_SECONDS=${options.delaySeconds}`,
+    options.finalizerImage,
+    'node',
+    '/app/apps/updater/dist/finalizer.js',
+    '--',
+    'docker',
+    ...buildComposeArgs('selfUpdate', options.compose),
+  ];
 }
