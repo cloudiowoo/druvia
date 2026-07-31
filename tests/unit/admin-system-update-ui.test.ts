@@ -44,6 +44,42 @@ describe('admin system update UI contract', () => {
     expect(panel).toContain('Power');
   });
 
+  it('uses the shared admin UI primitives for settings panels and forms', () => {
+    const page = read('apps/admin/src/app/settings/page.tsx');
+
+    expect(page).toContain("from '@/components/ui/card'");
+    expect(page).toContain("from '@/components/ui/button'");
+    expect(page).toContain("from '@/components/ui/input'");
+    expect(page).toContain("from '@/components/ui/label'");
+    expect(page).toContain("from '@/components/ui/select'");
+    expect(page).toContain('CardFooter');
+    expect(page).not.toContain('className="card"');
+    expect(page).not.toContain('btn btn-primary');
+    expect(page).not.toContain('className="input w-full"');
+  });
+
+  it('renders a stepwise progress surface and details modal for update operations', () => {
+    const panel = read('apps/admin/src/components/system-update/SystemUpdatePanel.tsx');
+
+    expect(panel).toContain('const updateSteps');
+    expect(panel).toContain('phaseStepIndex');
+    expect(panel).toContain('role="progressbar"');
+    expect(panel).toContain('aria-valuenow');
+    expect(panel).toContain('Dialog');
+    expect(panel).toContain('更新详情');
+    expect(panel).toContain('查看发布说明');
+  });
+
+  it('surfaces active update phases in the passive dashboard notice', () => {
+    const notice = read('apps/admin/src/components/system-update/SystemUpdateNotice.tsx');
+
+    expect(notice).toContain("'downloading'");
+    expect(notice).toContain("'applying'");
+    expect(notice).toContain("'verifying'");
+    expect(notice).toContain("'finalizing'");
+    expect(notice).toContain('animate-spin');
+  });
+
   it('polls update status while a background update operation is running', () => {
     const panel = read('apps/admin/src/components/system-update/SystemUpdatePanel.tsx');
 
