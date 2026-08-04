@@ -98,7 +98,7 @@ services:
       HASURA_ADMIN_SECRET: ${HASURA_ADMIN_SECRET}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
     volumes:
-      - ${STORAGE_HOST_PATH:-../apps/api/data/storage}:/app/data/storage
+      - ${STORAGE_HOST_PATH:-./storage_data}:/app/data/storage
     ports:
       - "${API_PORT:-3001}:3001"
     healthcheck:
@@ -278,3 +278,4 @@ networks:
 # - ./postgres_data - PostgreSQL data
 # - ./redis_data - Redis AOF persistence
 # - ./deno_cache - Deno module cache
+# - ./storage_data - local storage objects

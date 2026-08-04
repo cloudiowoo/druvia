@@ -72,6 +72,7 @@
   - API 新增 super_admin-only system update 代理路由
   - Admin 新增被动更新通知和系统设置页更新操作面板
   - release-mode compose 已新增 `with-local-nginx` profile，可用 GHCR/GitHub Release 发布物在本地通过 `http://localhost:8088` 同源演练 OTA
+  - release/prod/local compose 已统一使用 `docker/storage_data` 作为本地 storage 默认持久化目录，生产 release 初始化不再依赖源码 `apps/` 目录
   - updater 自更新已改为一次性 finalizer 容器执行；apply 后进入 `finalizing`，finalizer 写回 completed/failed 状态并自动清理自身容器
   - Admin 系统更新面板已补齐阶段进度、更新详情弹窗与进行中反馈；顶部被动通知覆盖下载、应用、验证、收尾等后台阶段
 

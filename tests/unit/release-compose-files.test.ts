@@ -68,4 +68,37 @@ describe('release-mode compose and Dockerfiles', () => {
     expect(localNginxBlock).not.toContain('./nginx/ssl:/etc/nginx/ssl:ro');
     expect(localNginxBlock).not.toContain('certbot:');
   });
+
+  it('keeps local storage data outside source application directories', () => {
+    const releaseCompose = read('docker/docker-compose.release.yml');
+    const prodCompose = read('docker/docker-compose.prod.yml');
+    const localCompose = read('docker/docker-compose.local.yml');
+    const prodEnv = read('docker/.env.prod.example');
+    const localEnv = read('docker/.env.example');
+    const dockerGitignore = read('docker/.gitignore');
+
+    expect(releaseCompose).toContain('${STORAGE_HOST_PATH:-./storage_data}:/app/data/storage');
+    expect(prodCompose).toContain('${STORAGE_HOST_PATH:-./storage_data}:/app/data/storage');
+    expect(localCompose).toContain('${STORAGE_HOST_PATH:-./storage_data}:/app/data/storage');
+    expect(prodEnv).toContain('STORAGE_HOST_PATH=./storage_data');
+    expect(localEnv).toContain('STORAGE_HOST_PATH=./storage_data');
+    expect(dockerGitignore).toContain('storage_data/');
+
+    expect(releaseCompose).not.toContain('../apps/api/data/storage');
+    expect(prodCompose).not.toContain('../apps/api/data/storage');
+    expect(localCompose).not.toContain('../apps/api/data/storage');
+    expect(prodEnv).not.toContain('../apps/api/data/storage');
+    expect(localEnv).not.toContain('../apps/api/data/storage');
+  });
+
+  it('renews production certificates against the active release deployment when available', () => {
+    const renewScript = read('docker/certbot/renew-prod-certs.sh');
+
+    expect(renewScript).toContain('docker-compose.release.yml');
+    expect(renewScript).toContain('docker-compose.prod.yml');
+    expect(renewScript).toContain('.env.release');
+    expect(renewScript).toContain('DRUVIA_DEPLOY_DIR');
+    expect(renewScript).toContain('docker compose "$@" -f "${COMPOSE_FILE}" --profile with-nginx run --rm certbot renew');
+    expect(renewScript).toContain('docker compose "$@" -f "${COMPOSE_FILE}" --profile with-nginx exec -T nginx nginx -s reload');
+  });
 });

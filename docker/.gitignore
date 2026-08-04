@@ -1,6 +1,8 @@
 # Data directories
 postgres_data/
 redis_data/
+storage_data/*
+!storage_data/.gitkeep
 
 # Environment files
 .env

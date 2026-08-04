@@ -198,6 +198,7 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - 不依赖 `latest`
   - 不依赖生产机器本地 `build:`
 - Deno Worker 的生产升级对象应是版本化 worker 镜像，不是宿主机挂载的 `docker/deno-worker` 源码目录。
+- release/prod/local compose 的本地 storage 持久化目录默认是 `docker/storage_data`，通过 `STORAGE_HOST_PATH=./storage_data` 挂到 API 容器 `/app/data/storage`；不要再让 release-mode 生产依赖 `../apps/api/data/storage` 源码目录。
 - 升级前数据库保护应由 updater 直连 PostgreSQL 执行完整 `pg_dump`，并保存到 update state volume。
 - 不可逆数据库迁移失败时，只承诺自动回滚镜像和 compose 状态；数据库恢复需要使用升级前 dump 人工执行。
 - Updater 不能在自身容器进程内同步执行 `docker compose up -d updater` 替换自己；标准 OTA 应由一次性 finalizer 容器负责 updater 自更新。apply 启动 finalizer 后状态进入 `finalizing`，finalizer 使用 `--volumes-from` 继承旧 updater 的 `/state` 并写回 completed/failed，手工 `up -d updater` 只作为 finalizer 异常后的故障恢复命令。
@@ -210,6 +211,7 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - GitHub release workflow 与 `scripts/release/generate-manifest.mjs` 已新增
 - 外部 API 返回仍遵循 Druvia 标准 `{ success, data/error }` envelope；只有 updater 内部 `/internal/*` 使用裸状态 / 裸错误响应。
 - `DRUVIA_MANAGED_SERVICES` 默认仍是 `api,admin,deno,hasura`；内置 `nginx` 只在明确 opt-in 时加入，`certbot` 不进入常规 managed services。
+- 生产初始化为 release-mode 后，证书续期脚本 `docker/certbot/renew-prod-certs.sh` 会在存在 `.env.release` 时默认使用 `docker-compose.release.yml` 并同时加载 `.env.prod`/`.env.release`；没有 `.env.release` 的旧部署才回退 `docker-compose.prod.yml`。
 - 本地演练 GitHub/GHCR 发布物 OTA 时，使用 `docker-compose.release.yml --profile with-local-nginx`，入口为 `http://localhost:${LOCAL_HTTP_PORT:-8088}`；该 profile 复用 `docker/nginx/conf.d.local`，不使用生产域名、HTTPS 证书或 certbot。若要从 Admin UI 执行 apply，`.env.release` 也要设置 `DRUVIA_COMPOSE_PROFILES=with-local-nginx` 和 `DRUVIA_MANAGED_SERVICES=api,admin,deno,hasura,local-nginx`，让 updater 后续 compose 命令继续管理本地反代。
 - 生产内置 nginx 仍使用 `--profile with-nginx`；不要把本地 `with-local-nginx` 当成生产入口。
 - `DRUVIA_DEPLOY_DIR` 必须是宿主机上 `docker/` 部署目录的绝对路径，并以同一个绝对路径挂入 updater；不要回退到只把宿主目录挂为容器内 `/deploy`，否则 updater 通过 Docker socket 执行 compose 时会把 bind mount 源解析成宿主不存在的 `/deploy/...`。
