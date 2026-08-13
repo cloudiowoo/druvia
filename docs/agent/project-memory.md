@@ -197,6 +197,13 @@ Codex 项目记忆，记录当前阶段新会话最值得优先恢复的事实�
   - `api/admin/worker/updater` 均由 release manifest 指向镜像 digest
   - 不依赖 `latest`
   - 不依赖生产机器本地 `build:`
+- 生产无法访问 GHCR 时，可将 `docker/registry/` 目录单独拷贝到另一台国内云主机/NAS，部署其中的 `registry:2` 镜像仓库；它不依赖 Druvia 主 compose，默认只绑定 `127.0.0.1:5000`，应通过宿主机 HTTPS 反向代理暴露给 GitHub Actions/发布机和生产服务器，真实数据在该独立目录的 `registry_data`，认证文件在 `registry_auth/htpasswd`。
+- release workflow 同时发布 GHCR 和自建 Registry 镜像：
+  - GHCR manifest 仍是 `release-manifest.json`
+  - 自建 Registry manifest 是 `release-manifest.cn.json`
+  - 客户端通过 `DRUVIA_RELEASE_MANIFEST_URL` 选择 OTA 源；不要在同一个 manifest 里混用多个 Registry
+  - GitHub Actions 访问自建 Registry 使用 `DRUVIA_REGISTRY_USERNAME` / `DRUVIA_REGISTRY_PASSWORD` secrets，Registry host 默认 `druvia.forestpartner.com`，可用 Actions variable `DRUVIA_REGISTRY_HOST` 覆盖
+  - 生产服务器若拉取私有自建 Registry 镜像，宿主机 Docker 也必须先 `docker login druvia.forestpartner.com`
 - Deno Worker 的生产升级对象应是版本化 worker 镜像，不是宿主机挂载的 `docker/deno-worker` 源码目录。
 - release/prod/local compose 的本地 storage 持久化目录默认是 `docker/storage_data`，通过 `STORAGE_HOST_PATH=./storage_data` 挂到 API 容器 `/app/data/storage`；不要再让 release-mode 生产依赖 `../apps/api/data/storage` 源码目录。
 - 升级前数据库保护应由 updater 直连 PostgreSQL 执行完整 `pg_dump`，并保存到 update state volume。

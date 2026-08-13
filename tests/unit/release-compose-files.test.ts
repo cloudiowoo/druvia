@@ -55,6 +55,18 @@ describe('release-mode compose and Dockerfiles', () => {
     expect(releaseEnv).not.toContain('DRUVIA_BASE_ENV_FILE=/deploy/.env.prod');
   });
 
+  it('documents GHCR and self-hosted registry OTA manifest choices', () => {
+    const releaseEnv = read('docker/.env.release.example');
+
+    expect(releaseEnv).toContain('DRUVIA_RELEASE_MANIFEST_URL=https://github.com/druvia/druvia/releases/latest/download/release-manifest.json');
+    expect(releaseEnv).toContain('# For self-hosted registry images, use release-manifest.cn.json instead:');
+    expect(releaseEnv).toContain('# DRUVIA_RELEASE_MANIFEST_URL=https://github.com/druvia/druvia/releases/latest/download/release-manifest.cn.json');
+    expect(releaseEnv).toContain('# DRUVIA_API_IMAGE=druvia.forestpartner.com/druvia/druvia-api:0.1.0');
+    expect(releaseEnv).toContain('# DRUVIA_ADMIN_IMAGE=druvia.forestpartner.com/druvia/druvia-admin:0.1.0');
+    expect(releaseEnv).toContain('# DRUVIA_WORKER_IMAGE=druvia.forestpartner.com/druvia/druvia-worker:0.1.0');
+    expect(releaseEnv).toContain('# DRUVIA_UPDATER_IMAGE=druvia.forestpartner.com/druvia/druvia-updater:0.1.0');
+  });
+
   it('provides a local nginx profile for same-origin OTA testing', () => {
     const compose = read('docker/docker-compose.release.yml');
     const start = compose.indexOf('  local-nginx:');
@@ -100,5 +112,38 @@ describe('release-mode compose and Dockerfiles', () => {
     expect(renewScript).toContain('DRUVIA_DEPLOY_DIR');
     expect(renewScript).toContain('docker compose "$@" -f "${COMPOSE_FILE}" --profile with-nginx run --rm certbot renew');
     expect(renewScript).toContain('docker compose "$@" -f "${COMPOSE_FILE}" --profile with-nginx exec -T nginx nginx -s reload');
+  });
+
+  it('provides a standalone registry compose for production-reachable image hosting', () => {
+    const registryCompose = read('docker/registry/docker-compose.yml');
+    const registryEnv = read('docker/registry/.env.example');
+    const registryGitignore = read('docker/registry/.gitignore');
+    const dockerGitignore = read('docker/.gitignore');
+
+    expect(registryCompose).toContain('name: druvia-registry');
+    expect(registryCompose).toContain('image: registry:2');
+    expect(registryCompose).toContain('container_name: druvia-registry');
+    expect(registryCompose).toContain('"${REGISTRY_BIND_ADDR:-127.0.0.1}:${REGISTRY_PORT:-5000}:5000"');
+    expect(registryCompose).toContain('REGISTRY_HTTP_ADDR: 0.0.0.0:5000');
+    expect(registryCompose).toContain('REGISTRY_HTTP_SECRET: ${REGISTRY_HTTP_SECRET:?Set REGISTRY_HTTP_SECRET in .env}');
+    expect(registryCompose).toContain('REGISTRY_AUTH: htpasswd');
+    expect(registryCompose).toContain('REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd');
+    expect(registryCompose).toContain('REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry');
+    expect(registryCompose).toContain('./registry_data:/var/lib/registry');
+    expect(registryCompose).toContain('./registry_auth:/auth:ro');
+    expect(registryCompose).not.toContain('druvia-network');
+    expect(registryCompose).not.toContain('depends_on:');
+    expect(registryCompose).not.toContain('docker-compose.release.yml');
+    expect(registryCompose).not.toContain('.env.release');
+
+    expect(registryEnv).toContain('REGISTRY_BIND_ADDR=127.0.0.1');
+    expect(registryEnv).toContain('REGISTRY_PORT=5000');
+    expect(registryEnv).toContain('REGISTRY_HTTP_SECRET=');
+
+    expect(registryGitignore).toContain('registry_data/*');
+    expect(registryGitignore).toContain('registry_auth/*');
+    expect(registryGitignore).toContain('.env');
+    expect(dockerGitignore).not.toContain('registry_data/');
+    expect(dockerGitignore).not.toContain('registry_auth/*');
   });
 });

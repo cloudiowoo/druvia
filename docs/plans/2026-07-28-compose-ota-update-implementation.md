@@ -659,11 +659,24 @@ scripts/release/generate-manifest.mjs
 
 1. tag 触发，例如 `v0.2.0`。
 2. 构建四个镜像。
-3. 推送 semver tag 和 git SHA tag。
-4. 获取每个镜像 digest。
+3. 同时推送 GHCR 和自建 Registry 的 semver tag / git SHA tag。
+4. 分别获取每个 Registry 上的镜像 digest。
 5. 计算 `docker-compose.release.yml` sha256。
-6. 生成 `release-manifest.json`。
-7. 将 manifest 和 compose 文件上传到 GitHub Release。
+6. 生成 GHCR 用 `release-manifest.json`。
+7. 生成自建 Registry 用 `release-manifest.cn.json`。
+8. 将两份 manifest 和 compose 文件上传到 GitHub Release。
+
+双源发布约定：
+
+- GHCR 镜像仓库仍使用 `ghcr.io/${{ github.repository_owner }}/druvia-*`。
+- 自建 Registry 默认使用 `druvia.forestpartner.com/druvia/druvia-*`，可通过 GitHub Actions variable `DRUVIA_REGISTRY_HOST` 覆盖 host。
+- GitHub Actions 连接自建 Registry 需要配置 secrets：
+  - `DRUVIA_REGISTRY_USERNAME`
+  - `DRUVIA_REGISTRY_PASSWORD`
+- 客户端通过 `DRUVIA_RELEASE_MANIFEST_URL` 选择 OTA 路径：
+  - GHCR：`release-manifest.json`
+  - 自建 Registry：`release-manifest.cn.json`
+- 自建 Registry 只承载 Docker 镜像；manifest 和 `docker-compose.release.yml` 当前仍作为 GitHub Release assets 分发。若生产也无法稳定访问 GitHub，需要额外把这两个 asset 镜像到生产可访问的 HTTPS 静态地址，并同步调整 `DRUVIA_RELEASE_MANIFEST_URL`、manifest 内 `compose.url` 和 `DRUVIA_RELEASE_ALLOWED_HOSTS`。
 
 Worker 镜像构建必须使用 `docker/deno-worker` 作为 build context，并使用 `docker/Dockerfile.worker` 作为 Dockerfile。根 `.dockerignore` 排除了 `docker/` 目录，不能用仓库根 context 再从 Dockerfile 里 `COPY docker/deno-worker`。
 
@@ -776,13 +789,16 @@ Manifest 生成脚本必须做本地校验：
 - GitHub Actions release workflow
 - manifest 生成脚本
 - GHCR 镜像发布
+- 自建 Registry 镜像发布
 - Release assets 上传
 
 验收：
 
 - tag 发布会生成四个镜像。
-- release manifest 包含四个 digest。
-- updater 可以用 release manifest 完成检查和拉取。
+- tag 发布会分别推送到 GHCR 和自建 Registry。
+- `release-manifest.json` 包含 GHCR 四个 digest。
+- `release-manifest.cn.json` 包含自建 Registry 四个 digest。
+- updater 可以按客户端配置的 manifest URL 完成检查和拉取。
 
 ### Phase 5: 文档和生产演练
 

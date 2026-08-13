@@ -1,0 +1,9 @@
+# Registry runtime data
+registry_data/*
+!registry_data/.gitkeep
+registry_auth/*
+!registry_auth/.gitkeep
+
+# Local registry environment
+.env
+.env.*.local

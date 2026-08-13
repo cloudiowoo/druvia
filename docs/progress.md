@@ -73,6 +73,8 @@
   - Admin 新增被动更新通知和系统设置页更新操作面板
   - release-mode compose 已新增 `with-local-nginx` profile，可用 GHCR/GitHub Release 发布物在本地通过 `http://localhost:8088` 同源演练 OTA
   - release/prod/local compose 已统一使用 `docker/storage_data` 作为本地 storage 默认持久化目录，生产 release 初始化不再依赖源码 `apps/` 目录
+  - 新增独立 `docker/registry/` 部署包，支持在国内云主机/NAS 上自建 `registry:2` 作为生产可访问镜像源
+  - GitHub release workflow 已改为同时推送 GHCR 与自建 Registry 镜像，并生成 `release-manifest.json` / `release-manifest.cn.json` 供客户端按环境选择 OTA 源
   - updater 自更新已改为一次性 finalizer 容器执行；apply 后进入 `finalizing`，finalizer 写回 completed/failed 状态并自动清理自身容器
   - Admin 系统更新面板已补齐阶段进度、更新详情弹窗与进行中反馈；顶部被动通知覆盖下载、应用、验证、收尾等后台阶段
 
@@ -89,6 +91,6 @@
   - 更多 API 模块的 `console.*` 收敛
   - 可选日志栈的 dashboard / 告警模板
 - Docker Compose 在线升级后续需要补生产演练：
-  - 构建并发布真实 GHCR 镜像
-  - 用 release manifest 从旧版本升到新版本
+  - 通过 Actions 发布同时覆盖 GHCR 与 `druvia.forestpartner.com` 自建 Registry
+  - 分别用 `release-manifest.json` 和 `release-manifest.cn.json` 从旧版本升到新版本
   - 验证故障 release 的自动回滚和数据库 dump 可恢复性

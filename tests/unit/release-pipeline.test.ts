@@ -76,19 +76,33 @@ describe('release manifest generator', () => {
 });
 
 describe('release workflow', () => {
-  it('builds all release images and uploads manifest assets', () => {
+  it('builds release images for GHCR and the self-hosted registry with separate OTA manifests', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
     expect(workflow).toContain("tags:\n      - 'v*'");
     expect(workflow).toContain('workflow_dispatch:');
-    expect(workflow).toContain('ghcr.io/${{ github.repository_owner }}/druvia-api');
-    expect(workflow).toContain('ghcr.io/${{ github.repository_owner }}/druvia-admin');
-    expect(workflow).toContain('ghcr.io/${{ github.repository_owner }}/druvia-worker');
-    expect(workflow).toContain('ghcr.io/${{ github.repository_owner }}/druvia-updater');
+    expect(workflow).toContain('GHCR_REGISTRY: ghcr.io');
+    expect(workflow).toContain("SELF_HOSTED_REGISTRY: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}");
+    expect(workflow).toContain('GHCR_API_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-api');
+    expect(workflow).toContain('SELF_HOSTED_API_IMAGE: ${{ vars.DRUVIA_REGISTRY_HOST || \'druvia.forestpartner.com\' }}/druvia/druvia-api');
+    expect(workflow).toContain('secrets.DRUVIA_REGISTRY_USERNAME');
+    expect(workflow).toContain('secrets.DRUVIA_REGISTRY_PASSWORD');
     expect(workflow).toContain('context: docker/deno-worker');
     expect(workflow).toContain('file: docker/Dockerfile.worker');
+    expect(workflow).toContain('${{ env.GHCR_API_IMAGE }}:${{ env.RELEASE_VERSION }}');
+    expect(workflow).toContain('${{ env.SELF_HOSTED_API_IMAGE }}:${{ env.RELEASE_VERSION }}');
+    expect(workflow).toContain('${{ env.GHCR_ADMIN_IMAGE }}:${{ env.RELEASE_VERSION }}');
+    expect(workflow).toContain('${{ env.SELF_HOSTED_ADMIN_IMAGE }}:${{ env.RELEASE_VERSION }}');
+    expect(workflow).toContain('${{ env.GHCR_WORKER_IMAGE }}:${{ env.RELEASE_VERSION }}');
+    expect(workflow).toContain('${{ env.SELF_HOSTED_WORKER_IMAGE }}:${{ env.RELEASE_VERSION }}');
+    expect(workflow).toContain('${{ env.GHCR_UPDATER_IMAGE }}:${{ env.RELEASE_VERSION }}');
+    expect(workflow).toContain('${{ env.SELF_HOSTED_UPDATER_IMAGE }}:${{ env.RELEASE_VERSION }}');
+    expect(workflow).toContain('docker buildx imagetools inspect "${image}:${RELEASE_VERSION}"');
+    expect(workflow).toContain('steps.resolve-digests.outputs.ghcr_api');
+    expect(workflow).toContain('steps.resolve-digests.outputs.self_hosted_api');
     expect(workflow).toContain('scripts/release/generate-manifest.mjs');
     expect(workflow).toContain('release-manifest.json');
+    expect(workflow).toContain('release-manifest.cn.json');
     expect(workflow).toContain('docker/docker-compose.release.yml');
   });
 });

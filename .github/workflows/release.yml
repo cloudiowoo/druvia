@@ -48,11 +48,16 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      REGISTRY: ghcr.io
-      API_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-api
-      ADMIN_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-admin
-      WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-worker
-      UPDATER_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-updater
+      GHCR_REGISTRY: ghcr.io
+      SELF_HOSTED_REGISTRY: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}
+      GHCR_API_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-api
+      GHCR_ADMIN_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-admin
+      GHCR_WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-worker
+      GHCR_UPDATER_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-updater
+      SELF_HOSTED_API_IMAGE: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}/druvia/druvia-api
+      SELF_HOSTED_ADMIN_IMAGE: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}/druvia/druvia-admin
+      SELF_HOSTED_WORKER_IMAGE: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}/druvia/druvia-worker
+      SELF_HOSTED_UPDATER_IMAGE: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}/druvia/druvia-updater
 
     steps:
       - name: Checkout
@@ -74,9 +79,16 @@ jobs:
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ${{ env.GHCR_REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to self-hosted registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.SELF_HOSTED_REGISTRY }}
+          username: ${{ secrets.DRUVIA_REGISTRY_USERNAME }}
+          password: ${{ secrets.DRUVIA_REGISTRY_PASSWORD }}
 
       - name: Build API image
         id: build-api
@@ -86,8 +98,10 @@ jobs:
           file: docker/Dockerfile.api
           push: true
           tags: |
-            ${{ env.API_IMAGE }}:${{ env.RELEASE_VERSION }}
-            ${{ env.API_IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.GHCR_API_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.GHCR_API_IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.SELF_HOSTED_API_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.SELF_HOSTED_API_IMAGE }}:${{ env.SHORT_SHA }}
 
       - name: Build Admin image
         id: build-admin
@@ -100,8 +114,10 @@ jobs:
             NEXT_PUBLIC_MULTI_TENANT_ENABLED=false
             NEXT_PUBLIC_DEFAULT_TENANT_ID=default
           tags: |
-            ${{ env.ADMIN_IMAGE }}:${{ env.RELEASE_VERSION }}
-            ${{ env.ADMIN_IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.GHCR_ADMIN_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.GHCR_ADMIN_IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.SELF_HOSTED_ADMIN_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.SELF_HOSTED_ADMIN_IMAGE }}:${{ env.SHORT_SHA }}
 
       - name: Build Worker image
         id: build-worker
@@ -111,8 +127,10 @@ jobs:
           file: docker/Dockerfile.worker
           push: true
           tags: |
-            ${{ env.WORKER_IMAGE }}:${{ env.RELEASE_VERSION }}
-            ${{ env.WORKER_IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.GHCR_WORKER_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.GHCR_WORKER_IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.SELF_HOSTED_WORKER_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.SELF_HOSTED_WORKER_IMAGE }}:${{ env.SHORT_SHA }}
 
       - name: Build Updater image
         id: build-updater
@@ -122,23 +140,71 @@ jobs:
           file: docker/Dockerfile.updater
           push: true
           tags: |
-            ${{ env.UPDATER_IMAGE }}:${{ env.RELEASE_VERSION }}
-            ${{ env.UPDATER_IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.GHCR_UPDATER_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.GHCR_UPDATER_IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.SELF_HOSTED_UPDATER_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.SELF_HOSTED_UPDATER_IMAGE }}:${{ env.SHORT_SHA }}
 
-      - name: Generate release manifest
+      - name: Resolve registry digests
+        id: resolve-digests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          resolve_digest() {
+            local image="$1"
+            docker buildx imagetools inspect "${image}:${RELEASE_VERSION}" \
+              --format '{{json .Manifest.Digest}}' \
+              | tr -d '"'
+          }
+
+          {
+            echo "ghcr_api=$(resolve_digest "${GHCR_API_IMAGE}")"
+            echo "ghcr_admin=$(resolve_digest "${GHCR_ADMIN_IMAGE}")"
+            echo "ghcr_worker=$(resolve_digest "${GHCR_WORKER_IMAGE}")"
+            echo "ghcr_updater=$(resolve_digest "${GHCR_UPDATER_IMAGE}")"
+            echo "self_hosted_api=$(resolve_digest "${SELF_HOSTED_API_IMAGE}")"
+            echo "self_hosted_admin=$(resolve_digest "${SELF_HOSTED_ADMIN_IMAGE}")"
+            echo "self_hosted_worker=$(resolve_digest "${SELF_HOSTED_WORKER_IMAGE}")"
+            echo "self_hosted_updater=$(resolve_digest "${SELF_HOSTED_UPDATER_IMAGE}")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate GHCR release manifest
         env:
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
           GITHUB_REF_NAME: ${{ env.RELEASE_TAG }}
           DRUVIA_RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
           DRUVIA_MIN_UPDATER_VERSION: 0.1.0
-          DRUVIA_API_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/druvia-api
-          DRUVIA_ADMIN_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/druvia-admin
-          DRUVIA_WORKER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/druvia-worker
-          DRUVIA_UPDATER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/druvia-updater
-          DRUVIA_API_IMAGE_DIGEST: ${{ steps.build-api.outputs.digest }}
-          DRUVIA_ADMIN_IMAGE_DIGEST: ${{ steps.build-admin.outputs.digest }}
-          DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.build-worker.outputs.digest }}
-          DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.build-updater.outputs.digest }}
+          DRUVIA_API_IMAGE_REPOSITORY: ${{ env.GHCR_API_IMAGE }}
+          DRUVIA_ADMIN_IMAGE_REPOSITORY: ${{ env.GHCR_ADMIN_IMAGE }}
+          DRUVIA_WORKER_IMAGE_REPOSITORY: ${{ env.GHCR_WORKER_IMAGE }}
+          DRUVIA_UPDATER_IMAGE_REPOSITORY: ${{ env.GHCR_UPDATER_IMAGE }}
+          DRUVIA_API_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_api }}
+          DRUVIA_ADMIN_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_admin }}
+          DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_worker }}
+          DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
+          DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'false' }}
+          DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '0' }}
+          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '0' }}
+          DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'false' }}
+          DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
+        run: node scripts/release/generate-manifest.mjs
+
+      - name: Generate self-hosted registry release manifest
+        env:
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+          GITHUB_REF_NAME: ${{ env.RELEASE_TAG }}
+          DRUVIA_RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          DRUVIA_MIN_UPDATER_VERSION: 0.1.0
+          DRUVIA_API_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_API_IMAGE }}
+          DRUVIA_ADMIN_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_ADMIN_IMAGE }}
+          DRUVIA_WORKER_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_WORKER_IMAGE }}
+          DRUVIA_UPDATER_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_UPDATER_IMAGE }}
+          DRUVIA_API_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.self_hosted_api }}
+          DRUVIA_ADMIN_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.self_hosted_admin }}
+          DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.self_hosted_worker }}
+          DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.self_hosted_updater }}
+          DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
           DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'false' }}
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '0' }}
           DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '0' }}
@@ -152,4 +218,5 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           files: |
             release-manifest.json
+            release-manifest.cn.json
             docker/docker-compose.release.yml
