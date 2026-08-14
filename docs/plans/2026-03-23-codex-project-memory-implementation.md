@@ -1,5 +1,7 @@
 # Codex 项目记忆管理体系实施计划
 
+> 已于 2026-08-14 被根/局部 `AGENTS.md` + `docs/agent/design-decisions.md` + `docs/progress.md` + 日期化 `docs/plans/*` 的分层文档模型取代。本文仅保留历史实施记录，不再执行其中的 `project-memory.md` 同步步骤。
+
 ## 范围
 
 本次实施只创建 Codex 结构与首批内容，不整理全部历史文档。

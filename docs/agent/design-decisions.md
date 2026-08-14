@@ -152,7 +152,14 @@
 
 ## 文档策略
 
-- `AGENTS.md` 用于入口与索引。
-- `docs/agent/project-memory.md` 用于近期高价值事实。
-- `docs/plans/*` 用于完整背景与实施过程。
-- `.claude/*` 保留用于兼容，不作为 Codex 唯一事实来源。
+- Codex 项目说明遵循官方 `AGENTS.md` 分层发现机制：
+  - 根 `AGENTS.md` 保存仓库级稳定约束和必要索引
+  - 子目录 `AGENTS.md` 保存该子树专用规则，并覆盖同主题的上层规则
+  - 不把格式化、lint 等可自动执行的要求大量复制进说明文件，应交给 CI 和工具配置
+- 官方机制参考：`https://learn.chatgpt.com/docs/agent-configuration/agents-md`
+- 仓库不再维护 `docs/agent/project-memory.md`：
+  - 它不是 Codex 自动发现文件
+  - 它与根/局部 `AGENTS.md`、进度和设计决策形成并行可变事实源
+  - 近期状态写入 `docs/progress.md`，长期决策写入本文件，完整证据写入日期化 `docs/plans/*`
+- `.agents/skills/*` 用于按需加载的仓库专用工作流，不替代 `AGENTS.md` 的常驻作用域规则。
+- `.claude/*` 保留用于兼容，不作为 Codex 的事实来源。

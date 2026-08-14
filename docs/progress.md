@@ -5,15 +5,16 @@
 ## Update Policy
 
 - 仅在阶段性完成、关键阻塞解除、跨子项目影响明确时更新
-- 用户显式发送 `/update_progress` 或 `/sync_memory` 时也应更新
+- 用户显式要求同步项目进度时也应更新
 - 小修、小范围重构、纯文案调整不应默认写入本文件
 
 ## Current Snapshot
 
-- 当前项目已进入 MVP 后的能力补齐与迁移兼容阶段
+- 当前项目已进入 MVP 后的生产加固与迁移兼容阶段
 - 真实需求牵引以 taro-app / Supabase -> Druvia 迁移为主
-- 近期重点是 SDK 补齐、权限模型细化、Functions invoke 安全收敛
-- Codex 项目级记忆、rules、skills 结构已建立，后续可按显式命令和重大认知变更同步
+- 近期最高优先级是 Hasura 默认权限、project-user 全链路身份、发布门禁、OTA 恢复和 MCP 契约
+- 项目整体评估与分阶段路线已归档到 `docs/plans/2026-08-14-project-update-direction-analysis.md`
+- Codex 项目说明已改为官方 `AGENTS.md` 分层模型，不再维护平行的 `project-memory.md`
 
 ## Recent Milestones
 
@@ -32,8 +33,7 @@
 - 仓库已补齐 Codex 原生项目上下文体系：
   - 根与模块 `AGENTS.md`
   - `docs/agent/*`
-  - `.codex/rules/*`
-  - `.codex/skills/*`
+  - `.agents/skills/*`
 - 平台侧已补齐 Edge Function internal GraphQL 基础能力：
   - internal token
   - `/api/internal/functions/graphql`
@@ -80,17 +80,11 @@
 
 ## Current Next Steps
 
-- 将 taro-app 的 `wx-login-register` / `wx-silent-login` 切换到平台 project auth API
-- 将 taro-app 的 `upload-avatar` / `upload-team-logo` 改为调用 `druvia.storage.upload()`，并在需要新文件名替换时配合 `druvia.storage.remove()`
-- 为 H5 类应用补 Admin UI 里的 trusted backend key 管理入口
-- 继续把 H5 的用户名登录收口到 trusted issuer + project session 主链
-- 评估并规划 GraphQL project-user 能力的下一阶段设计
-- 继续把旧 Edge Function 登录函数收敛为薄代理或下线
-- 持续把 taro-app 迁移中沉淀出的高价值结论同步到 Codex 项目记忆体系
-- 继续扩展平台日志覆盖面：
-  - 更多 API 模块的 `console.*` 收敛
-  - 可选日志栈的 dashboard / 告警模板
-- Docker Compose 在线升级后续需要补生产演练：
-  - 通过 Actions 发布同时覆盖 GHCR 与 `druvia.forestpartner.com` 自建 Registry
-  - 分别用 `release-manifest.json` 和 `release-manifest.cn.json` 从旧版本升到新版本
-  - 验证故障 release 的自动回滚和数据库 dump 可恢复性
+- 收紧 Hasura 自动生成权限，移除无业务依据的匿名写入和无过滤 CRUD
+- 统一 project-user 在 GraphQL、Realtime、Storage、RPC 和 Functions 中的身份传播与审计
+- 修正 MCP Server 与 API 的认证头、路由身份和 scope 契约，并增加真实 API 契约测试
+- 将 build、lint、核心测试、manifest/digest 校验和 OTA smoke test 纳入 release 门禁
+- 在生产目标主机重新生成 release 路径配置，完成 `0.3.3 -> 0.3.4+` 的 apply/finalizer 验收
+- 分别演练 GHCR 与自建 Registry 更新源、故障镜像回滚和数据库 dump 恢复
+- 继续用 taro-app 迁移验证 project auth、Storage helper、Realtime 重连和 SDK token 选择顺序
+- 补齐公开仓库 README、LICENSE、敏感信息历史检查和版本轴说明

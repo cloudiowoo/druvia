@@ -134,7 +134,7 @@
 
 发生下列情况后，记得同步文档：
 
-- 权限模型变化：更新 `docs/agent/project-memory.md`
+- 权限模型变化：更新最近的模块 `AGENTS.md`；若形成长期决策，同时更新 `docs/agent/design-decisions.md`
 - 长期架构决策变化：更新 `docs/agent/design-decisions.md`
 - 新模块局部规则变化：更新对应子目录 `AGENTS.md`
 - 完整设计或实施过程：新增 `docs/plans/YYYY-MM-DD-*.md`

@@ -1,0 +1,33 @@
+# Docker Agent Notes
+
+适用于 `docker` 目录及其子树。
+
+## 部署模式
+
+- `docker-compose.local.yml`: 本地源码开发依赖与服务
+- `docker-compose.prod.yml`: 传统生产构建/部署
+- `docker-compose.release.yml`: 版本镜像部署和 OTA
+- `registry/docker-compose.yml`: 独立 Registry 部署包，必须可在另一台服务器单独运行
+
+## 工作规则
+
+- release-mode 同时支持 GHCR 和自建 Registry；客户端通过 manifest URL 和初始镜像前缀选择来源，不在运行中混用两个 manifest 的 digest。
+- `.env.prod` 与 `.env.release` 是部署主机配置，不提交 Git；仓库只维护对应 example。
+- `DRUVIA_DEPLOY_DIR`、`DRUVIA_BASE_ENV_FILE`、`DRUVIA_RELEASE_ENV_FILE` 和 `DRUVIA_COMPOSE_FILE` 必须按目标宿主机重新生成，不能从开发机直接复制绝对路径。
+- `docker/storage_data` 是本地存储持久化目录；只提交 `.gitkeep`，不提交对象数据。
+- 生产证书续期继续由 certbot 流程管理。release-mode 下续期脚本必须加载 release compose/env，续期后 reload/recreate nginx 使新证书生效。
+- 本地 OTA 使用 `with-local-nginx` 和 HTTP；生产内置 nginx 使用 `with-nginx` 和证书。不要把本地 profile 写入生产 `.env.release`。
+- Registry 部署与 Druvia 主服务 compose 保持独立，不增加主项目默认依赖。
+
+## Release Verification
+
+- 变更 compose 或 env 契约后，分别执行 local、prod、release 配置渲染检查。
+- OTA 变更必须验证 GHCR manifest、自建 Registry manifest、旧版本到新版本升级、故障回滚和 updater finalizer。
+- 发布前确认敏感文件、证书、数据库、Redis、Storage、Registry auth 数据均被忽略。
+
+## 参考入口
+
+- `docs/agent/design-decisions.md`
+- `docs/plans/2026-07-28-compose-ota-update-implementation.md`
+- `docs/plans/2026-08-14-project-update-direction-analysis.md`
+

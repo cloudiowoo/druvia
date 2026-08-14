@@ -1,5 +1,7 @@
 # Codex 项目记忆管理体系设计
 
+> 已于 2026-08-14 被根/局部 `AGENTS.md` + `docs/agent/design-decisions.md` + `docs/progress.md` + 日期化 `docs/plans/*` 的分层文档模型取代。本文仅保留历史设计背景，不再作为实施依据。
+
 ## 背景
 
 Druvia 现有仓库已经保留 `CLAUDE.md` 与 `.claude/memory/*`，能够服务 Claude 系工作流，但缺少一套面向 Codex 的项目级上下文组织方式。随着 taro-app / Supabase 迁移、Functions 权限模型、安全规则持续演进，仅依赖单一根文档已不足以支撑新会话快速恢复上下文。

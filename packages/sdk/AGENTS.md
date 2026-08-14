@@ -20,13 +20,15 @@
 - `database/graphql` 应与 `rpc/functions` 共用项目侧 token 选择顺序：
   - 有 project session 时优先带 project token
   - 否则再回退 platform token
+- Realtime 建连必须传播与 HTTP 数据访问一致的项目身份；空 `connection_init` payload 不能作为 project-user 支持完成的依据。
+- SDK 认证头或 session 选择顺序变化时，必须用 API 端真实中间件契约验证，不能只做客户端单测。
 - SDK prerelease 发包必须显式带 dist-tag：
   - 例如 `0.1.0-beta.3` 应使用 `npm publish --tag beta`
   - 不要把 beta 版本直接当作默认 `latest` 发布
 
 ## 参考入口
 
-- `docs/agent/project-memory.md`
 - `docs/agent/playbooks.md`
+- `docs/plans/2026-08-14-project-update-direction-analysis.md`
 - `docs/plans/2026-03-17-taro-app-migration-design.md`
 - `docs/plans/2026-03-18-druvia-sdk-adapter-requirements.md`

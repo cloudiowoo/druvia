@@ -29,6 +29,6 @@
 
 ## 参考入口
 
-- `docs/agent/project-memory.md`
 - `docs/agent/playbooks.md`
+- `docs/plans/2026-08-14-project-update-direction-analysis.md`
 - `docs/plans/2026-03-23-function-invoke-auth-ui-design.md`
