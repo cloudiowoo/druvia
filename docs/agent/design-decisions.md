@@ -124,6 +124,12 @@
   - 只替换当前项目两个 scoped role 的权限；旧 `user / anonymous` 及其他 role 均保留
   - scoped role 中出现非精确受支持形态时按 custom 只读处理，不允许 UI 覆盖
 - Batch 2A 只完成 scoped permission 物化，不改变 HTTP/WebSocket 当前 actor role；运行时切换必须等待 Batch 3 的 Project JWT、代理映射和激活状态。
+- 表级数据访问 Batch 2B 的项目概览固定为默认生产 schema 的只读治理视图：
+  - API 用一次 PostgreSQL 清单查询和一次默认 source metadata 导出组成项目快照，不逐表调用管理接口
+  - 清单读取不得创建 `_meta_tables`、追踪表或改写权限；辅助表不存在时 Realtime 默认按未启用展示
+  - authenticated / anonymous 的 custom 状态分别判定，公开响应只返回应用状态和旧规则布尔值，不返回物理 role
+  - Admin 项目设置页负责汇总、筛选和导航，编辑仍在表详情；`scope=default` 是从概览切回默认 schema 的唯一显式入口
+  - Batch 2B 的 `runtimeMode` 固定为 `compatibility`，不能把 scoped permission 描述为已用于应用请求
 - Admin 默认使用“数据接口、数据访问、实时更新”等应用概念；Hasura role、metadata 和 secret 只属于高级诊断或服务端实现。
 - Druvia 管理端对列级 DDL 的正式策略是：
   - Admin Tables 页面内的 `add/drop/rename column` 自动触发 `reload metadata`

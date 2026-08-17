@@ -3,6 +3,7 @@
 import type { DruviaUpdateStatus } from '@druvia/shared';
 import { createAdminServerLogger } from './server-logger';
 import type { TableDataAccessPolicy, TableDataAccessState } from './table-data-access';
+import type { ProjectDataAccessOverview } from './project-data-access-overview';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 const serverLogger = createAdminServerLogger({ module: 'api-client' });
@@ -435,6 +436,13 @@ class ApiClient {
     return this.request<TableDataAccessState>(
       'GET',
       `/api/v1/projects/${projectId}/data-access/tables/${tableName}`
+    );
+  }
+
+  async getProjectDataAccessOverview(projectId: string) {
+    return this.request<ProjectDataAccessOverview>(
+      'GET',
+      `/api/v1/projects/${projectId}/data-access/overview`
     );
   }
 

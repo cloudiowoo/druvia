@@ -4,6 +4,7 @@ import {
   getTableDataAccessValidationError,
   hasUnrestrictedWriteAccess,
   isDefaultTableDataScope,
+  resolveTableDetailNavigation,
   requiresOwnerColumn,
 } from '../../../apps/admin/src/lib/table-data-access.js'
 import type { TableDataAccessPolicy } from '../../../apps/admin/src/lib/table-data-access.js'
@@ -62,5 +63,54 @@ describe('table data access presentation', () => {
     expect(isDefaultTableDataScope('dru_proj_123', 'dru_proj_123')).toBe(true)
     expect(isDefaultTableDataScope('dru_proj_123', 'dru_proj_123_dev')).toBe(false)
     expect(isDefaultTableDataScope(null, 'dru_proj_123')).toBe(false)
+  })
+
+  it('opens explicit default-scope access after selecting the project schema', () => {
+    expect(resolveTableDetailNavigation({
+      tab: 'access',
+      scope: 'default',
+      projectSchema: 'dru_proj_123',
+      selectedSchema: 'dru_proj_123_dev',
+    })).toEqual({
+      tab: 'access',
+      schemaName: 'dru_proj_123',
+      normalizeToDefault: true,
+      consumeDefaultScope: true,
+    })
+  })
+
+  it('keeps access closed for invalid queries and ordinary non-default context', () => {
+    expect(resolveTableDetailNavigation({
+      tab: 'access',
+      scope: null,
+      projectSchema: 'dru_proj_123',
+      selectedSchema: 'dru_proj_123_dev',
+    }).tab).toBe('structure')
+    expect(resolveTableDetailNavigation({
+      tab: 'unknown',
+      scope: 'default',
+      projectSchema: 'dru_proj_123',
+      selectedSchema: 'dru_proj_123',
+    }).tab).toBe('structure')
+    expect(resolveTableDetailNavigation({
+      tab: 'access',
+      scope: 'preview',
+      projectSchema: 'dru_proj_123',
+      selectedSchema: 'dru_proj_123',
+    }).tab).toBe('structure')
+  })
+
+  it('opens ordinary access only when the selected schema is already default', () => {
+    expect(resolveTableDetailNavigation({
+      tab: 'access',
+      scope: null,
+      projectSchema: 'dru_proj_123',
+      selectedSchema: 'dru_proj_123',
+    })).toEqual({
+      tab: 'access',
+      schemaName: 'dru_proj_123',
+      normalizeToDefault: false,
+      consumeDefaultScope: false,
+    })
   })
 })

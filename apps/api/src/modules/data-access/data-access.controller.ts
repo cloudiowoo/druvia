@@ -4,6 +4,7 @@ import {
   DataAccessConflictError,
   DataAccessNotFoundError,
   DataAccessUpstreamError,
+  getProjectDataAccessOverview as getProjectDataAccessOverviewState,
   getTableDataAccess as getTableDataAccessState,
   updateTableDataAccess as updateTableDataAccessState,
 } from './data-access.service.js'
@@ -15,13 +16,31 @@ interface TableDataAccessParams {
   tableName: string
 }
 
+interface ProjectDataAccessParams {
+  projectId: string
+}
+
 const ACCESS_MODES = new Set<AuthenticatedAccessMode>(['none', 'all', 'owner'])
+
+export async function getProjectDataAccessOverview(
+  request: FastifyRequest<{ Params: ProjectDataAccessParams }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+
+  try {
+    const overview = await getProjectDataAccessOverviewState(request.params.projectId)
+    return reply.send({ success: true, data: overview })
+  } catch (error) {
+    return sendDataAccessError(error, reply)
+  }
+}
 
 export async function getTableDataAccess(
   request: FastifyRequest<{ Params: TableDataAccessParams }>,
   reply: FastifyReply
 ) {
-  if (!(await verifyManagementAccess(request, reply))) return
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
 
   try {
     const state = await getTableDataAccessState(
@@ -41,7 +60,7 @@ export async function updateTableDataAccess(
   }>,
   reply: FastifyReply
 ) {
-  if (!(await verifyManagementAccess(request, reply))) return
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
   if (!isTableDataAccessInput(request.body)) {
     return reply.status(400).send({
       success: false,
@@ -68,10 +87,10 @@ export async function updateTableDataAccess(
 }
 
 async function verifyManagementAccess(
-  request: FastifyRequest<{ Params: TableDataAccessParams }>,
+  user: FastifyRequest['user'],
+  projectId: string,
   reply: FastifyReply
 ): Promise<boolean> {
-  const user = request.user
   if (!user || user.kind !== 'platform_user') {
     reply.status(401).send({
       success: false,
@@ -80,7 +99,13 @@ async function verifyManagementAccess(
     return false
   }
 
-  const hasAccess = await checkProjectAccess(user.userId, request.params.projectId)
+  let hasAccess: boolean
+  try {
+    hasAccess = await checkProjectAccess(user.userId, projectId)
+  } catch (error) {
+    sendDataAccessError(error, reply)
+    return false
+  }
   if (!hasAccess) {
     reply.status(403).send({
       success: false,

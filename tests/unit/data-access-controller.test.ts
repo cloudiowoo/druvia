@@ -4,6 +4,7 @@ vi.mock('../../apps/api/src/modules/data-access/data-access.service.js', () => (
   DataAccessConflictError: class DataAccessConflictError extends Error {},
   DataAccessNotFoundError: class DataAccessNotFoundError extends Error {},
   DataAccessUpstreamError: class DataAccessUpstreamError extends Error {},
+  getProjectDataAccessOverview: vi.fn(),
   getTableDataAccess: vi.fn(),
   updateTableDataAccess: vi.fn(),
 }))
@@ -50,6 +51,20 @@ describe('data access controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(checkProjectAccess).mockResolvedValue(true)
+    vi.mocked(service.getProjectDataAccessOverview).mockResolvedValue({
+      projectId: 'proj_123',
+      schemaName: 'dru_proj_123',
+      runtimeMode: 'compatibility',
+      summary: {
+        totalTables: 0,
+        configuredTables: 0,
+        anonymousConfiguredTables: 0,
+        realtimeAccessRequiredTables: 0,
+        legacyTables: 0,
+        reviewRequiredTables: 0,
+      },
+      tables: [],
+    })
     vi.mocked(service.getTableDataAccess).mockResolvedValue({
       projectId: 'proj_123',
       schemaName: 'dru_proj_123',
@@ -68,6 +83,71 @@ describe('data access controller', () => {
       managedState: 'managed',
       legacyRoles: [],
     })
+  })
+
+  it('allows a platform user with project access to read the project overview', async () => {
+    const reply = createReply()
+    await controller.getProjectDataAccessOverview({
+      params: { projectId: 'proj_123' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(checkProjectAccess).toHaveBeenCalledWith('usr_123', 'proj_123')
+    expect(service.getProjectDataAccessOverview).toHaveBeenCalledWith('proj_123')
+    expect(reply.payload).toMatchObject({
+      success: true,
+      data: { runtimeMode: 'compatibility' },
+    })
+  })
+
+  it('maps missing project overviews to 404', async () => {
+    vi.mocked(service.getProjectDataAccessOverview).mockRejectedValueOnce(
+      new service.DataAccessNotFoundError('Project or project schema not found')
+    )
+    const reply = createReply()
+    await controller.getProjectDataAccessOverview({
+      params: { projectId: 'missing' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(404)
+    expect(reply.payload).toMatchObject({
+      success: false,
+      error: { code: 'DATA_ACCESS_NOT_FOUND' },
+    })
+  })
+
+  it('sanitizes project overview upstream failures', async () => {
+    vi.mocked(service.getProjectDataAccessOverview).mockRejectedValueOnce(
+      new service.DataAccessUpstreamError('admin_secret=server-value')
+    )
+    const reply = createReply()
+    await controller.getProjectDataAccessOverview({
+      params: { projectId: 'proj_123' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(502)
+    expect(JSON.stringify(reply.payload)).not.toContain('server-value')
+  })
+
+  it('sanitizes project access lookup failures', async () => {
+    vi.mocked(checkProjectAccess).mockRejectedValueOnce(
+      new Error('password=database-secret')
+    )
+    const reply = createReply()
+
+    await controller.getProjectDataAccessOverview({
+      params: { projectId: 'proj_123' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(500)
+    expect(reply.payload).toMatchObject({
+      success: false,
+      error: { code: 'DATA_ACCESS_FAILED' },
+    })
+    expect(JSON.stringify(reply.payload)).not.toContain('database-secret')
   })
 
   it('allows a platform user with project access to read policy', async () => {

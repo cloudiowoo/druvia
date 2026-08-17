@@ -36,3 +36,41 @@ export interface TableDataAccessState {
   managedState: 'managed' | 'custom'
   legacyRoles: string[]
 }
+
+export type DataInterfaceStatus = 'connected' | 'not_connected'
+export type AuthenticatedAccessStatus =
+  | 'closed'
+  | 'read_only'
+  | 'write_only'
+  | 'read_write'
+  | 'custom'
+export type AnonymousAccessStatus = 'closed' | 'read' | 'custom'
+export type DataAccessRealtimeStatus = 'disabled' | 'access_required' | 'configured'
+
+export interface ProjectTableDataAccessOverview {
+  tableName: string
+  dataInterface: DataInterfaceStatus
+  authenticatedAccess: AuthenticatedAccessStatus
+  anonymousAccess: AnonymousAccessStatus
+  realtime: DataAccessRealtimeStatus
+  legacyAccess: {
+    authenticated: boolean
+    anonymous: boolean
+  }
+  reviewRequired: boolean
+}
+
+export interface ProjectDataAccessOverview {
+  projectId: string
+  schemaName: string
+  runtimeMode: 'compatibility' | 'explicit'
+  summary: {
+    totalTables: number
+    configuredTables: number
+    anonymousConfiguredTables: number
+    realtimeAccessRequiredTables: number
+    legacyTables: number
+    reviewRequiredTables: number
+  }
+  tables: ProjectTableDataAccessOverview[]
+}

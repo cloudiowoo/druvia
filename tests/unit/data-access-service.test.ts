@@ -13,14 +13,24 @@ vi.mock('../../apps/api/src/modules/realtime/realtime.service.js', () => ({
   hasuraMetadataRequest: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/modules/data-access/data-access-inventory.js', () => ({
+  DataAccessInventorySchemaNotFoundError: class DataAccessInventorySchemaNotFoundError extends Error {},
+  getDataAccessInventory: vi.fn(),
+}))
+
 import * as projectService from '../../apps/api/src/modules/project/project.service.js'
 import * as tableService from '../../apps/api/src/modules/table/table.service.js'
 import { hasuraMetadataRequest } from '../../apps/api/src/modules/realtime/realtime.service.js'
+import {
+  DataAccessInventorySchemaNotFoundError,
+  getDataAccessInventory,
+} from '../../apps/api/src/modules/data-access/data-access-inventory.js'
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
 import {
   DataAccessConflictError,
   DataAccessNotFoundError,
   DataAccessUpstreamError,
+  getProjectDataAccessOverview,
   getTableDataAccess,
   updateTableDataAccess,
 } from '../../apps/api/src/modules/data-access/data-access.service.js'
@@ -82,7 +92,85 @@ describe('data access service', () => {
       sizeBytes: 0,
     })
     vi.mocked(tableService.trackTableInHasura).mockResolvedValue(true)
+    vi.mocked(getDataAccessInventory).mockResolvedValue([{
+      tableName,
+      columns,
+      realtimeEnabled: false,
+    }])
     vi.mocked(hasuraMetadataRequest).mockResolvedValue(tableMetadata() as never)
+  })
+
+  it('builds a project overview from one default-source metadata export', async () => {
+    vi.mocked(hasuraMetadataRequest).mockResolvedValueOnce({
+      sources: [
+        {
+          name: 'secondary',
+          tables: [{
+            table: { schema: schemaName, name: tableName },
+            select_permissions: [{
+              role: roles.authenticated,
+              permission: { columns, filter: { unexpected: true } },
+            }],
+          }],
+        },
+        {
+          name: 'default',
+          tables: [{
+            table: { schema: schemaName, name: tableName },
+            select_permissions: [{
+              role: roles.authenticated,
+              permission: { columns, filter: {} },
+            }],
+          }],
+        },
+      ],
+    } as never)
+
+    const overview = await getProjectDataAccessOverview(projectId)
+
+    expect(getDataAccessInventory).toHaveBeenCalledWith(schemaName)
+    expect(hasuraMetadataRequest).toHaveBeenCalledTimes(1)
+    expect(hasuraMetadataRequest).toHaveBeenCalledWith('export_metadata', {})
+    expect(overview.tables[0]).toMatchObject({
+      tableName,
+      authenticatedAccess: 'read_only',
+    })
+  })
+
+  it('rejects a project overview when the default metadata source is unavailable', async () => {
+    vi.mocked(hasuraMetadataRequest).mockResolvedValueOnce({
+      sources: [{ name: 'secondary', tables: [] }],
+    } as never)
+
+    await expect(getProjectDataAccessOverview(projectId))
+      .rejects.toBeInstanceOf(DataAccessUpstreamError)
+  })
+
+  it('maps a missing physical project schema to a data access not-found error', async () => {
+    vi.mocked(getDataAccessInventory).mockRejectedValueOnce(
+      new DataAccessInventorySchemaNotFoundError('Schema not found')
+    )
+
+    await expect(getProjectDataAccessOverview(projectId))
+      .rejects.toBeInstanceOf(DataAccessNotFoundError)
+  })
+
+  it('does not inspect table access from a non-default metadata source', async () => {
+    vi.mocked(hasuraMetadataRequest).mockResolvedValueOnce({
+      sources: [{
+        name: 'secondary',
+        tables: [{
+          table: { schema: schemaName, name: tableName },
+          select_permissions: [{
+            role: roles.authenticated,
+            permission: { columns, filter: {} },
+          }],
+        }],
+      }],
+    } as never)
+
+    await expect(getTableDataAccess(projectId, tableName))
+      .rejects.toBeInstanceOf(DataAccessUpstreamError)
   })
 
   it('reads only managed scoped roles and reports legacy roles separately', async () => {

@@ -24,6 +24,11 @@
 - Project Data Access Batch 1 已建立安全 metadata 基线：表 tracking 不再自动生成宽泛 CRUD permissions，Realtime 开关不再修改 select permission，Admin 默认改用数据接口/实时更新语义展示就绪状态；当前 SDK WebSocket 仍按 `anonymous` select permission 判定可用，正式 actor 鉴权留待后续批次
 - 已引入版本化 data-scope role resolver 作为后续项目角色、环境作用域和 service principal 的内部扩展基础；现有项目尚未切换到 scoped role，需等待显式权限编辑和迁移批次
 - Project Data Access Batch 2A 已落地默认生产 schema 的表级访问配置：认证用户 CRUD 支持关闭/全部记录/仅自己的记录，匿名侧仅支持读取；保存只原子替换当前项目受管 scoped roles，保留旧角色和自定义规则，HTTP/WebSocket actor 尚未切换
+- Project Data Access Batch 2B 已落地默认生产 schema 的只读项目概览：
+  - 项目设置新增数据访问汇总、筛选和表级配置导航
+  - API 以一次数据库清单读取和一次默认数据源快照统一判定连接、认证、匿名、Realtime、旧规则和需检查状态
+  - authenticated / anonymous 自定义规则独立分类，公开响应不暴露物理角色名
+  - 概览和显式 `scope=default` 导航不改变当前兼容运行模式，HTTP/WebSocket actor 切换仍属于 Batch 3
 
 - API 已支持 `apikey` fallback 认证
 - Realtime 权限开始与表管理权限解耦
@@ -87,7 +92,7 @@
 
 ## Current Next Steps
 
-- 补齐 Project Data Access Batch 2B 项目概览，并在 Batch 3 实现 scoped role 的 HTTP/WebSocket actor 切换与项目激活状态
+- 实施 Project Data Access Batch 3：补齐 scoped role 的 HTTP/WebSocket actor 切换、Project JWT claims、匿名 Realtime 短期令牌与项目激活状态
 - 统一 project-user 在 GraphQL、Realtime、Storage、RPC 和 Functions 中的身份传播与审计
 - 修正 MCP Server 与 API 的认证头、路由身份和 scope 契约，并增加真实 API 契约测试
 - 将 build、lint、核心测试、manifest/digest 校验和 OTA smoke test 纳入 release 门禁

@@ -156,6 +156,21 @@ describe('API app data access routes', () => {
       await app.close()
     }
   })
+
+  it('registers the project data access overview route', async () => {
+    const app = buildApp()
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/projects/proj_123/data-access/overview',
+      })
+
+      expect(response.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
 })
 
 describe('API app project auth routes', () => {

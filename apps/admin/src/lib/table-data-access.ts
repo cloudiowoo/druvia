@@ -69,3 +69,49 @@ export function isDefaultTableDataScope(
 ): boolean {
   return !!projectSchema && selectedSchema === projectSchema
 }
+
+export interface TableDetailNavigation {
+  tab: 'structure' | 'access'
+  schemaName: string | null
+  normalizeToDefault: boolean
+  consumeDefaultScope: boolean
+}
+
+export function resolveTableDetailNavigation(input: {
+  tab: string | null
+  scope: string | null
+  projectSchema: string | null | undefined
+  selectedSchema: string | null | undefined
+}): TableDetailNavigation {
+  const schemaName = input.selectedSchema ?? input.projectSchema ?? null
+  if (input.tab !== 'access') {
+    return {
+      tab: 'structure',
+      schemaName,
+      normalizeToDefault: false,
+      consumeDefaultScope: false,
+    }
+  }
+  if (input.scope === 'default' && input.projectSchema) {
+    return {
+      tab: 'access',
+      schemaName: input.projectSchema,
+      normalizeToDefault: input.selectedSchema !== input.projectSchema,
+      consumeDefaultScope: true,
+    }
+  }
+  if (input.scope !== null || !isDefaultTableDataScope(input.projectSchema, schemaName)) {
+    return {
+      tab: 'structure',
+      schemaName,
+      normalizeToDefault: false,
+      consumeDefaultScope: false,
+    }
+  }
+  return {
+    tab: 'access',
+    schemaName,
+    normalizeToDefault: false,
+    consumeDefaultScope: false,
+  }
+}

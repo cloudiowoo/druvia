@@ -228,7 +228,10 @@ Implementation status:
 - only the two project-scoped managed roles are replaced atomically; legacy roles are preserved;
 - unsupported custom metadata on a managed scoped role is read-only and blocks replacement;
 - materialized scoped permissions are not yet selected by HTTP or WebSocket runtime actors;
-- the project overview remains Batch 2B, and legacy migration preview remains Batch 4.
+- Batch 2B project overview is implemented for the default production schema;
+- the overview uses one side-effect-free PostgreSQL inventory and one default-source metadata export, reports actor-specific custom states, and exposes no physical role names;
+- Admin provides read-only summary/filter/navigation under project settings, with explicit `scope=default` navigation back to table editing;
+- Batch 2B remains in `compatibility` runtime mode, and legacy migration preview remains Batch 4.
 
 ### Batch 3: Actor Cutover
 

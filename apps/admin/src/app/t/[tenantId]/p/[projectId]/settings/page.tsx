@@ -16,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { GitBranch, Key, Gauge, ChevronRight } from 'lucide-react';
+import { GitBranch, Key, Gauge, ChevronRight, ShieldCheck } from 'lucide-react';
 
 interface ProjectDetails {
   projectId: string;
@@ -244,13 +244,26 @@ export default function ProjectSettingsPage() {
             </Link>
             <Link
               href={`/t/${tenantId}/p/${projectId}/settings/rate-limits`}
-              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50"
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 border-b"
             >
               <div className="flex items-center gap-3">
                 <Gauge className="h-5 w-5 text-gray-400" />
                 <div>
                   <div className="font-medium">限流配置</div>
                   <div className="text-sm text-gray-500">配置 GraphQL API 的请求频率限制</div>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-gray-400" />
+            </Link>
+            <Link
+              href={`/t/${tenantId}/p/${projectId}/settings/data-access`}
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50"
+            >
+              <div className="flex items-center gap-3">
+                <ShieldCheck className="h-5 w-5 text-gray-400" />
+                <div>
+                  <div className="font-medium">数据访问</div>
+                  <div className="text-sm text-gray-500">查看数据表访问与实时更新状态</div>
                 </div>
               </div>
               <ChevronRight className="h-5 w-5 text-gray-400" />

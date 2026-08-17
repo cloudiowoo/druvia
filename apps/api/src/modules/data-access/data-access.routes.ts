@@ -6,6 +6,10 @@ export async function dataAccessRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate)
 
   app.get(
+    '/projects/:projectId/data-access/overview',
+    controller.getProjectDataAccessOverview as never
+  )
+  app.get(
     '/projects/:projectId/data-access/tables/:tableName',
     controller.getTableDataAccess as never
   )

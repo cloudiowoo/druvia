@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
@@ -47,7 +47,10 @@ import { ForeignKeyPopover } from '@/components/tables/ForeignKeyPopover';
 import { TableDataAccessPanel } from '@/components/tables/TableDataAccessPanel';
 import { useToast } from '@/hooks/use-toast';
 import { columnNameSchema } from '@/lib/schemas';
-import { isDefaultTableDataScope } from '@/lib/table-data-access';
+import {
+  isDefaultTableDataScope,
+  resolveTableDetailNavigation,
+} from '@/lib/table-data-access';
 
 interface Column {
   name: string;
@@ -77,14 +80,22 @@ const COLUMN_TYPES = [
 export default function TableStructurePage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
   const tableName = params.tableName as string;
-  const { currentProject, currentEnv } = useAppStore();
+  const { currentProject, currentEnv, setCurrentEnv } = useAppStore();
   const { toast } = useToast();
 
-  // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
-  const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
+  const requestedTab = searchParams.get('tab');
+  const requestedScope = searchParams.get('scope');
+  const navigation = resolveTableDetailNavigation({
+    tab: requestedTab,
+    scope: requestedScope,
+    projectSchema: currentProject?.schemaName,
+    selectedSchema: currentEnv?.schemaName || currentProject?.schemaName,
+  });
+  const effectiveSchema = navigation.schemaName;
 
   const [columns, setColumns] = useState<Column[]>([]);
   const [originalColumns, setOriginalColumns] = useState<Column[]>([]);
@@ -99,6 +110,30 @@ export default function TableStructurePage() {
     currentProject?.schemaName,
     effectiveSchema
   );
+
+  useEffect(() => {
+    if (navigation.normalizeToDefault && currentProject?.schemaName) {
+      setCurrentEnv({ envName: 'prod', schemaName: currentProject.schemaName });
+    }
+    setActiveTab(navigation.tab);
+    if (navigation.consumeDefaultScope) {
+      router.replace(
+        `/t/${encodeURIComponent(tenantId)}/p/${encodeURIComponent(projectId)}`
+          + `/tables/${encodeURIComponent(tableName)}?tab=access`,
+        { scroll: false }
+      );
+    }
+  }, [
+    currentProject?.schemaName,
+    navigation.consumeDefaultScope,
+    navigation.normalizeToDefault,
+    navigation.tab,
+    projectId,
+    router,
+    setCurrentEnv,
+    tableName,
+    tenantId,
+  ]);
 
   // 验证列名
   const validateColumnName = (index: number, name: string) => {
