@@ -2,6 +2,7 @@
 // Falls back to localhost:3001 for local development without Docker
 import type { DruviaUpdateStatus } from '@druvia/shared';
 import { createAdminServerLogger } from './server-logger';
+import type { TableDataAccessPolicy, TableDataAccessState } from './table-data-access';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 const serverLogger = createAdminServerLogger({ module: 'api-client' });
@@ -428,6 +429,25 @@ class ApiClient {
         defaultValue: string | null;
       }>;
     }>('GET', `/api/v1/schemas/${schemaName}/tables/${tableName}`);
+  }
+
+  async getTableDataAccess(projectId: string, tableName: string) {
+    return this.request<TableDataAccessState>(
+      'GET',
+      `/api/v1/projects/${projectId}/data-access/tables/${tableName}`
+    );
+  }
+
+  async updateTableDataAccess(
+    projectId: string,
+    tableName: string,
+    policy: TableDataAccessPolicy
+  ) {
+    return this.request<TableDataAccessState>(
+      'PUT',
+      `/api/v1/projects/${projectId}/data-access/tables/${tableName}`,
+      policy
+    );
   }
 
   async updateTableStructure(schemaName: string, tableName: string, changes: {
@@ -1004,7 +1024,7 @@ class ApiClient {
       }
 
       return response.json();
-    } catch (error) {
+    } catch {
       return {
         success: false,
         error: { code: 'NETWORK_ERROR', message: '网络连接失败' },
@@ -1375,7 +1395,7 @@ class ApiClient {
       );
 
       return response.json();
-    } catch (error) {
+    } catch {
       return {
         success: false,
         error: { code: 'NETWORK_ERROR', message: '网络连接失败' },

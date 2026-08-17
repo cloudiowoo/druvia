@@ -220,6 +220,16 @@ This batch deliberately keeps existing request role behavior so production proje
 - project access overview;
 - scoped permission materialization for the default data scope.
 
+Implementation status:
+
+- Batch 2A is implemented for the default production schema only;
+- authenticated CRUD uses constrained `none / all / owner` presets, with one owner column and `X-Hasura-User-Id` enforcement;
+- anonymous access is select-only in the simplified editor;
+- only the two project-scoped managed roles are replaced atomically; legacy roles are preserved;
+- unsupported custom metadata on a managed scoped role is read-only and blocks replacement;
+- materialized scoped permissions are not yet selected by HTTP or WebSocket runtime actors;
+- the project overview remains Batch 2B, and legacy migration preview remains Batch 4.
+
 ### Batch 3: Actor Cutover
 
 - Project JWT Hasura claims;

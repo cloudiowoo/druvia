@@ -135,6 +135,29 @@ describe('API app schema hasura routes', () => {
   })
 })
 
+describe('API app data access routes', () => {
+  it('registers table data access management routes', async () => {
+    const app = buildApp()
+
+    try {
+      const getResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/projects/proj_123/data-access/tables/orders',
+      })
+      const putResponse = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/projects/proj_123/data-access/tables/orders',
+        payload: {},
+      })
+
+      expect(getResponse.statusCode).toBe(401)
+      expect(putResponse.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
 describe('API app project auth routes', () => {
   it('registers the public project auth routes', async () => {
     const app = buildApp()

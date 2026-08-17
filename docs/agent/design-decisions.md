@@ -116,6 +116,14 @@
   - 物理 role 名不进入 SDK 公共契约和 Admin 默认表单
   - 当前公共运行时只覆盖项目默认 schema；非默认环境对外开放前必须先定义环境级 API Key/session audience
   - 独立 Worker 不自动获得通用 `worker` role；代表用户执行时复用 Project Session，跨用户服务身份留待独立凭证和权限生命周期
+- 表级数据访问 Batch 2A 采用受约束的逻辑权限预设：
+  - 仅管理项目默认生产 schema，不接受环境参数
+  - 认证用户 CRUD 分别支持 `none / all / owner`
+  - `owner` 统一使用 `X-Hasura-User-Id`，写入时排除并预设所有者字段
+  - 匿名客户端仅提供 select 开关，不生成匿名写权限
+  - 只替换当前项目两个 scoped role 的权限；旧 `user / anonymous` 及其他 role 均保留
+  - scoped role 中出现非精确受支持形态时按 custom 只读处理，不允许 UI 覆盖
+- Batch 2A 只完成 scoped permission 物化，不改变 HTTP/WebSocket 当前 actor role；运行时切换必须等待 Batch 3 的 Project JWT、代理映射和激活状态。
 - Admin 默认使用“数据接口、数据访问、实时更新”等应用概念；Hasura role、metadata 和 secret 只属于高级诊断或服务端实现。
 - Druvia 管理端对列级 DDL 的正式策略是：
   - Admin Tables 页面内的 `add/drop/rename column` 自动触发 `reload metadata`

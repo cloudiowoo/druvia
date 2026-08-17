@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -43,8 +44,10 @@ import {
 import { Plus, Trash2, MoreHorizontal, Save, ArrowLeft, Key, Database } from 'lucide-react';
 import { Breadcrumb } from '@/components/Breadcrumb';
 import { ForeignKeyPopover } from '@/components/tables/ForeignKeyPopover';
+import { TableDataAccessPanel } from '@/components/tables/TableDataAccessPanel';
 import { useToast } from '@/hooks/use-toast';
 import { columnNameSchema } from '@/lib/schemas';
+import { isDefaultTableDataScope } from '@/lib/table-data-access';
 
 interface Column {
   name: string;
@@ -77,7 +80,7 @@ export default function TableStructurePage() {
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
   const tableName = params.tableName as string;
-  const { currentProject, currentTenant, currentEnv } = useAppStore();
+  const { currentProject, currentEnv } = useAppStore();
   const { toast } = useToast();
 
   // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
@@ -91,6 +94,11 @@ export default function TableStructurePage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [columnErrors, setColumnErrors] = useState<Record<number, string>>({});
+  const [activeTab, setActiveTab] = useState('structure');
+  const isDefaultProductionScope = isDefaultTableDataScope(
+    currentProject?.schemaName,
+    effectiveSchema
+  );
 
   // 验证列名
   const validateColumnName = (index: number, name: string) => {
@@ -134,7 +142,13 @@ export default function TableStructurePage() {
       setLoading(false);
     }
     fetchData();
-  }, [currentProject?.schemaName, tableName]);
+  }, [effectiveSchema, tableName]);
+
+  useEffect(() => {
+    if (!isDefaultProductionScope && activeTab === 'access') {
+      setActiveTab('structure');
+    }
+  }, [activeTab, isDefaultProductionScope]);
 
   // 获取列的外键信息
   const getColumnForeignKey = (columnName: string) => {
@@ -274,7 +288,9 @@ export default function TableStructurePage() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold font-mono">{tableName}</h1>
-            <p className="text-muted-foreground">表结构编辑</p>
+            <p className="text-muted-foreground">
+              {activeTab === 'structure' ? '表结构编辑' : '数据访问配置'}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -308,15 +324,30 @@ export default function TableStructurePage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <Button onClick={handleSave} disabled={!hasChanges || saving}>
-            <Save className="h-4 w-4 mr-2" />
-            {saving ? '保存中...' : '保存更改'}
-          </Button>
+          {activeTab === 'structure' && (
+            <Button onClick={handleSave} disabled={!hasChanges || saving}>
+              <Save className="h-4 w-4 mr-2" />
+              {saving ? '保存中...' : '保存更改'}
+            </Button>
+          )}
         </div>
       </div>
 
-      <div className="border rounded-lg">
-        {loading ? (
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="structure">表结构</TabsTrigger>
+          <TabsTrigger
+            value="access"
+            disabled={!isDefaultProductionScope}
+            title={!isDefaultProductionScope ? '当前仅支持生产环境' : undefined}
+          >
+            数据访问
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="structure" className="mt-0">
+          <div className="border rounded-lg">
+            {loading ? (
           <div className="p-4 space-y-2">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
@@ -462,8 +493,13 @@ export default function TableStructurePage() {
               </Button>
             </div>
           </>
-        )}
-      </div>
+            )}
+          </div>
+        </TabsContent>
+        <TabsContent value="access" className="mt-0">
+          <TableDataAccessPanel projectId={projectId} tableName={tableName} />
+        </TabsContent>
+      </Tabs>
     </DashboardLayout>
   );
 }
