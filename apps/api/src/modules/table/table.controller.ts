@@ -391,7 +391,16 @@ export async function trackTableInHasura(
   const { schemaName, tableName } = request.params;
 
   try {
-    await tableService.trackTableInHasura(schemaName, tableName);
+    const tracked = await tableService.trackTableInHasura(schemaName, tableName);
+    if (!tracked) {
+      return reply.status(502).send({
+        success: false,
+        error: {
+          code: 'DATA_INTERFACE_SYNC_FAILED',
+          message: 'Unable to connect table to data interface',
+        },
+      });
+    }
     return reply.send({
       success: true,
       message: `Table ${tableName} tracked in Hasura`,

@@ -6,6 +6,8 @@
 
 本文归档 Druvia 当前在应用能力、权限模型、SDK、MCP、Docker 发布和 OTA 更新方面的整体评估，并给出后续版本建议。
 
+基于本文评估形成的未来需求分层、双参考应用验证和能力晋升框架，见 `2026-08-17-application-driven-development-framework.md`。
+
 它是分析与路线建议，不替代：
 
 - 当前代码和测试
@@ -259,3 +261,12 @@ Codex 官方只自动发现 `AGENTS.md` 层级，不会自动读取任意命名�
 - 故障更新能恢复旧镜像，数据库 dump 已验证可恢复，人工恢复 playbook 可执行。
 - 新部署不依赖源码目录，环境文件不包含其他主机绝对路径。
 
+## 13. 后续开发框架
+
+本文继续作为 2026-08-14 时点的现状评估和风险证据。后续应用需求不直接追加到本文路线中，而是按 `2026-08-17-application-driven-development-framework.md` 判断其属于：
+
+- Druvia Core
+- Optional Capability / Recipe
+- Application Domain
+
+近期仍以本文 Phase A/B 的生产安全和发布可靠性为前置条件；taro-app 与足球运动数据应用共同承担 Phase C 的真实场景验证。

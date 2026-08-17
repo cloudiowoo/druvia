@@ -187,14 +187,16 @@ describe('RealtimeService Integration', () => {
       }
     });
 
-    it('should include websocket endpoint in JavaScript example', () => {
+    it('should generate a project-scoped SDK example without admin credentials', () => {
       const examples = realtimeService.generateSubscriptionExample(
         testSchemaName,
         'test_realtime_table'
       );
 
       const jsExample = examples.find(e => e.language === 'javascript');
-      expect(jsExample?.code).toContain('/v1/graphql');
+      expect(jsExample?.code).toContain("from '@druvia/sdk'");
+      expect(jsExample?.code).toContain('YOUR_PROJECT_API_KEY');
+      expect(jsExample?.code).not.toContain('YOUR_ADMIN_SECRET');
     });
   });
 

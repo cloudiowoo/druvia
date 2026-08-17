@@ -105,11 +105,21 @@
 ## Hasura 同步策略
 
 - `track-all` 与 `reload metadata` 是两类不同操作，不能混用概念：
-  - `track-all` 负责表、关系、权限等 metadata 对象同步
+  - `track-all` 只负责表和关系等结构 metadata 同步，不创建、覆盖或清理数据 permissions
   - `reload metadata` 负责刷新 Hasura schema / cache 视图
+- 新建表和同步数据接口默认不生成 `user` / `anonymous` CRUD permissions；数据访问必须通过独立的显式配置和迁移路径完成。
+- `_meta_tables.realtime_enabled` 只表示应用是否需要该表的实时更新能力：
+  - 开启或关闭 Realtime 不得创建、覆盖或删除 select permission
+  - Realtime 就绪状态由能力开关和已有读取权限共同推导
+  - Batch 1 的 SDK WebSocket 仍以 Hasura `anonymous` 角色连接，因此当前 `ready` 只代表已有 `anonymous` select permission；认证用户与 scoped role 的正式就绪判定等待 Project JWT/短期匿名令牌切换
+- 项目数据角色采用“逻辑 actor -> data scope -> 版本化物理 role”的内部映射：
+  - 物理 role 名不进入 SDK 公共契约和 Admin 默认表单
+  - 当前公共运行时只覆盖项目默认 schema；非默认环境对外开放前必须先定义环境级 API Key/session audience
+  - 独立 Worker 不自动获得通用 `worker` role；代表用户执行时复用 Project Session，跨用户服务身份留待独立凭证和权限生命周期
+- Admin 默认使用“数据接口、数据访问、实时更新”等应用概念；Hasura role、metadata 和 secret 只属于高级诊断或服务端实现。
 - Druvia 管理端对列级 DDL 的正式策略是：
   - Admin Tables 页面内的 `add/drop/rename column` 自动触发 `reload metadata`
-  - 外部 SQL / migration 导致的 schema 漂移，由用户显式触发 `刷新 Hasura Schema`
+  - 外部 SQL / migration 导致的 schema 漂移，由用户显式触发 `刷新数据结构`（内部执行 reload metadata）
 
 ## 项目删除策略
 

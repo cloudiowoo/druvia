@@ -1,5 +1,7 @@
 # Realtime 权限解耦设计
 
+> **状态：已被后续设计部分取代。** 2026-08-17 起，`realtime_enabled` 仅作为实时能力开关，不再创建或删除 `anonymous` select permission。当前设计见 `docs/superpowers/specs/2026-08-17-project-data-access-design.md`。本文保留为历史背景，不再作为当前实现依据。
+
 ## 问题
 
 Tables 页面的"同步 GraphQL 权限"给 `user` 和 `anonymous` 两个角色都创建 `select_permission`。Realtime 页面用 `select_permission` 是否存在来判断表是否"启用 realtime"。结果：同步权限后所有表都显示为已启用 realtime，无法单独控制。

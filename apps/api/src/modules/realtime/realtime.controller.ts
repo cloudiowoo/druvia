@@ -102,7 +102,7 @@ export async function listSubscriptions(
 
   try {
     const subscriptions = await realtimeService.getTableSubscriptions(schemaName);
-    const stats = await realtimeService.getSubscriptionStats(schemaName);
+    const stats = realtimeService.summarizeSubscriptions(subscriptions);
 
     return reply.send({
       success: true,

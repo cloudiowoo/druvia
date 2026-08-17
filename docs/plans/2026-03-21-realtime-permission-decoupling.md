@@ -1,5 +1,7 @@
 # Realtime 权限解耦 Implementation Plan
 
+> **状态：历史实施记录。** 其中“Realtime 开关管理 `anonymous` select permission”的结论已由 `docs/superpowers/specs/2026-08-17-project-data-access-design.md` 取代。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Decouple Realtime subscription control from Hasura GraphQL permissions by introducing a `realtime_enabled` column in `_meta_tables` and splitting role-based permission management between Tables page (`user` role) and Realtime page (`anonymous` role).

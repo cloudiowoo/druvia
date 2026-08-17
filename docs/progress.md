@@ -12,11 +12,17 @@
 
 - 当前项目已进入 MVP 后的生产加固与迁移兼容阶段
 - 真实需求牵引以 taro-app / Supabase -> Druvia 迁移为主
+- 后续采用“应用驱动平台演进”框架：taro-app 验证迁移兼容，足球运动数据应用验证原生移动端、离线批量、Storage 和后台分析场景
+- 新需求按 `Core / Optional Capability / Application Domain` 分层，只有平台安全基础或经跨应用验证的通用能力进入 Core
 - 近期最高优先级是 Hasura 默认权限、project-user 全链路身份、发布门禁、OTA 恢复和 MCP 契约
 - 项目整体评估与分阶段路线已归档到 `docs/plans/2026-08-14-project-update-direction-analysis.md`
+- 应用驱动的未来开发框架已归档到 `docs/plans/2026-08-17-application-driven-development-framework.md`
 - Codex 项目说明已改为官方 `AGENTS.md` 分层模型，不再维护平行的 `project-memory.md`
 
 ## Recent Milestones
+
+- Project Data Access Batch 1 已建立安全 metadata 基线：表 tracking 不再自动生成宽泛 CRUD permissions，Realtime 开关不再修改 select permission，Admin 默认改用数据接口/实时更新语义展示就绪状态；当前 SDK WebSocket 仍按 `anonymous` select permission 判定可用，正式 actor 鉴权留待后续批次
+- 已引入版本化 data-scope role resolver 作为后续项目角色、环境作用域和 service principal 的内部扩展基础；现有项目尚未切换到 scoped role，需等待显式权限编辑和迁移批次
 
 - API 已支持 `apikey` fallback 认证
 - Realtime 权限开始与表管理权限解耦
@@ -87,4 +93,6 @@
 - 在生产目标主机重新生成 release 路径配置，完成 `0.3.3 -> 0.3.4+` 的 apply/finalizer 验收
 - 分别演练 GHCR 与自建 Registry 更新源、故障镜像回滚和数据库 dump 恢复
 - 继续用 taro-app 迁移验证 project auth、Storage helper、Realtime 重连和 SDK token 选择顺序
+- 在权限和发布基线稳定后，以足球运动数据应用验证原生客户端、批量写入、IMU Storage 和 Trusted Backend Worker；领域模型与算法保留在应用侧
+- 根据真实应用证据决定 PostgreSQL 扩展入口、Swift SDK 和 Recipe 的晋升，暂不建设通用 Jobs、Queue 或 Worker Runtime
 - 补齐公开仓库 README、LICENSE、敏感信息历史检查和版本轴说明

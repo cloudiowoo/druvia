@@ -388,7 +388,12 @@ class ApiClient {
   }
 
   async getHasuraStatus(schemaName: string) {
-    return this.request<Record<string, { tracked: boolean; roles: string[] }>>('GET', `/api/v1/schemas/${schemaName}/hasura/status`);
+    return this.request<Record<string, {
+      tracked: boolean;
+      selectRoles: string[];
+      hasAuthenticatedRead: boolean;
+      hasAnonymousRead: boolean;
+    }>>('GET', `/api/v1/schemas/${schemaName}/hasura/status`);
   }
 
   async trackAllTablesInHasura(schemaName: string) {
@@ -1245,7 +1250,11 @@ class ApiClient {
         schemaName: string;
         enabled: boolean;
         operations: ('INSERT' | 'UPDATE' | 'DELETE')[];
+        hasAuthenticatedRead: boolean;
+        hasAnonymousRead: boolean;
         hasSelectPermission: boolean;
+        permissionStatus: 'known' | 'unknown';
+        accessStatus: 'disabled' | 'access_required' | 'ready' | 'unknown';
       }>;
       stats: {
         totalTables: number;
@@ -1267,7 +1276,11 @@ class ApiClient {
       schemaName: string;
       enabled: boolean;
       operations: ('INSERT' | 'UPDATE' | 'DELETE')[];
+      hasAuthenticatedRead: boolean;
+      hasAnonymousRead: boolean;
       hasSelectPermission: boolean;
+      permissionStatus: 'known' | 'unknown';
+      accessStatus: 'disabled' | 'access_required' | 'ready' | 'unknown';
     }>('POST', `/api/v1/projects/${projectId}/realtime/subscriptions/${tableName}${params}`, data);
   }
 

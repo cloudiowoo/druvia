@@ -42,6 +42,11 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from '@/hooks/use-toast';
 import {
+  getRealtimeLabel,
+  getRealtimeToggleMessage,
+  type RealtimeAccessStatus,
+} from '@/lib/data-interface-status';
+import {
   Radio,
   Wifi,
   WifiOff,
@@ -59,7 +64,11 @@ interface TableSubscription {
   schemaName: string;
   enabled: boolean;
   operations: ('INSERT' | 'UPDATE' | 'DELETE')[];
+  hasAuthenticatedRead: boolean;
+  hasAnonymousRead: boolean;
   hasSelectPermission: boolean;
+  permissionStatus: 'known' | 'unknown';
+  accessStatus: RealtimeAccessStatus;
 }
 
 interface SubscriptionStats {
@@ -136,11 +145,21 @@ export default function RealtimePage() {
   const handleToggleSubscription = async (tableName: string, enabled: boolean) => {
     setUpdatingTable(tableName);
     const res = await api.configureRealtimeSubscription(projectId, tableName, { enabled }, envName);
-    if (res.success) {
+    if (res.success && res.data) {
+      const previous = subscriptions.find((subscription) => subscription.tableName === tableName);
       setSubscriptions((prev) =>
-        prev.map((s) => (s.tableName === tableName ? { ...s, enabled } : s))
+        prev.map((subscription) => (
+          subscription.tableName === tableName ? res.data! : subscription
+        ))
       );
-      toast({ title: enabled ? '订阅已启用' : '订阅已禁用' });
+      if (previous && previous.enabled !== enabled) {
+        setStats((current) => current ? {
+          ...current,
+          enabledTables: current.enabledTables + (enabled ? 1 : -1),
+          disabledTables: current.disabledTables + (enabled ? -1 : 1),
+        } : current);
+      }
+      toast({ title: getRealtimeToggleMessage(enabled, res.data.accessStatus) });
     } else {
       toast({ title: '操作失败', description: res.error?.message, variant: 'destructive' });
     }
@@ -200,7 +219,7 @@ export default function RealtimePage() {
             <span>实时订阅</span>
           </div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Realtime</h1>
+            <h1 className="text-2xl font-bold">实时更新</h1>
             {currentEnv && currentEnv.envName !== 'prod' && (
               <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
                 {currentEnv.envName}
@@ -262,9 +281,9 @@ export default function RealtimePage() {
           {/* Table List */}
           <Card>
             <CardHeader>
-              <CardTitle>表订阅配置</CardTitle>
+              <CardTitle>实时数据表</CardTitle>
               <CardDescription>
-                启用订阅后，客户端可以通过 GraphQL Subscriptions 实时接收表数据变更
+                管理客户端需要实时接收变更的数据表
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -312,13 +331,17 @@ export default function RealtimePage() {
                                 handleToggleSubscription(sub.tableName, checked)
                               }
                             />
-                            {sub.enabled ? (
+                            {sub.accessStatus === 'ready' ? (
                               <span className="text-green-600 text-sm flex items-center gap-1">
-                                <CheckCircle className="h-3 w-3" /> 已启用
+                                <CheckCircle className="h-3 w-3" /> {getRealtimeLabel(sub.accessStatus)}
+                              </span>
+                            ) : sub.accessStatus === 'access_required' ? (
+                              <span className="text-amber-600 text-sm flex items-center gap-1">
+                                <XCircle className="h-3 w-3" /> {getRealtimeLabel(sub.accessStatus)}
                               </span>
                             ) : (
                               <span className="text-gray-400 text-sm flex items-center gap-1">
-                                <XCircle className="h-3 w-3" /> 未启用
+                                <XCircle className="h-3 w-3" /> {getRealtimeLabel(sub.accessStatus)}
                               </span>
                             )}
                           </div>
@@ -361,18 +384,18 @@ export default function RealtimePage() {
                       {config.hasuraConnected ? (
                         <>
                           <CheckCircle className="h-5 w-5 text-green-500" />
-                          <span className="text-green-600">Hasura 已连接</span>
+                          <span className="text-green-600">实时服务已连接</span>
                         </>
                       ) : (
                         <>
                           <WifiOff className="h-5 w-5 text-red-500" />
-                          <span className="text-red-600">Hasura 未连接</span>
+                          <span className="text-red-600">实时服务未连接</span>
                         </>
                       )}
                     </div>
                     <div className="space-y-2 text-sm">
                       <div>
-                        <span className="text-muted-foreground">Schema:</span>{' '}
+                        <span className="text-muted-foreground">数据环境:</span>{' '}
                         <code className="bg-muted px-2 py-1 rounded">{config.schemaName}</code>
                       </div>
                     </div>

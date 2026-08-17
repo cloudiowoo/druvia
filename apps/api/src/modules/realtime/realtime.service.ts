@@ -10,8 +10,14 @@ export interface TableSubscription {
   schemaName: string;
   enabled: boolean;
   operations: ('INSERT' | 'UPDATE' | 'DELETE')[];
+  hasAuthenticatedRead: boolean;
+  hasAnonymousRead: boolean;
   hasSelectPermission: boolean;
+  permissionStatus: 'known' | 'unknown';
+  accessStatus: RealtimeAccessStatus;
 }
+
+export type RealtimeAccessStatus = 'disabled' | 'access_required' | 'ready' | 'unknown';
 
 export interface RealtimeConfig {
   schemaName: string;
@@ -23,6 +29,15 @@ export interface SubscriptionStats {
   totalTables: number;
   enabledTables: number;
   disabledTables: number;
+}
+
+interface HasuraTableMetadata {
+  table: { schema: string; name: string };
+  select_permissions?: Array<{ role: string }>;
+}
+
+interface HasuraMetadata {
+  sources?: Array<{ tables?: HasuraTableMetadata[] }>;
 }
 
 // ============================================
@@ -82,14 +97,26 @@ export async function getTableSubscriptions(schemaName: string): Promise<TableSu
      ORDER BY t.table_name`,
     [schemaName]
   );
+  const selectRoles = await tryGetSchemaSelectRoles(schemaName);
 
-  return rows.map((row) => ({
-    tableName: row.table_name,
-    schemaName,
-    enabled: row.realtime_enabled,
-    operations: ['INSERT', 'UPDATE', 'DELETE'] as const,
-    hasSelectPermission: row.realtime_enabled,
-  }));
+  return rows.map((row) => {
+    const readAccess = classifyRuntimeReadAccess(selectRoles?.get(row.table_name));
+    const permissionStatus = selectRoles ? 'known' : 'unknown';
+
+    return {
+      tableName: row.table_name,
+      schemaName,
+      enabled: row.realtime_enabled,
+      operations: ['INSERT', 'UPDATE', 'DELETE'] as const,
+      ...readAccess,
+      permissionStatus,
+      accessStatus: deriveRealtimeAccessStatus(
+        row.realtime_enabled,
+        permissionStatus,
+        readAccess.hasSelectPermission
+      ),
+    };
+  });
 }
 
 /**
@@ -98,6 +125,12 @@ export async function getTableSubscriptions(schemaName: string): Promise<TableSu
 export async function getSubscriptionStats(schemaName: string): Promise<SubscriptionStats> {
   const subscriptions = await getTableSubscriptions(schemaName);
 
+  return summarizeSubscriptions(subscriptions);
+}
+
+export function summarizeSubscriptions(
+  subscriptions: TableSubscription[]
+): SubscriptionStats {
   return {
     totalTables: subscriptions.length,
     enabledTables: subscriptions.filter((s) => s.enabled).length,
@@ -105,10 +138,8 @@ export async function getSubscriptionStats(schemaName: string): Promise<Subscrip
   };
 }
 
-const REALTIME_ROLE = 'anonymous';
-
 /**
- * 配置表订阅（通过 _meta_tables 标记 + Hasura anonymous 角色权限）
+ * 配置表订阅能力。读取权限由独立的数据访问配置管理。
  */
 export async function configureTableSubscription(
   schemaName: string,
@@ -119,16 +150,7 @@ export async function configureTableSubscription(
   validateTableName(tableName);
   await ensureRealtimeMetaTable(schemaName);
 
-  // Upsert _meta_tables.realtime_enabled (handles tables not yet registered in _meta_tables)
-  await query(
-    `INSERT INTO "${schemaName}"._meta_tables (table_name, realtime_enabled, updated_at)
-     VALUES ($2, $1, NOW())
-     ON CONFLICT (table_name) DO UPDATE SET realtime_enabled = $1, updated_at = NOW()`,
-    [enabled, tableName]
-  );
-
   if (enabled) {
-    // 1. Track table if not tracked
     try {
       await hasuraMetadataRequest('pg_track_table', {
         source: 'default',
@@ -140,48 +162,85 @@ export async function configureTableSubscription(
         throw error;
       }
     }
-
-    // 2. Add select permission for anonymous role to enable subscription
-    try {
-      await hasuraMetadataRequest('pg_create_select_permission', {
-        source: 'default',
-        table: { schema: schemaName, name: tableName },
-        role: REALTIME_ROLE,
-        permission: {
-          columns: '*',
-          filter: {},
-          allow_aggregations: false,
-        },
-      });
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      if (!errorMsg.includes('already exists') && !errorMsg.includes('already defined')) {
-        throw error;
-      }
-    }
-  } else {
-    // Drop anonymous select permission to disable subscription
-    try {
-      await hasuraMetadataRequest('pg_drop_select_permission', {
-        source: 'default',
-        table: { schema: schemaName, name: tableName },
-        role: REALTIME_ROLE,
-      });
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      if (!errorMsg.includes('does not exist')) {
-        throw error;
-      }
-    }
   }
+
+  // Persist the capability only after required Hasura tracking succeeds.
+  await query(
+    `INSERT INTO "${schemaName}"._meta_tables (table_name, realtime_enabled, updated_at)
+     VALUES ($2, $1, NOW())
+     ON CONFLICT (table_name) DO UPDATE SET realtime_enabled = $1, updated_at = NOW()`,
+    [enabled, tableName]
+  );
+
+  const selectRoles = await tryGetSchemaSelectRoles(schemaName);
+  const readAccess = classifyRuntimeReadAccess(selectRoles?.get(tableName));
+  const permissionStatus = selectRoles ? 'known' : 'unknown';
 
   return {
     tableName,
     schemaName,
     enabled,
     operations: ['INSERT', 'UPDATE', 'DELETE'],
-    hasSelectPermission: enabled,
+    ...readAccess,
+    permissionStatus,
+    accessStatus: deriveRealtimeAccessStatus(
+      enabled,
+      permissionStatus,
+      readAccess.hasSelectPermission
+    ),
   };
+}
+
+function classifyRuntimeReadAccess(selectRoles: string[] | undefined): {
+  hasAuthenticatedRead: boolean;
+  hasAnonymousRead: boolean;
+  hasSelectPermission: boolean;
+} {
+  const hasAuthenticatedRead = selectRoles?.includes('user') ?? false;
+  const hasAnonymousRead = selectRoles?.includes('anonymous') ?? false;
+
+  return {
+    hasAuthenticatedRead,
+    hasAnonymousRead,
+    // The current SDK realtime transport connects with the anonymous Hasura role.
+    hasSelectPermission: hasAnonymousRead,
+  };
+}
+
+export function deriveRealtimeAccessStatus(
+  enabled: boolean,
+  permissionStatus: 'known' | 'unknown',
+  hasSelectPermission: boolean
+): RealtimeAccessStatus {
+  if (!enabled) return 'disabled';
+  if (permissionStatus === 'unknown') return 'unknown';
+  return hasSelectPermission ? 'ready' : 'access_required';
+}
+
+async function tryGetSchemaSelectRoles(schemaName: string): Promise<Map<string, string[]> | null> {
+  try {
+    return await getSchemaSelectRoles(schemaName);
+  } catch {
+    return null;
+  }
+}
+
+export async function getSchemaSelectRoles(schemaName: string): Promise<Map<string, string[]>> {
+  validateSchemaName(schemaName);
+  const metadata = await hasuraMetadataRequest<HasuraMetadata>('export_metadata', {});
+  const result = new Map<string, string[]>();
+
+  for (const source of metadata.sources ?? []) {
+    for (const table of source.tables ?? []) {
+      if (table.table.schema !== schemaName) continue;
+      result.set(
+        table.table.name,
+        table.select_permissions?.map((permission) => permission.role) ?? []
+      );
+    }
+  }
+
+  return result;
 }
 
 // ============================================
@@ -246,41 +305,34 @@ export function generateSubscriptionExample(
   }
 }`;
 
-  // JavaScript 客户端示例
-  const jsCode = `import { createClient } from 'graphql-ws';
+  const realtimeBaseUrl = getRealtimeConfig(schemaName).websocketEndpoint
+    .replace(/\/v1\/graphql$/, '');
+  const realtimeEvent = operation === 'ALL' ? '*' : operation;
 
-const client = createClient({
-  url: '${getRealtimeConfig(schemaName).websocketEndpoint}',
-  connectionParams: {
-    headers: {
-      'x-hasura-admin-secret': 'YOUR_ADMIN_SECRET',
-      // 或使用 JWT: 'Authorization': 'Bearer YOUR_JWT_TOKEN'
-    },
-  },
+  // JavaScript 客户端示例。当前 Realtime 通道使用表的匿名读取权限。
+  const jsCode = `import { createClient } from '@druvia/sdk';
+
+const druvia = createClient('YOUR_DRUVIA_URL', 'YOUR_PROJECT_API_KEY', {
+  projectId: 'YOUR_PROJECT_ID',
+  schema: '${schemaName}',
+  realtimeUrl: '${realtimeBaseUrl}',
 });
 
-// 订阅表变更
-const unsubscribe = client.subscribe(
-  {
-    query: \`
-      subscription {
-        ${fullTableName}(order_by: {created_at: desc}, limit: 10) {
-          id
-          created_at
-          updated_at
-        }
-      }
-    \`,
-  },
-  {
-    next: (data) => console.log('收到数据:', data),
-    error: (err) => console.error('订阅错误:', err),
-    complete: () => console.log('订阅完成'),
-  }
-);
+const subscription = druvia
+  .channel('${tableName}_changes')
+  .on(
+    'postgres_changes',
+    {
+      event: '${realtimeEvent}',
+      table: '${fullTableName}',
+      fields: 'id',
+    },
+    (event) => console.log('收到变更:', event)
+  )
+  .subscribe();
 
 // 取消订阅
-// unsubscribe();`;
+// subscription.unsubscribe();`;
 
   return [
     {
@@ -291,7 +343,7 @@ const unsubscribe = client.subscribe(
     {
       language: 'javascript',
       code: jsCode,
-      description: 'JavaScript 客户端示例 (graphql-ws)',
+      description: 'JavaScript 客户端示例 (@druvia/sdk)',
     },
   ];
 }

@@ -46,6 +46,18 @@ export interface TableMetadata {
   sizeBytes: number;
 }
 
+export interface DataAccessRoleNames {
+  authenticated?: string;
+  anonymous?: string;
+}
+
+export interface TableDataAccessStatus {
+  tracked: boolean;
+  selectRoles: string[];
+  hasAuthenticatedRead: boolean;
+  hasAnonymousRead: boolean;
+}
+
 // Generate column DDL
 function generateColumnDDL(col: ColumnDefinition, schemaName: string): string {
   let ddl = `"${col.name}" ${col.type}`;
@@ -137,78 +149,20 @@ export async function createTable(schemaName: string, table: TableDefinition): P
 }
 
 // Track table in Hasura for GraphQL access
-export async function trackTableInHasura(schemaName: string, tableName: string): Promise<void> {
+export async function trackTableInHasura(schemaName: string, tableName: string): Promise<boolean> {
   try {
-    // 1. Track the table
     await hasuraMetadataRequest('pg_track_table', {
       source: 'default',
       table: { schema: schemaName, name: tableName },
     });
+    return true;
   } catch (error) {
-    // Ignore if already tracked
     const errorMsg = error instanceof Error ? error.message : String(error);
-    if (!errorMsg.includes('already tracked') && !errorMsg.includes('already exists')) {
-      logger.warn('failed to track table in hasura', { schemaName, tableName }, error);
+    if (errorMsg.includes('already tracked') || errorMsg.includes('already exists')) {
+      return true;
     }
-  }
-
-  // 2. Add permissions for 'user' role (full CRUD)
-  const table = { schema: schemaName, name: tableName };
-  const userPermissionOps = [
-    { type: 'pg_create_select_permission', permission: { columns: '*', filter: {}, allow_aggregations: true } },
-    { type: 'pg_create_insert_permission', permission: { columns: '*', check: {} } },
-    { type: 'pg_create_update_permission', permission: { columns: '*', filter: {}, check: {} } },
-    { type: 'pg_create_delete_permission', permission: { filter: {} } },
-  ];
-
-  for (const op of userPermissionOps) {
-    try {
-      await hasuraMetadataRequest(op.type, {
-        source: 'default',
-        table,
-        role: 'user',
-        permission: op.permission,
-      });
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      if (!errorMsg.includes('already exists')) {
-        logger.warn('failed to create user permission in hasura', {
-          schemaName,
-          tableName,
-          operation: op.type,
-          role: 'user',
-        }, error);
-      }
-    }
-  }
-
-  // 3. Add permissions for 'anonymous' role (insert/update/delete only, NO select)
-  // anonymous select_permission is managed by Realtime page
-  const anonPermissionOps = [
-    { type: 'pg_create_insert_permission', permission: { columns: '*', check: {} } },
-    { type: 'pg_create_update_permission', permission: { columns: '*', filter: {}, check: {} } },
-    { type: 'pg_create_delete_permission', permission: { filter: {} } },
-  ];
-
-  for (const op of anonPermissionOps) {
-    try {
-      await hasuraMetadataRequest(op.type, {
-        source: 'default',
-        table,
-        role: 'anonymous',
-        permission: op.permission,
-      });
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      if (!errorMsg.includes('already exists')) {
-        logger.warn('failed to create anonymous permission in hasura', {
-          schemaName,
-          tableName,
-          operation: op.type,
-          role: 'anonymous',
-        }, error);
-      }
-    }
+    logger.warn('failed to track table in hasura', { schemaName, tableName }, error);
+    return false;
   }
 }
 
@@ -616,7 +570,7 @@ export async function dropForeignKey(
   );
 }
 
-// Track all existing tables in schema to Hasura (permissions + relationships)
+// Track all existing tables in schema to Hasura and synchronize relationships.
 export async function trackAllTablesInHasura(schemaName: string): Promise<{
   tracked: string[];
   failed: string[];
@@ -628,11 +582,15 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
   const failed: string[] = [];
   let relationships = 0;
 
-  // 1. Track tables + permissions
+  // 1. Track tables
   for (const table of tables) {
     try {
-      await trackTableInHasura(schemaName, table.tableName);
-      tracked.push(table.tableName);
+      const didTrack = await trackTableInHasura(schemaName, table.tableName);
+      if (didTrack) {
+        tracked.push(table.tableName);
+      } else {
+        failed.push(table.tableName);
+      }
     } catch (error) {
       logger.error('failed to track table during schema sync', {
         schemaName,
@@ -640,46 +598,6 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
       }, error);
       failed.push(table.tableName);
     }
-  }
-
-  // 1.5 Clean up anonymous select_permission for tables where realtime is disabled
-  try {
-    const metaRows = await query<{ table_name: string; realtime_enabled: boolean }>(
-      `SELECT table_name, realtime_enabled FROM "${schemaName}"._meta_tables`,
-      []
-    );
-    const realtimeEnabledSet = new Set(
-      metaRows.filter(r => r.realtime_enabled).map(r => r.table_name)
-    );
-
-    for (const table of tables) {
-      if (!realtimeEnabledSet.has(table.tableName)) {
-        // Drop anonymous select_permission if it exists (legacy cleanup)
-        try {
-          await hasuraMetadataRequest('pg_drop_select_permission', {
-            source: 'default',
-            table: { schema: schemaName, name: table.tableName },
-            role: 'anonymous',
-          });
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          if (!errorMsg.includes('does not exist')) {
-            logger.warn('failed to drop anonymous select permission', {
-              schemaName,
-              tableName: table.tableName,
-              role: 'anonymous',
-              operation: 'select',
-            }, error);
-          }
-        }
-      }
-    }
-  } catch (error) {
-    logger.warn('failed to clean up anonymous select permissions', {
-      schemaName,
-      role: 'anonymous',
-      operation: 'select',
-    }, error);
   }
 
   // 2. Create relationships based on foreign keys
@@ -784,20 +702,28 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
 }
 
 // Get Hasura permission status for all tables in schema
-export async function getHasuraStatus(schemaName: string): Promise<Record<string, { tracked: boolean; roles: string[] }>> {
+export async function getHasuraStatus(
+  schemaName: string,
+  scopedRoles: DataAccessRoleNames = {}
+): Promise<Record<string, TableDataAccessStatus>> {
   const metadata = await hasuraMetadataRequest('export_metadata', {}) as {
     sources?: Array<{ tables?: Array<{ table: { schema: string; name: string }; select_permissions?: Array<{ role: string }> }> }>;
   };
 
-  const result: Record<string, { tracked: boolean; roles: string[] }> = {};
+  const result: Record<string, TableDataAccessStatus> = {};
   const source = metadata.sources?.[0];
   if (!source?.tables) return result;
 
   for (const t of source.tables) {
     if (t.table.schema === schemaName) {
+      const selectRoles = t.select_permissions?.map(p => p.role) ?? [];
       result[t.table.name] = {
         tracked: true,
-        roles: t.select_permissions?.map(p => p.role) ?? [],
+        selectRoles,
+        hasAuthenticatedRead: selectRoles.includes('user')
+          || (!!scopedRoles.authenticated && selectRoles.includes(scopedRoles.authenticated)),
+        hasAnonymousRead: selectRoles.includes('anonymous')
+          || (!!scopedRoles.anonymous && selectRoles.includes(scopedRoles.anonymous)),
       };
     }
   }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -21,6 +21,12 @@ import { Plus, Table2, GitBranch, RefreshCw, Check, X, Radio } from 'lucide-reac
 import { CreateTableDialog } from '@/components/CreateTableDialog';
 import { ERDiagram } from '@/components/tables/ERDiagram';
 import { toast } from '@/hooks/use-toast';
+import {
+  getDataInterfaceLabel,
+  getDataInterfaceSyncFeedback,
+  getRealtimeLabel,
+  type RealtimeAccessStatus,
+} from '@/lib/data-interface-status';
 
 interface TableInfo {
   tableName: string;
@@ -28,7 +34,12 @@ interface TableInfo {
   sizeBytes: number;
 }
 
-type HasuraStatus = Record<string, { tracked: boolean; roles: string[] }>;
+type DataInterfaceStatus = Record<string, {
+  tracked: boolean;
+  selectRoles: string[];
+  hasAuthenticatedRead: boolean;
+  hasAnonymousRead: boolean;
+}>;
 
 interface TableWithColumns {
   name: string;
@@ -62,8 +73,8 @@ export default function TablesPage() {
 
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hasuraStatus, setHasuraStatus] = useState<HasuraStatus>({});
-  const [realtimeStatus, setRealtimeStatus] = useState<Record<string, boolean>>({});
+  const [dataInterfaceStatus, setDataInterfaceStatus] = useState<DataInterfaceStatus>({});
+  const [realtimeStatus, setRealtimeStatus] = useState<Record<string, RealtimeAccessStatus>>({});
   const [syncing, setSyncing] = useState(false);
   const [reloadingHasura, setReloadingHasura] = useState(false);
 
@@ -74,7 +85,7 @@ export default function TablesPage() {
   const [erError, setErError] = useState<string | null>(null);
   const [erLoaded, setErLoaded] = useState(false);
 
-  const fetchTables = async () => {
+  const fetchTables = useCallback(async () => {
     if (!effectiveSchema) return;
     const [tablesRes, statusRes, realtimeRes] = await Promise.all([
       api.listTables(effectiveSchema),
@@ -85,32 +96,28 @@ export default function TablesPage() {
       setTables(tablesRes.data);
     }
     if (statusRes.success && statusRes.data) {
-      setHasuraStatus(statusRes.data);
+      setDataInterfaceStatus(statusRes.data);
     }
     if (realtimeRes.success && realtimeRes.data) {
-      const rtMap: Record<string, boolean> = {};
+      const rtMap: Record<string, RealtimeAccessStatus> = {};
       for (const sub of realtimeRes.data.subscriptions) {
-        rtMap[sub.tableName] = sub.enabled;
+        rtMap[sub.tableName] = sub.accessStatus;
       }
       setRealtimeStatus(rtMap);
     }
     setLoading(false);
-  };
+  }, [currentEnv?.envName, effectiveSchema, projectId]);
 
   const handleSyncPermissions = async () => {
     if (!effectiveSchema) return;
     setSyncing(true);
     const res = await api.trackAllTablesInHasura(effectiveSchema);
     if (res.success && res.data) {
-      const d = res.data;
-      const parts = [`已同步 ${d.tracked.length} 张表`];
-      if (d.relationships) parts.push(`${d.relationships} 个关系`);
-      if (d.untracked) parts.push(`清理 ${d.untracked} 个残留`);
-      toast({ title: parts.join('，') });
+      toast(getDataInterfaceSyncFeedback(res.data));
       // 刷新状态
       const statusRes = await api.getHasuraStatus(effectiveSchema);
       if (statusRes.success && statusRes.data) {
-        setHasuraStatus(statusRes.data);
+        setDataInterfaceStatus(statusRes.data);
       }
     } else {
       toast({ title: '同步失败', variant: 'destructive' });
@@ -123,10 +130,10 @@ export default function TablesPage() {
     setReloadingHasura(true);
     const res = await api.reloadHasuraMetadata(effectiveSchema);
     if (res.success) {
-      toast({ title: 'Hasura Schema 已刷新' });
+      toast({ title: '数据结构已刷新' });
       const statusRes = await api.getHasuraStatus(effectiveSchema);
       if (statusRes.success && statusRes.data) {
-        setHasuraStatus(statusRes.data);
+        setDataInterfaceStatus(statusRes.data);
       }
     } else {
       toast({
@@ -155,7 +162,7 @@ export default function TablesPage() {
 
   useEffect(() => {
     fetchTables();
-  }, [effectiveSchema]);
+  }, [fetchTables]);
 
   const handleTabChange = (value: string) => {
     if (value === 'er' && !erLoaded && !erLoading) {
@@ -196,7 +203,7 @@ export default function TablesPage() {
               disabled={reloadingHasura}
             >
               <RefreshCw className={`h-4 w-4 mr-2 ${reloadingHasura ? 'animate-spin' : ''}`} />
-              {reloadingHasura ? '刷新中...' : '刷新 Hasura Schema'}
+              {reloadingHasura ? '刷新中...' : '刷新数据结构'}
             </Button>
             <Button
               variant="outline"
@@ -205,7 +212,7 @@ export default function TablesPage() {
               disabled={syncing}
             >
               <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? '同步中...' : '同步 GraphQL 权限'}
+              {syncing ? '同步中...' : '同步数据接口'}
             </Button>
             <CreateTableDialog
               schemaName={effectiveSchema}
@@ -256,8 +263,8 @@ export default function TablesPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>表名</TableHead>
-                    <TableHead className="text-center">GraphQL</TableHead>
-                    <TableHead className="text-center">Realtime</TableHead>
+                    <TableHead className="text-center">数据接口</TableHead>
+                    <TableHead className="text-center">实时更新</TableHead>
                     <TableHead className="text-right">行数</TableHead>
                     <TableHead className="text-right">大小</TableHead>
                     <TableHead className="text-right">操作</TableHead>
@@ -265,29 +272,37 @@ export default function TablesPage() {
                 </TableHeader>
                 <TableBody>
                   {tables.map((table) => {
-                    const status = hasuraStatus[table.tableName];
-                    const hasUser = status?.roles.includes('user');
-                    const allGood = status?.tracked && hasUser;
-                    const isRealtime = realtimeStatus[table.tableName] ?? false;
+                    const status = dataInterfaceStatus[table.tableName];
+                    const dataLabel = getDataInterfaceLabel(status ?? { tracked: false });
+                    const realtimeAccess = realtimeStatus[table.tableName] ?? 'disabled';
+                    const realtimeLabel = getRealtimeLabel(realtimeAccess);
                     return (
                     <TableRow key={table.tableName}>
                       <TableCell className="font-medium font-mono">
                         {table.tableName}
                       </TableCell>
                       <TableCell className="text-center">
-                        {allGood ? (
-                          <Check className="h-4 w-4 text-green-600 inline-block" />
+                        {status?.hasAuthenticatedRead || status?.hasAnonymousRead ? (
+                          <span className="text-xs text-green-600 inline-flex items-center gap-1">
+                            <Check className="h-4 w-4" /> {dataLabel}
+                          </span>
                         ) : status?.tracked ? (
-                          <span className="text-xs text-amber-600">部分权限</span>
+                          <span className="text-xs text-amber-600">{dataLabel}</span>
                         ) : (
-                          <X className="h-4 w-4 text-muted-foreground inline-block" />
+                          <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                            <X className="h-4 w-4" /> {dataLabel}
+                          </span>
                         )}
                       </TableCell>
                       <TableCell className="text-center">
-                        {isRealtime ? (
-                          <Radio className="h-4 w-4 text-green-600 inline-block" />
+                        {realtimeAccess === 'ready' ? (
+                          <span className="text-xs text-green-600 inline-flex items-center gap-1">
+                            <Radio className="h-4 w-4" /> {realtimeLabel}
+                          </span>
+                        ) : realtimeAccess === 'access_required' ? (
+                          <span className="text-xs text-amber-600">{realtimeLabel}</span>
                         ) : (
-                          <X className="h-4 w-4 text-muted-foreground inline-block" />
+                          <span className="text-xs text-muted-foreground">{realtimeLabel}</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">
