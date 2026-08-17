@@ -1,3 +1,5 @@
+import type { ProjectDataAccessMode } from '@druvia/shared'
+
 export type AuthenticatedAccessMode = 'none' | 'all' | 'owner'
 export type DataAccessOperation = 'select' | 'insert' | 'update' | 'delete'
 
@@ -63,7 +65,7 @@ export interface ProjectTableDataAccessOverview {
 export interface ProjectDataAccessOverview {
   projectId: string
   schemaName: string
-  runtimeMode: 'compatibility' | 'explicit'
+  runtimeMode: ProjectDataAccessMode
   summary: {
     totalTables: number
     configuredTables: number

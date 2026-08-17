@@ -207,6 +207,13 @@ async function bootstrap(): Promise<void> {
       WHERE table_name = 'druvia_functions' AND column_name = 'invoke_auth_mode'
       LIMIT 1
     ) as exists`,
+    18: `SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'druvia_projects'
+        AND column_name = 'data_access_mode'
+      LIMIT 1
+    ) as exists`,
   };
 
   const result = await pool.query(`

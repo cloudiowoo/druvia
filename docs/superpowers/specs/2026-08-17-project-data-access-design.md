@@ -132,11 +132,12 @@ A table is realtime-ready for a logical actor only when both conditions are true
 
 Enabling Realtime without select permission is valid but reports `access_required`. Disabling Realtime does not alter GraphQL read permission.
 
-The final Realtime authentication path is a Hasura-verifiable Project JWT:
+The final Realtime authentication path uses a short-lived Hasura-verifiable token issued by Druvia API:
 
-- authenticated project users send their Project JWT in `connection_init`;
-- anonymous SDK clients exchange a validated API key for a short-lived scoped Realtime token;
-- the SDK uses the same project actor selection order for HTTP and WebSocket;
+- authenticated project users present their Project JWT to Druvia API, not directly to Hasura;
+- anonymous SDK clients present a validated API key to the same exchange boundary;
+- Druvia resolves the current project mode and actor, then signs a short-lived token for Hasura's configured JWT verifier;
+- the SDK preserves the same logical actor across HTTP and WebSocket without assuming `PROJECT_AUTH_JWT_SECRET` equals Hasura `JWT_SECRET`;
 - empty `connection_init` is not accepted as completion of project-user Realtime support.
 
 ## 8. Worker Extension
@@ -227,19 +228,26 @@ Implementation status:
 - anonymous access is select-only in the simplified editor;
 - only the two project-scoped managed roles are replaced atomically; legacy roles are preserved;
 - unsupported custom metadata on a managed scoped role is read-only and blocks replacement;
-- materialized scoped permissions are not yet selected by HTTP or WebSocket runtime actors;
+- materialized scoped permissions are selected by HTTP actors for explicit projects after Batch 3A; WebSocket actors are still pending Batch 3B;
 - Batch 2B project overview is implemented for the default production schema;
 - the overview uses one side-effect-free PostgreSQL inventory and one default-source metadata export, reports actor-specific custom states, and exposes no physical role names;
 - Admin provides read-only summary/filter/navigation under project settings, with explicit `scope=default` navigation back to table editing;
-- Batch 2B remains in `compatibility` runtime mode, and legacy migration preview remains Batch 4.
+- Batch 2B originally reported `compatibility`; Batch 3A now reports the persisted project runtime mode, while legacy migration preview remains Batch 4.
 
 ### Batch 3: Actor Cutover
 
-- Project JWT Hasura claims;
-- HTTP proxy actor/session-variable mapping;
-- short-lived anonymous Realtime token;
-- SDK authenticated WebSocket connection;
-- project activation state and compatibility behavior.
+Batch 3A HTTP implementation is complete:
+
+- migration `018` persists `compatibility | explicit`; existing rows remain compatibility and newly created projects are explicit;
+- the HTTP proxy accepts only same-project `project_user` and `apikey` identities and derives all Hasura roles/session variables server-side;
+- platform JWTs and client-supplied Hasura headers are rejected or ignored at the application GraphQL boundary;
+- SDK Database and Admin Playground use application credentials only and never fall back to the platform session;
+- existing-project activation remains unavailable until the Batch 4 migration gate exists.
+
+Batch 3B remains pending:
+
+- Project JWT/API-key exchange for a short-lived Hasura-verifiable Realtime token;
+- SDK authenticated and anonymous WebSocket connection, refresh and reconnect behavior.
 
 ### Batch 4: Legacy Migration And Production Gate
 
@@ -266,4 +274,6 @@ Storage, RPC and Functions actor propagation remains part of the wider Phase A e
 - The UI describes application data access, not Hasura metadata mechanics.
 - Physical roles are generated only through the versioned resolver.
 - Existing projects are not switched to scoped roles without an explicit migration/activation step.
+- Public project GraphQL accepts only same-project application actors and never uses a platform session as an application credential.
+- Realtime does not depend on sending the long-lived Project JWT directly to Hasura.
 - The design can add environment scopes, business policies and service principals without changing SDK-facing role strings.

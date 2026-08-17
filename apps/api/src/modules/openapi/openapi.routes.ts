@@ -1,10 +1,15 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { generateProjectOpenApi } from './openapi.service.js';
-import { authenticate, isJwtUser } from '../../middleware/auth.js';
+import { authenticate } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import { checkProjectGraphqlRateLimit, createRateLimiter } from '../../middleware/ratelimit.js';
 import { config } from '../../config/index.js';
 import { getProjectById } from '../project/project.service.js';
+import {
+  isProjectDataActor,
+  resolveProjectDataExecutionContext,
+} from '../data-access/project-data-actor.js';
+import type { ProjectDataAccessMode } from '@druvia/shared';
 import YAML from 'yaml';
 
 const HASURA_URL = config.hasura.endpoint;
@@ -39,17 +44,24 @@ export async function openapiRoutes(fastify: FastifyInstance) {
             return reply.status(401).send({ error: 'Unauthorized' });
           }
 
-          // apikey 认证：验证 projectId 匹配
-          if (!isJwtUser(user)) {
-            if (user.projectId !== projectId) {
-              return reply.status(403).send({ error: 'API key does not match project' });
-            }
-          } else {
-            // JWT 认证：原有逻辑
-            const hasAccess = await checkProjectAccess(user.userId, projectId);
-            if (!hasAccess) {
-              return reply.status(403).send({ error: 'Access denied' });
-            }
+          if (!isProjectDataActor(user)) {
+            return reply.status(403).send({
+              success: false,
+              error: {
+                code: 'PROJECT_ACTOR_REQUIRED',
+                message: 'Project actor credential required',
+              },
+            });
+          }
+
+          if (user.projectId !== projectId) {
+            return reply.status(403).send({
+              success: false,
+              error: {
+                code: 'PROJECT_SCOPE_MISMATCH',
+                message: 'Project actor does not match the requested project',
+              },
+            });
           }
 
           const project = await getProjectById(projectId);
@@ -61,10 +73,12 @@ export async function openapiRoutes(fastify: FastifyInstance) {
             project?: {
               schemaName: string | null;
               settings: Record<string, unknown>;
+              dataAccessMode: ProjectDataAccessMode;
             };
           }).project = {
             schemaName: project.schemaName,
             settings: project.settings,
+            dataAccessMode: project.dataAccessMode,
           };
 
           const rateLimitConfig = (project.settings as Record<string, unknown> | undefined)
@@ -82,26 +96,42 @@ export async function openapiRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const { query, variables, operationName } = request.body;
       const project = (request as FastifyRequest & {
-        project?: { schemaName: string | null };
+        project?: {
+          schemaName: string | null;
+          dataAccessMode: ProjectDataAccessMode;
+        };
       }).project;
 
       if (!project?.schemaName) {
         return reply.status(404).send({ error: 'Project not found' });
       }
 
+      const actor = request.user;
+      if (!isProjectDataActor(actor)) {
+        return reply.status(403).send({
+          success: false,
+          error: {
+            code: 'PROJECT_ACTOR_REQUIRED',
+            message: 'Project actor credential required',
+          },
+        });
+      }
+
       const schemaName = project.schemaName;
+      const executionContext = resolveProjectDataExecutionContext({
+        projectId: request.params.projectId,
+        runtimeMode: project.dataAccessMode,
+        actor,
+      });
 
       try {
         const hasuraHeaders: Record<string, string> = {
           'Content-Type': 'application/json',
           'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
           'x-hasura-default-schema': schemaName,
+          'x-hasura-role': executionContext.role,
+          ...executionContext.sessionVariables,
         };
-
-        // apikey 认证使用 user 角色（项目级授权），JWT 认证通过 admin-secret 透传
-        if (!isJwtUser(request.user!)) {
-          hasuraHeaders['x-hasura-role'] = 'user';
-        }
 
         const response = await fetch(`${HASURA_URL}/v1/graphql`, {
           method: 'POST',

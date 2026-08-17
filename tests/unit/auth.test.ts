@@ -106,6 +106,28 @@ describe('Auth Middleware', () => {
   });
 
   describe('authenticate', () => {
+    it('does not downgrade to an API key when a supplied bearer token is invalid', async () => {
+      const request = {
+        headers: {
+          authorization: 'Bearer invalid-project-token',
+          apikey: 'otherwise-valid-looking-key',
+        },
+      } as Parameters<typeof authenticate>[0];
+      const reply = {
+        status: vi.fn().mockReturnThis(),
+        send: vi.fn().mockReturnThis(),
+      } as unknown as Parameters<typeof authenticate>[1];
+
+      await authenticate(request, reply);
+
+      expect(request.user).toBeUndefined();
+      expect(reply.status).toHaveBeenCalledWith(401);
+      expect(reply.send).toHaveBeenCalledWith({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' },
+      });
+    });
+
     it('rejects storage ticket style bearer tokens even if they share the JWT secret', async () => {
       const ticketLikeToken = jwt.sign(
         {

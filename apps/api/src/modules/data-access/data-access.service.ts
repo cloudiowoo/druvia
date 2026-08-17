@@ -60,6 +60,7 @@ export async function getProjectDataAccessOverview(
   return buildProjectDataAccessOverview({
     projectId,
     schemaName: project.schemaName,
+    runtimeMode: project.dataAccessMode,
     roles: {
       authenticated: resolveDataScopeRole({ projectId, actor: 'authenticated' }),
       anonymous: resolveDataScopeRole({ projectId, actor: 'anonymous' }),

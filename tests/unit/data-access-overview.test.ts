@@ -24,6 +24,7 @@ describe('project data access overview aggregation', () => {
     const result = buildProjectDataAccessOverview({
       projectId,
       schemaName,
+      runtimeMode: 'explicit',
       roles,
       inventory: [
         { tableName: 'untracked', columns, realtimeEnabled: false },
@@ -77,7 +78,7 @@ describe('project data access overview aggregation', () => {
       ],
     })
 
-    expect(result.runtimeMode).toBe('compatibility')
+    expect(result.runtimeMode).toBe('explicit')
     expect(result.tables.map((row) => row.tableName)).toEqual([
       'custom_rules',
       'drafts',
@@ -169,6 +170,7 @@ describe('project data access overview aggregation', () => {
     const result = buildProjectDataAccessOverview({
       projectId,
       schemaName,
+      runtimeMode: 'compatibility',
       roles,
       inventory: [{ tableName: 'public_posts', columns, realtimeEnabled: true }],
       tableMetadata: [table('public_posts', {
@@ -192,6 +194,7 @@ describe('project data access overview aggregation', () => {
     const result = buildProjectDataAccessOverview({
       projectId,
       schemaName,
+      runtimeMode: 'compatibility',
       roles,
       inventory: [{ tableName: 'mixed_rules', columns, realtimeEnabled: true }],
       tableMetadata: [table('mixed_rules', {
@@ -218,6 +221,7 @@ describe('project data access overview aggregation', () => {
     const result = buildProjectDataAccessOverview({
       projectId,
       schemaName,
+      runtimeMode: 'compatibility',
       roles,
       inventory: [{ tableName: 'mixed_anonymous', columns, realtimeEnabled: true }],
       tableMetadata: [table('mixed_anonymous', {

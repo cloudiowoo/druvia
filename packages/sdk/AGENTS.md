@@ -17,10 +17,12 @@
 - 修改 API 形状时，先检查现有迁移项目是否依赖对应返回结构。
 - 不要把“部分兼容”误写成“完全 Supabase 兼容”。
 - 涉及 functions、auth、apikey 头时，必须联动检查 API 端实际认证路径。
-- `database/graphql` 应与 `rpc/functions` 共用项目侧 token 选择顺序：
-  - 有 project session 时优先带 project token
-  - 否则再回退 platform token
-- Realtime 建连必须传播与 HTTP 数据访问一致的项目身份；空 `connection_init` payload 不能作为 project-user 支持完成的依据。
+- `database/graphql` 使用独立身份选择顺序：
+  - 有 Project Session 时发送 project token，并保留项目 API key
+  - 无 Project Session 时只发送项目 API key
+  - 禁止回退 platform token
+- `rpc/functions` 当前仍保留原有 project token -> platform token 回退，后续 actor cutover 前不要随 database 改动连带收紧。
+- Realtime 建连必须通过 Druvia API 换取短期 Hasura-verifiable token；不能把长期 Project JWT 直接发送给 Hasura，也不能把空 `connection_init` 当作支持完成。
 - SDK 认证头或 session 选择顺序变化时，必须用 API 端真实中间件契约验证，不能只做客户端单测。
 - SDK prerelease 发包必须显式带 dist-tag：
   - 例如 `0.1.0-beta.3` 应使用 `npm publish --tag beta`

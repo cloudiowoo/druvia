@@ -50,6 +50,8 @@ export interface User {
 }
 
 // Project types
+export type ProjectDataAccessMode = 'compatibility' | 'explicit';
+
 export interface Project {
   id: number;
   projectId: string;
@@ -59,6 +61,7 @@ export interface Project {
   schemaName: string | null;
   settings: Record<string, unknown>;
   status: 'active' | 'suspended' | 'deleted';
+  dataAccessMode: ProjectDataAccessMode;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -1,6 +1,11 @@
 import { query, queryOne } from '../../db/index.js';
 import { generateProjectId } from '@druvia/shared';
-import type { Project, CreateProjectInput, UpdateProjectInput } from '@druvia/shared';
+import type {
+  Project,
+  CreateProjectInput,
+  ProjectDataAccessMode,
+  UpdateProjectInput,
+} from '@druvia/shared';
 import * as schemaService from '../schema/schema.service.js';
 import * as tenantService from '../tenant/tenant.service.js';
 import * as environmentService from '../environment/environment.service.js';
@@ -22,6 +27,7 @@ interface ProjectRow {
   schema_name: string | null;
   settings: Record<string, unknown>;
   status: string;
+  data_access_mode?: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -37,9 +43,14 @@ function toProject(row: ProjectRow): Project {
     schemaName: row.schema_name,
     settings: row.settings,
     status: row.status as Project['status'],
+    dataAccessMode: normalizeProjectDataAccessMode(row.data_access_mode),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function normalizeProjectDataAccessMode(value: string | null | undefined): ProjectDataAccessMode {
+  return value === 'explicit' ? 'explicit' : 'compatibility';
 }
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {
@@ -56,10 +67,10 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
 
   // 创建项目记录
   const row = await queryOne<ProjectRow>(
-    `INSERT INTO druvia_projects (project_id, tenant_id, alias, name)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO druvia_projects (project_id, tenant_id, alias, name, data_access_mode)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-    [projectId, input.tenantId, input.alias, input.name]
+    [projectId, input.tenantId, input.alias, input.name, 'explicit']
   );
 
   if (!row) {

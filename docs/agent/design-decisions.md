@@ -123,13 +123,22 @@
   - 匿名客户端仅提供 select 开关，不生成匿名写权限
   - 只替换当前项目两个 scoped role 的权限；旧 `user / anonymous` 及其他 role 均保留
   - scoped role 中出现非精确受支持形态时按 custom 只读处理，不允许 UI 覆盖
-- Batch 2A 只完成 scoped permission 物化，不改变 HTTP/WebSocket 当前 actor role；运行时切换必须等待 Batch 3 的 Project JWT、代理映射和激活状态。
+- Batch 2A 最初只完成 scoped permission 物化；Batch 3A 已切换 explicit 项目的 HTTP actor，WebSocket 仍等待 Batch 3B，已有项目激活仍等待 Batch 4。
 - 表级数据访问 Batch 2B 的项目概览固定为默认生产 schema 的只读治理视图：
   - API 用一次 PostgreSQL 清单查询和一次默认 source metadata 导出组成项目快照，不逐表调用管理接口
   - 清单读取不得创建 `_meta_tables`、追踪表或改写权限；辅助表不存在时 Realtime 默认按未启用展示
   - authenticated / anonymous 的 custom 状态分别判定，公开响应只返回应用状态和旧规则布尔值，不返回物理 role
   - Admin 项目设置页负责汇总、筛选和导航，编辑仍在表详情；`scope=default` 是从概览切回默认 schema 的唯一显式入口
-  - Batch 2B 的 `runtimeMode` 固定为 `compatibility`，不能把 scoped permission 描述为已用于应用请求
+  - Batch 2B 最初固定展示 `compatibility`；Batch 3A 后改为返回项目持久化的实际运行模式
+- Project Data Access Batch 3A 的 HTTP actor 边界：
+  - `druvia_projects.data_access_mode` 持久化为 `compatibility | explicit`
+  - 迁移 `018` 将已有项目保守保持在 `compatibility`，新项目由服务显式创建为 `explicit`
+  - 公开项目 GraphQL 只接受同项目 `project_user` 或 `apikey`，拒绝 `platform_user`
+  - `compatibility` 保留旧 `user` role；`explicit` 使用服务端生成的 scoped role/session variables
+  - Admin Playground 与 SDK Database 不再把平台 session 用作应用 GraphQL 身份
+  - 已有项目没有手工切换入口，必须等待 Batch 4 的清单、备份、验证与回滚流程
+- Realtime 不直接复用长期 Project JWT。Batch 3B 由 Druvia API 验证 Project JWT/API key 后签发短期 Hasura-verifiable token，避免依赖 `PROJECT_AUTH_JWT_SECRET` 与 Hasura `JWT_SECRET` 恰好相同。
+- Batch 3A 只收敛公开 HTTP GraphQL。Functions internal GraphQL 的 admin-secret 执行和平台 SQL/管理接口的跨 schema 能力仍需独立安全审计。
 - Admin 默认使用“数据接口、数据访问、实时更新”等应用概念；Hasura role、metadata 和 secret 只属于高级诊断或服务端实现。
 - Druvia 管理端对列级 DDL 的正式策略是：
   - Admin Tables 页面内的 `add/drop/rename column` 自动触发 `reload metadata`

@@ -3,6 +3,16 @@
  * 测试 OpenAPI URL 构建和配置
  */
 import { describe, it, expect } from 'vitest';
+import { buildProjectGraphqlEndpoint } from '../../../apps/admin/src/lib/project-graphql.js';
+
+describe('Project GraphQL endpoint', () => {
+  it('uses the Druvia API proxy instead of direct Hasura', () => {
+    const endpoint = buildProjectGraphqlEndpoint('https://api.druvia.io', 'proj_123');
+
+    expect(endpoint).toBe('https://api.druvia.io/api/v1/projects/proj_123/graphql');
+    expect(endpoint).not.toContain('/v1/graphql');
+  });
+});
 
 describe('ApiDocumentation Logic', () => {
   describe('OpenAPI URL Construction', () => {

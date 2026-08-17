@@ -20,6 +20,7 @@
 - 新增管理字段时，先确认后端迁移和 API 字段是否已经齐备。
 - 项目设置类 JSON 配置保存时，要先确认后端是顶层 merge 还是深合并。
 - 当页面只编辑 `settings.rateLimits` 下某个子键时，提交前必须保留完整 `rateLimits` 对象。
+- GraphQL Playground 是应用权限测试入口，只能使用组件内存中的项目 API Key 或 Project access token；不得读取平台登录 token、持久化测试凭证或直连 Hasura `/v1/graphql`。
 
 ## 近期风险
 

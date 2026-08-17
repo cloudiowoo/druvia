@@ -1,13 +1,16 @@
 import Fastify from 'fastify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
 
 const {
+  authState,
   authenticateMock,
   isJwtUserMock,
   checkProjectAccessMock,
   getProjectByIdMock,
   checkProjectGraphqlRateLimitMock,
 } = vi.hoisted(() => ({
+  authState: { user: undefined as unknown },
   authenticateMock: vi.fn(),
   isJwtUserMock: vi.fn(),
   checkProjectAccessMock: vi.fn(),
@@ -53,28 +56,42 @@ vi.mock('../../apps/api/src/middleware/ratelimit.js', async () => {
 
 import { openapiRoutes } from '../../apps/api/src/modules/openapi/openapi.routes.js'
 
+const projectUser = {
+  kind: 'project_user' as const,
+  sub: 'pusr_123',
+  projectId: 'proj_123',
+  authType: 'project_user' as const,
+  role: 'authenticated' as const,
+  provider: 'wechat',
+}
+
+const apiKey = {
+  kind: 'apikey' as const,
+  projectId: 'proj_123',
+  role: 'anon' as const,
+}
+
+const platformUser = {
+  kind: 'platform_user' as const,
+  userId: 'usr_platform',
+  uid: 1,
+  role: 'admin',
+}
+
 describe('OpenAPI GraphQL proxy route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.stubGlobal('fetch', vi.fn())
-
-    authenticateMock.mockImplementation(async (request, reply) => {
-      const apiKey = request.headers.apikey
-      if (!apiKey) {
-        return reply.status(401).send({ error: 'Unauthorized' })
-      }
-
-      request.user = {
-        kind: 'apikey',
-        projectId: 'proj_123',
-        role: 'anon',
-      }
+    authState.user = apiKey
+    authenticateMock.mockImplementation(async (request) => {
+      request.user = authState.user
     })
-    isJwtUserMock.mockReturnValue(false)
+    isJwtUserMock.mockImplementation((user) => user?.kind === 'platform_user')
     checkProjectAccessMock.mockResolvedValue(true)
     getProjectByIdMock.mockResolvedValue({
       projectId: 'proj_123',
       schemaName: 'dru_proj_123',
+      dataAccessMode: 'compatibility',
       settings: {
         rateLimits: {
           graphql: { perUser: 120, perProject: 1000 },
@@ -92,28 +109,164 @@ describe('OpenAPI GraphQL proxy route', () => {
     vi.unstubAllGlobals()
   })
 
-  it('continues past apikey project validation to load project and proxy graphql', async () => {
-    const app = Fastify()
-    await app.register(openapiRoutes, { prefix: '/api/v1' })
+  it('rejects platform jwt before project loading or Hasura execution', async () => {
+    authState.user = platformUser
+    const response = await injectGraphql()
 
-    try {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/v1/projects/proj_123/graphql',
-        headers: {
-          apikey: 'test-key',
-        },
-        payload: {
-          query: 'query { __typename }',
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({
+      success: false,
+      error: {
+        code: 'PROJECT_ACTOR_REQUIRED',
+        message: 'Project actor credential required',
+      },
+    })
+    expect(checkProjectAccessMock).not.toHaveBeenCalled()
+    expect(getProjectByIdMock).not.toHaveBeenCalled()
+    expect(checkProjectGraphqlRateLimitMock).not.toHaveBeenCalled()
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects unsupported identity kinds before project loading or Hasura execution', async () => {
+    authState.user = {
+      kind: 'service',
+      projectId: 'proj_123',
+      role: 'service',
+    }
+    const response = await injectGraphql()
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({
+      success: false,
+      error: {
+        code: 'PROJECT_ACTOR_REQUIRED',
+        message: 'Project actor credential required',
+      },
+    })
+    expect(getProjectByIdMock).not.toHaveBeenCalled()
+    expect(checkProjectGraphqlRateLimitMock).not.toHaveBeenCalled()
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([projectUser, apiKey])(
+    'rejects a cross-project $kind before loading the project',
+    async (actor) => {
+      authState.user = { ...actor, projectId: 'proj_other' }
+      const response = await injectGraphql()
+
+      expect(response.statusCode).toBe(403)
+      expect(response.json()).toEqual({
+        success: false,
+        error: {
+          code: 'PROJECT_SCOPE_MISMATCH',
+          message: 'Project actor does not match the requested project',
         },
       })
+      expect(getProjectByIdMock).not.toHaveBeenCalled()
+      expect(checkProjectGraphqlRateLimitMock).not.toHaveBeenCalled()
+      expect(global.fetch).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([projectUser, apiKey])(
+    'preserves compatibility headers for $kind',
+    async (actor) => {
+      authState.user = actor
+      const response = await injectGraphql()
 
       expect(response.statusCode).toBe(200)
-      expect(getProjectByIdMock).toHaveBeenCalledWith('proj_123')
-      expect(checkProjectGraphqlRateLimitMock).toHaveBeenCalledTimes(1)
-      expect(global.fetch).toHaveBeenCalledTimes(1)
-    } finally {
-      await app.close()
+      const headers = proxiedHeaders()
+      expect(headers.get('x-hasura-role')).toBe('user')
+      expect(headers.get('x-hasura-user-id')).toBeNull()
+      expect(headers.get('x-hasura-project-id')).toBeNull()
+      expect(headers.get('x-hasura-actor-type')).toBeNull()
     }
+  )
+
+  it('maps an explicit project user to server-derived Hasura headers', async () => {
+    authState.user = projectUser
+    getProjectByIdMock.mockResolvedValueOnce({
+      projectId: 'proj_123',
+      schemaName: 'dru_proj_123',
+      dataAccessMode: 'explicit',
+      settings: {},
+    })
+
+    const response = await injectGraphql({
+      'x-hasura-role': 'admin',
+      'x-hasura-user-id': 'client-controlled',
+    })
+
+    expect(response.statusCode).toBe(200)
+    const headers = proxiedHeaders()
+    expect(headers.get('x-hasura-role')).toBe(resolveDataScopeRole({
+      projectId: 'proj_123',
+      actor: 'authenticated',
+    }))
+    expect(headers.get('x-hasura-user-id')).toBe('pusr_123')
+    expect(headers.get('x-hasura-project-id')).toBe('proj_123')
+    expect(headers.get('x-hasura-actor-type')).toBe('project_user')
+  })
+
+  it('maps an explicit api key to anonymous headers without user identity', async () => {
+    authState.user = apiKey
+    getProjectByIdMock.mockResolvedValueOnce({
+      projectId: 'proj_123',
+      schemaName: 'dru_proj_123',
+      dataAccessMode: 'explicit',
+      settings: {},
+    })
+
+    const response = await injectGraphql({
+      'x-hasura-role': 'admin',
+      'x-hasura-user-id': 'client-controlled',
+    })
+
+    expect(response.statusCode).toBe(200)
+    const headers = proxiedHeaders()
+    expect(headers.get('x-hasura-role')).toBe(resolveDataScopeRole({
+      projectId: 'proj_123',
+      actor: 'anonymous',
+    }))
+    expect(headers.get('x-hasura-user-id')).toBeNull()
+    expect(headers.get('x-hasura-project-id')).toBe('proj_123')
+    expect(headers.get('x-hasura-actor-type')).toBe('apikey')
+  })
+
+  it('loads the project once and forwards its rate-limit settings', async () => {
+    authState.user = projectUser
+
+    const response = await injectGraphql()
+
+    expect(response.statusCode).toBe(200)
+    expect(getProjectByIdMock).toHaveBeenCalledTimes(1)
+    expect(getProjectByIdMock).toHaveBeenCalledWith('proj_123')
+    expect(checkProjectGraphqlRateLimitMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'proj_123',
+      { perUser: 120, perProject: 1000 }
+    )
   })
 })
+
+async function injectGraphql(headers: Record<string, string> = {}) {
+  const app = Fastify()
+  await app.register(openapiRoutes, { prefix: '/api/v1' })
+  try {
+    return await app.inject({
+      method: 'POST',
+      url: '/api/v1/projects/proj_123/graphql',
+      headers,
+      payload: { query: 'query { __typename }' },
+    })
+  } finally {
+    await app.close()
+  }
+}
+
+function proxiedHeaders(): Headers {
+  expect(global.fetch).toHaveBeenCalledTimes(1)
+  const [, init] = vi.mocked(global.fetch).mock.calls[0]
+  return new Headers(init?.headers)
+}

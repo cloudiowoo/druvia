@@ -39,7 +39,12 @@ import * as schemaService from '../../apps/api/src/modules/schema/schema.service
 import * as environmentService from '../../apps/api/src/modules/environment/environment.service.js'
 import * as dbCredentialsService from '../../apps/api/src/modules/project/db-credentials.service.js'
 import { getDefaultStorageAdapter } from '../../apps/api/src/adapters/storage/index.js'
-import { deleteProject, updateProject } from '../../apps/api/src/modules/project/project.service.js'
+import {
+  createProject,
+  deleteProject,
+  getProjectById,
+  updateProject,
+} from '../../apps/api/src/modules/project/project.service.js'
 
 const mockQuery = vi.mocked(query)
 const mockQueryOne = vi.mocked(queryOne)
@@ -47,6 +52,22 @@ const mockDropSchema = vi.mocked(schemaService.dropSchema)
 const mockListEnvironments = vi.mocked(environmentService.listEnvironments)
 const mockDropProjectDbUser = vi.mocked(dbCredentialsService.dropProjectDbUser)
 const mockGetDefaultStorageAdapter = vi.mocked(getDefaultStorageAdapter)
+
+function projectRow(dataAccessMode?: string) {
+  return {
+    id: 1,
+    project_id: 'proj_123',
+    tenant_id: 'tenant_123',
+    alias: 'demo',
+    name: 'Demo',
+    schema_name: 'dru_demo',
+    settings: {},
+    status: 'active',
+    data_access_mode: dataAccessMode,
+    created_at: new Date(),
+    updated_at: new Date(),
+  }
+}
 
 describe('Project Service', () => {
   beforeEach(() => {
@@ -65,6 +86,54 @@ describe('Project Service', () => {
       getSignedUrl: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
     })
+  })
+
+  it.each([
+    { stored: 'explicit', expected: 'explicit' },
+    { stored: 'compatibility', expected: 'compatibility' },
+    { stored: 'unknown', expected: 'compatibility' },
+    { stored: undefined, expected: 'compatibility' },
+  ])('normalizes project data access mode $stored to $expected', async ({ stored, expected }) => {
+    mockQueryOne.mockResolvedValueOnce(projectRow(stored))
+
+    const project = await getProjectById('proj_123')
+
+    expect(project?.dataAccessMode).toBe(expected)
+  })
+
+  it('creates new projects in explicit data access mode', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 1,
+        tenant_id: 'tenant_123',
+        alias: 'tenant-demo',
+        name: 'Tenant Demo',
+        owner_uid: 1,
+        plan: 'free',
+        settings: {},
+        status: 'active',
+        description: null,
+        storage_limit: 0,
+        project_limit: 10,
+        user_limit: 10,
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+      .mockResolvedValueOnce(projectRow('explicit'))
+    vi.mocked(schemaService.createProjectSchema).mockResolvedValueOnce('dru_demo')
+
+    const project = await createProject({
+      tenantId: 'tenant_123',
+      alias: 'demo',
+      name: 'Demo',
+    })
+
+    expect(mockQueryOne).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('data_access_mode'),
+      expect.arrayContaining(['explicit'])
+    )
+    expect(project.dataAccessMode).toBe('explicit')
   })
 
   it('merges settings at the top level when updating a project', async () => {

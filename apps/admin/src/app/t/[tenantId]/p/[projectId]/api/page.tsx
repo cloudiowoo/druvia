@@ -7,7 +7,8 @@ import dynamic from 'next/dynamic';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
-import { getPublicApiBaseUrl, getPublicHasuraBaseUrl } from '@/lib/public-env';
+import { getPublicApiBaseUrl } from '@/lib/public-env';
+import { buildProjectGraphqlEndpoint } from '@/lib/project-graphql';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Copy, Check, Eye, EyeOff, Database, RefreshCw, Trash2, Plus } from 'lucide-react';
 
@@ -27,7 +28,6 @@ const ApiDocumentation = dynamic(
   { ssr: false, loading: () => <div className="flex items-center justify-center h-96">加载中...</div> }
 );
 
-const HASURA_URL = getPublicHasuraBaseUrl();
 const API_URL = getPublicApiBaseUrl();
 
 interface DbInfo {
@@ -68,13 +68,10 @@ export default function ProjectApiPage() {
   const [deletingUser, setDeletingUser] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const graphqlEndpoint = `${HASURA_URL}/v1/graphql`;
+  const graphqlEndpoint = buildProjectGraphqlEndpoint(API_URL, projectId);
   const restEndpoint = effectiveSchema
     ? `${API_URL}/api/v1/schemas/${effectiveSchema}`
     : `${API_URL}/api/v1/schemas/<schema>`;
-
-  // Hasura URL for GraphQL playground (credentials handled server-side via proxy)
-  const hasuraUrl = HASURA_URL;
 
   useEffect(() => {
     const loadDbInfo = async () => {
@@ -357,7 +354,7 @@ export default function ProjectApiPage() {
 
         {/* GraphQL Tab */}
         <TabsContent value="graphql" className="h-[calc(100vh-220px)] min-h-[500px]">
-          <GraphQLPlayground hasuraUrl={hasuraUrl} projectId={projectId} />
+          <GraphQLPlayground projectId={projectId} />
         </TabsContent>
 
         {/* REST Tab */}

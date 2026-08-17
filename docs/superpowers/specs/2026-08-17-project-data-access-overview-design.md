@@ -73,7 +73,7 @@ interface ProjectTableDataAccessOverview {
 }
 ```
 
-The public type reserves `runtimeMode: 'compatibility' | 'explicit'`, while Batch 2B always returns `compatibility`. This makes the current boundary explicit without exposing physical role terminology or requiring a response-contract change when Batch 3 adds persisted project activation state. Explicit permissions can be configured, but HTTP and WebSocket application requests have not switched to that enforcement path.
+The public type reserves `runtimeMode: 'compatibility' | 'explicit'`. Batch 2B initially always returned `compatibility`; Batch 3A now passes the normalized persisted `druvia_projects.data_access_mode` through the same response contract. Explicit permissions are active for HTTP GraphQL only when the project is explicit. WebSocket application requests remain pending Batch 3B.
 
 ## 4. Aggregation Rules
 

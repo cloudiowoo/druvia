@@ -22,6 +22,11 @@
 - 匿名 `apikey` 能力必须是显式允许，不要扩散成默认放开。
 - 新建或同步 Hasura permissions 时，禁止默认生成无行过滤的写权限；任何匿名写入都必须有明确业务理由和测试。
 - 修改认证请求头时，要联动检查 SDK、MCP Server、Admin server routes 和 nginx 代理是否使用同一契约。
+- 公开项目 GraphQL 路由 `/api/v1/projects/:projectId/graphql` 只接受同项目 `project_user` 或 `apikey`：
+  - `platform_user` 必须返回 `PROJECT_ACTOR_REQUIRED`，不能恢复为 Hasura admin passthrough
+  - 客户端 `x-hasura-*` 头和角色声明不能进入执行上下文
+  - Hasura role/session variables 必须由服务端根据项目 `data_access_mode` 和已认证 actor 生成
+  - `compatibility` 仅保留旧 `user` role 行为；`explicit` 才使用项目 scoped role
 - 涉及 Functions invoke 时，优先检查：
   - `functions.controller.ts`
   - `functions.service.ts`
@@ -39,6 +44,7 @@
 - `invoke_auth_mode` 依赖数据库迁移；代码先行、数据库未升级时，管理端会报保存失败。
 - 上传类函数若未做调用者鉴权，不应依赖平台层匿名放行。
 - `druvia_projects.settings` 更新虽已改为 JSONB 顶层 merge，但 `rateLimits` 等嵌套对象仍不是深合并；路由和前端都不能误判。
+- `/api/internal/functions/graphql` 仍以 Hasura admin secret 执行并依赖查询文本检查，不能视为项目隔离边界；其 actor cutover 完成前，不应宣称所有 GraphQL 路径都已 scoped。
 
 ## 参考入口
 

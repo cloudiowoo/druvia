@@ -64,8 +64,9 @@ export class DruviaClient {
 
     this.platformFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedPlatformToken)
     this.projectFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedProjectToken ?? cachedPlatformToken)
+    const databaseFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedProjectToken)
     const graphqlUrl = `${apiBase}/projects/${options.projectId}/graphql`
-    this.database = new DruviaDatabase(graphqlUrl, this.projectFetch, schema)
+    this.database = new DruviaDatabase(graphqlUrl, databaseFetch, schema)
     this.storage = new DruviaStorage(apiBase, options.projectId, this.platformFetch)
     this.rpcModule = new DruviaRpc(apiBase, options.projectId, this.projectFetch)
     this.functions = new DruviaFunctions(apiBase, options.projectId, this.projectFetch)

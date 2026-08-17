@@ -28,7 +28,14 @@
   - 项目设置新增数据访问汇总、筛选和表级配置导航
   - API 以一次数据库清单读取和一次默认数据源快照统一判定连接、认证、匿名、Realtime、旧规则和需检查状态
   - authenticated / anonymous 自定义规则独立分类，公开响应不暴露物理角色名
-  - 概览和显式 `scope=default` 导航不改变当前兼容运行模式，HTTP/WebSocket actor 切换仍属于 Batch 3
+  - Batch 2B 交付时概览和显式 `scope=default` 导航不改变兼容运行模式；后续 HTTP 切换已由 Batch 3A 完成
+- Project Data Access Batch 3A 已完成 HTTP actor 切换：
+  - 迁移 `018` 持久化项目 `compatibility | explicit` 运行模式；已有项目保持兼容，新项目显式启用 scoped 模式
+  - 项目 GraphQL 代理只接受同项目 `project_user` / `apikey`，拒绝平台 JWT 和客户端 Hasura 头注入
+  - explicit 请求由服务端生成 scoped role 与项目用户 session variables，compatibility 继续使用旧 `user` role
+  - SDK Database 不再回退平台 session；RPC/Functions 保持原行为等待独立 cutover
+  - Admin Playground 改用内存中的 API Key 或 Project access token，并统一展示 Druvia GraphQL 代理地址
+  - Realtime 短期令牌交换、已有项目迁移激活仍分别属于 Batch 3B 和 Batch 4
 
 - API 已支持 `apikey` fallback 认证
 - Realtime 权限开始与表管理权限解耦
@@ -92,7 +99,8 @@
 
 ## Current Next Steps
 
-- 实施 Project Data Access Batch 3：补齐 scoped role 的 HTTP/WebSocket actor 切换、Project JWT claims、匿名 Realtime 短期令牌与项目激活状态
+- 实施 Project Data Access Batch 3B：由 Project JWT/API key 换取短期 Hasura-verifiable Realtime token，并补齐 SDK WebSocket 重连与续期
+- 设计 Batch 4 已有项目迁移门禁：metadata 清单、备份、dry-run、正反向 actor 验证、激活与回滚，不直接暴露 `data_access_mode` 开关
 - 统一 project-user 在 GraphQL、Realtime、Storage、RPC 和 Functions 中的身份传播与审计
 - 修正 MCP Server 与 API 的认证头、路由身份和 scope 契约，并增加真实 API 契约测试
 - 将 build、lint、核心测试、manifest/digest 校验和 OTA smoke test 纳入 release 门禁

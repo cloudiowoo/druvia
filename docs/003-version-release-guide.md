@@ -134,6 +134,18 @@ pnpm migrate up
 cd docker && docker compose -f docker-compose.prod.yml up -d --build
 ```
 
+#### Batch 3A / 迁移 018 部署门禁
+
+包含 Project Data Access Batch 3A 的版本必须先应用 `018_project_data_access_mode`，再启动新 API：
+
+1. 部署目标 release 文件和镜像。
+2. 运行迁移并确认 `druvia_projects.data_access_mode` 已存在。
+3. 启动 API/Admin/Worker/Updater。
+4. 验证已有项目仍为 `compatibility`，新建测试项目为 `explicit`。
+5. 分别使用项目 API Key 和 Project access token 验证 GraphQL；平台 JWT 必须返回 `403 PROJECT_ACTOR_REQUIRED`。
+
+OTA 仍使用既有 updater 流程，但 release manifest 对应的 API 镜像不能在迁移 `018` 未完成时创建新项目。
+
 ### 场景 E：生产环境回滚
 
 ```bash
@@ -160,6 +172,10 @@ cd docker && docker compose -f docker-compose.prod.yml up -d --build
 - 不带 `--to` 默认只回滚最后一个
 - 包含数据的迁移（如 010）回滚会删除数据，这是预期行为
 - 回滚前建议备份数据库
+- 从 Batch 3A 回滚代码时保留迁移 `018`；旧 API 会忽略附加列，自动执行 down 反而会丢失 explicit 项目清单
+- 回滚到 Batch 3A 之前的 API 会恢复平台 token GraphQL 通道，并把 explicit 项目按旧 `user` role 执行，不属于透明降级
+- 启动旧 API 前应在 ingress 阻断 `/api/v1/projects/:projectId/graphql`，或使用保留平台 token 拒绝逻辑的应急构建
+- `018` down 仅用于受控开发重置或永久移除功能；执行前必须停止项目创建并导出所有项目的 `data_access_mode`
 
 ---
 
@@ -196,6 +212,7 @@ pnpm migrate up
 | Git Tag | 迁移范围 | 说明 |
 |---------|---------|------|
 | v0.1.0 | 000-012 | 基线版本，迁移系统就绪 |
+| 待发布 | 000-018 | Project Data Access Batch 3A，运行模式持久化 |
 
 > 每次打 tag 时更新此表。
 
@@ -213,4 +230,4 @@ pnpm migrate up
 
 ---
 
-*Last Updated: 2026-03-16*
+*Last Updated: 2026-08-17*

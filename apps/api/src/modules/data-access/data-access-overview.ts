@@ -1,4 +1,5 @@
 import { inspectTableDataAccessMetadata, type HasuraTableMetadata } from './data-access-inspection.js'
+import type { ProjectDataAccessMode } from '@druvia/shared'
 import type { DataAccessInventoryTable } from './data-access-inventory.js'
 import type {
   AnonymousAccessStatus,
@@ -12,6 +13,7 @@ import type {
 interface BuildProjectDataAccessOverviewInput {
   projectId: string
   schemaName: string
+  runtimeMode: ProjectDataAccessMode
   roles: DataAccessRoleNames
   inventory: DataAccessInventoryTable[]
   tableMetadata: HasuraTableMetadata[]
@@ -33,7 +35,7 @@ export function buildProjectDataAccessOverview(
   return {
     projectId: input.projectId,
     schemaName: input.schemaName,
-    runtimeMode: 'compatibility',
+    runtimeMode: input.runtimeMode,
     summary: {
       totalTables: tables.length,
       configuredTables: builtTables.filter((item) => item.hasSupportedPermission).length,

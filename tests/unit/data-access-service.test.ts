@@ -77,6 +77,7 @@ describe('data access service', () => {
     vi.mocked(projectService.getProjectById).mockResolvedValue({
       projectId,
       schemaName,
+      dataAccessMode: 'compatibility',
     } as Awaited<ReturnType<typeof projectService.getProjectById>>)
     vi.mocked(tableService.getTableMetadata).mockResolvedValue({
       schemaName,
@@ -135,6 +136,18 @@ describe('data access service', () => {
       tableName,
       authenticatedAccess: 'read_only',
     })
+  })
+
+  it('reports the persisted explicit project runtime mode', async () => {
+    vi.mocked(projectService.getProjectById).mockResolvedValueOnce({
+      projectId,
+      schemaName,
+      dataAccessMode: 'explicit',
+    } as Awaited<ReturnType<typeof projectService.getProjectById>>)
+
+    const overview = await getProjectDataAccessOverview(projectId)
+
+    expect(overview.runtimeMode).toBe('explicit')
   })
 
   it('rejects a project overview when the default metadata source is unavailable', async () => {

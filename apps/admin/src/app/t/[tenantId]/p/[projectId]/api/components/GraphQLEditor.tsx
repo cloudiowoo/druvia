@@ -7,10 +7,15 @@ import { json } from '@codemirror/lang-json';
 import { keymap } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 import { createGraphiQLFetcher } from '@graphiql/toolkit';
-import { api } from '@/lib/api';
 import { getPublicApiBaseUrl } from '@/lib/public-env';
+import {
+  buildGraphqlCredentialHeaders,
+  buildProjectGraphqlEndpoint,
+  type GraphqlCredentialMode,
+} from '@/lib/project-graphql';
 import { Button } from '@/components/ui/button';
-import { Play, Loader2 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Eye, EyeOff, KeyRound, Loader2, Play, UserRound } from 'lucide-react';
 
 interface GraphQLEditorProps {
   projectId: string;
@@ -24,16 +29,27 @@ export function GraphQLEditor({ projectId }: GraphQLEditorProps) {
   const [result, setResult] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [credentialMode, setCredentialMode] = useState<GraphqlCredentialMode>('apikey');
+  const [credential, setCredential] = useState('');
+  const [showCredential, setShowCredential] = useState(false);
 
   const apiBaseUrl = getPublicApiBaseUrl();
-  const fetcher = useMemo(() => createGraphiQLFetcher({
-    url: `${apiBaseUrl}/api/v1/projects/${projectId}/graphql`,
-    headers: {
-      'Authorization': `Bearer ${api.getToken()}`,
-    },
-  }), [apiBaseUrl, projectId]);
+  const credentialHeaders = useMemo(
+    () => buildGraphqlCredentialHeaders(credentialMode, credential),
+    [credentialMode, credential]
+  );
+  const fetcher = useMemo(() => {
+    if (!credentialHeaders) return null;
+
+    return createGraphiQLFetcher({
+      url: buildProjectGraphqlEndpoint(apiBaseUrl, projectId),
+      headers: credentialHeaders,
+    });
+  }, [apiBaseUrl, credentialHeaders, projectId]);
 
   const executeQuery = useCallback(async () => {
+    if (!fetcher) return;
+
     setLoading(true);
     setError(null);
     try {
@@ -88,21 +104,72 @@ export function GraphQLEditor({ projectId }: GraphQLEditorProps) {
     customKeymap,
   ], [customKeymap]);
 
+  const changeCredentialMode = (mode: GraphqlCredentialMode) => {
+    setCredentialMode(mode);
+    setCredential('');
+    setShowCredential(false);
+    setError(null);
+  };
+
   return (
     <div className="h-full flex flex-col">
       {/* 工具栏 */}
-      <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
-        <span className="text-sm font-medium">GraphQL Playground</span>
-        <Button
-          size="sm"
-          onClick={executeQuery}
-          disabled={loading}
-        >
-          {loading ? (
-            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-          ) : (
-            <Play className="h-4 w-4 mr-1" />
-          )}
+      <div className="flex flex-wrap items-center gap-3 border-b bg-muted/30 px-4 py-3">
+        <span className="mr-auto text-sm font-medium">GraphQL Playground</span>
+
+        <div className="flex h-9 shrink-0 items-center rounded-md border bg-background p-0.5">
+          <button
+            type="button"
+            onClick={() => changeCredentialMode('apikey')}
+            className={`inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition-colors ${
+              credentialMode === 'apikey'
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            }`}
+            aria-pressed={credentialMode === 'apikey'}
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            API Key
+          </button>
+          <button
+            type="button"
+            onClick={() => changeCredentialMode('project_user')}
+            className={`inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition-colors ${
+              credentialMode === 'project_user'
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            }`}
+            aria-pressed={credentialMode === 'project_user'}
+          >
+            <UserRound className="h-3.5 w-3.5" />
+            项目令牌
+          </button>
+        </div>
+
+        <div className="relative min-w-[240px] flex-1 sm:max-w-sm">
+          <Input
+            type={showCredential ? 'text' : 'password'}
+            value={credential}
+            onChange={(event) => setCredential(event.target.value)}
+            placeholder={credentialMode === 'apikey' ? '输入项目 API Key' : '输入 Project access token'}
+            className="h-9 pr-10 font-mono text-xs"
+            autoComplete="off"
+            spellCheck={false}
+            aria-label={credentialMode === 'apikey' ? '项目 API Key' : 'Project access token'}
+          />
+          <button
+            type="button"
+            onClick={() => setShowCredential((visible) => !visible)}
+            className="absolute inset-y-0 right-0 inline-flex w-9 items-center justify-center text-muted-foreground hover:text-foreground"
+            title={showCredential ? '隐藏凭证' : '显示凭证'}
+            aria-label={showCredential ? '隐藏凭证' : '显示凭证'}
+          >
+            {showCredential ? <EyeOff /> : <Eye />}
+          </button>
+        </div>
+
+        <Button size="sm" onClick={executeQuery} disabled={loading || !credentialHeaders}>
+          {loading ? <Loader2 className="animate-spin" /> : <Play />}
           执行
         </Button>
       </div>
@@ -179,15 +246,6 @@ export function GraphQLEditor({ projectId }: GraphQLEditorProps) {
         </div>
       </div>
 
-      {/* 底部提示 */}
-      <div className="px-3 py-1.5 text-xs text-muted-foreground border-t bg-muted/20 flex justify-end">
-        <span>
-          <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">⌘</kbd>
-          <span className="mx-0.5">+</span>
-          <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Enter</kbd>
-          <span className="ml-1">执行查询</span>
-        </span>
-      </div>
     </div>
   );
 }
