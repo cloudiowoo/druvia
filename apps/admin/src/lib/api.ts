@@ -4,6 +4,7 @@ import type { DruviaUpdateStatus } from '@druvia/shared';
 import { createAdminServerLogger } from './server-logger';
 import type { TableDataAccessPolicy, TableDataAccessState } from './table-data-access';
 import type { ProjectDataAccessOverview } from './project-data-access-overview';
+import type { ProjectDataAccessMigrationReport } from './project-data-access-migration';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 const serverLogger = createAdminServerLogger({ module: 'api-client' });
@@ -466,6 +467,55 @@ class ApiClient {
       'PUT',
       `/api/v1/projects/${projectId}/data-access/tables/${tableName}`,
       policy
+    );
+  }
+
+  async getDataAccessMigration(projectId: string) {
+    return this.request<ProjectDataAccessMigrationReport | null>(
+      'GET', `/api/v1/projects/${projectId}/data-access/migration`
+    );
+  }
+
+  async previewDataAccessMigration(projectId: string, skipLegacyInferenceTables: string[] = []) {
+    return this.request<ProjectDataAccessMigrationReport>(
+      'POST', `/api/v1/projects/${projectId}/data-access/migration/preview`,
+      { skipLegacyInferenceTables }
+    );
+  }
+
+  async applyDataAccessMigration(projectId: string, migrationId: string, input: {
+    sourceDigest: string;
+    confirmInferredPolicies: boolean;
+    confirmDestructiveChanges: boolean;
+    projectAlias?: string;
+  }) {
+    return this.request<ProjectDataAccessMigrationReport>(
+      'POST', `/api/v1/projects/${projectId}/data-access/migration/${migrationId}/apply`, input
+    );
+  }
+
+  async recoverDataAccessMigration(projectId: string, migrationId: string, input: {
+    expectedRecoveryDigest: string;
+    projectAlias: string;
+  }) {
+    return this.request<ProjectDataAccessMigrationReport>(
+      'POST', `/api/v1/projects/${projectId}/data-access/migration/${migrationId}/recover`, input
+    );
+  }
+
+  async previewDataAccessMigrationRollback(projectId: string, migrationId: string, projectAlias: string) {
+    return this.request<ProjectDataAccessMigrationReport>(
+      'POST', `/api/v1/projects/${projectId}/data-access/migration/${migrationId}/rollback-preview`,
+      { projectAlias }
+    );
+  }
+
+  async rollbackDataAccessMigration(projectId: string, migrationId: string, input: {
+    rollbackPreviewDigest: string;
+    projectAlias: string;
+  }) {
+    return this.request<ProjectDataAccessMigrationReport>(
+      'POST', `/api/v1/projects/${projectId}/data-access/migration/${migrationId}/rollback`, input
     );
   }
 

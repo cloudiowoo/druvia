@@ -4,6 +4,10 @@ import * as dbCredentialsService from './db-credentials.service.js';
 import type { CreateProjectInput, UpdateProjectInput } from '@druvia/shared';
 import { checkProjectAccess } from '../../lib/access.js';
 import { isPlatformUser } from '../../middleware/auth.js';
+import {
+  DataAccessMutationLockedError,
+  isDataAccessMigrationDeleteGuardError,
+} from '../data-access/data-access-mutation-lock.js';
 
 interface ProjectParams {
   projectId: string;
@@ -151,14 +155,27 @@ export async function deleteProject(
     return;
   }
 
-  const deleted = await projectService.deleteProject(request.params.projectId);
-  if (!deleted) {
-    return reply.status(404).send({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Project not found' },
-    });
+  try {
+    const deleted = await projectService.deleteProject(request.params.projectId);
+    if (!deleted) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Project not found' },
+      });
+    }
+    return reply.status(204).send();
+  } catch (error) {
+    if (error instanceof DataAccessMutationLockedError || isDataAccessMigrationDeleteGuardError(error)) {
+      return reply.status(409).send({
+        success: false,
+        error: {
+          code: 'DATA_ACCESS_MIGRATION_IN_PROGRESS',
+          message: 'Project data changes are temporarily locked',
+        },
+      });
+    }
+    throw error;
   }
-  return reply.status(204).send();
 }
 
 export async function executeQuery(

@@ -14,6 +14,7 @@ describe('Druvia update shared contract', () => {
       'applying',
       'restarting',
       'verifying',
+      'finalizing',
     ]);
   });
 

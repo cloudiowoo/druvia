@@ -135,7 +135,7 @@ function parseAuthenticatedPermission(
   switch (operation) {
     case 'select':
       if (!hasOnlyKeys(permission, ['columns', 'filter', 'allow_aggregations'])) return null
-      if (!columnsMatch(permission.columns, columns)) return null
+      if (!selectColumnsMatch(permission.columns, columns)) return null
       if (!isAggregationsDisabled(permission.allow_aggregations)) return null
       break
     case 'insert':
@@ -186,7 +186,7 @@ function isAllSelectPermission(
   columns: string[]
 ): boolean {
   return hasOnlyKeys(permission, ['columns', 'filter', 'allow_aggregations'])
-    && columnsMatch(permission.columns, columns)
+    && selectColumnsMatch(permission.columns, columns)
     && isEmptyObject(permission.filter)
     && isAggregationsDisabled(permission.allow_aggregations)
 }
@@ -204,6 +204,10 @@ function columnsMatch(value: unknown, expected: string[]): boolean {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) return false
   return value.length === expected.length
     && expected.every((column) => value.includes(column))
+}
+
+function selectColumnsMatch(value: unknown, expected: string[]): boolean {
+  return value === '*' || columnsMatch(value, expected)
 }
 
 function isEmptyObject(value: unknown): boolean {

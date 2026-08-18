@@ -18,6 +18,10 @@ vi.mock('../../apps/api/src/modules/data-access/data-access-inventory.js', () =>
   getDataAccessInventory: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/modules/data-access/data-access-mutation-lock.js', () => ({
+  withProjectDataAccessMutationLock: vi.fn(async (_projectId, callback) => callback()),
+}))
+
 import * as projectService from '../../apps/api/src/modules/project/project.service.js'
 import * as tableService from '../../apps/api/src/modules/table/table.service.js'
 import { hasuraMetadataRequest } from '../../apps/api/src/modules/realtime/realtime.service.js'

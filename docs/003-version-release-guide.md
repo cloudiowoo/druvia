@@ -163,6 +163,14 @@ OTA 仍使用既有 updater 流程，但 release manifest 对应的 API 镜像�
 
 暂时不配置 `HASURA_JWT_SECRET` 时，API/Hasura 可以共同回退到 `JWT_SECRET`，API 会输出迁移警告。该回退只复用签名材料，不会让缺少新 issuer/audience 的旧直连 JWT 在 verifier 切换后继续有效；自动保留的兼容路径只有无 token 的 Hasura `anonymous` 连接。compatibility 的全局 `user` / `anonymous` permissions 仍是 Batch 4 迁移债务，不能作为跨项目隔离保证。
 
+#### Batch 4 / 迁移 019 部署门禁
+
+包含已有项目数据访问升级的版本必须先应用 `019_data_access_migrations`，再启动新 API/Admin。发布前先完成数据库和 Hasura metadata 备份；发布后通过 Admin 逐项目生成预检，不批量修改 `data_access_mode`。自定义旧规则会阻断，匿名写权限不会迁移，认证 aggregate 能力会收紧。
+
+当前 release workflow 的安全默认值为 `migration_required=true`、`migration_from=18`、`migration_to=19`、`migration_requires_backup=true`、`migration_reversible=false`。tag push 在没有 `workflow_dispatch` 输入时也使用这些值，GHCR 与自建 Registry manifest 必须保持一致；未来新增迁移时需同步提升该默认范围和对应契约测试。
+
+迁移操作、恢复与回滚流程见 `docs/004-project-data-access-migration-guide.md`。`019` 保存恢复依据，镜像或 OTA 回滚时必须保留，不能自动执行 down migration。
+
 ### 场景 E：生产环境回滚
 
 ```bash
@@ -193,6 +201,7 @@ cd docker && docker compose -f docker-compose.prod.yml up -d --build
 - 回滚到 Batch 3A 之前的 API 会恢复平台 token GraphQL 通道，并把 explicit 项目按旧 `user` role 执行，不属于透明降级
 - 启动旧 API 前应在 ingress 阻断 `/api/v1/projects/:projectId/graphql`，或使用保留平台 token 拒绝逻辑的应急构建
 - `018` down 仅用于受控开发重置或永久移除功能；执行前必须停止项目创建并导出所有项目的 `data_access_mode`
+- `019` down 仅用于受控开发重置或永久移除迁移控制面；存在 applying、rolling_back、applied 或 recovery-required 记录时会拒绝执行，OTA 不得自动 down
 
 ---
 
@@ -229,7 +238,7 @@ pnpm migrate up
 | Git Tag | 迁移范围 | 说明 |
 |---------|---------|------|
 | v0.1.0 | 000-012 | 基线版本，迁移系统就绪 |
-| 待发布 | 000-018 | Project Data Access Batch 3A，运行模式持久化 |
+| 待发布 | 000-019 | Project Data Access Batch 4，已有项目受控迁移与恢复 |
 
 > 每次打 tag 时更新此表。
 

@@ -77,13 +77,6 @@ export function ProjectDataAccessOverviewPanel({
 
   return (
     <div className="space-y-5">
-      {overview.runtimeMode === 'compatibility' && (
-        <div className="flex items-start gap-3 border-l-2 border-amber-500 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>当前处于兼容模式，新数据访问配置尚未用于应用请求</span>
-        </div>
-      )}
-
       <div className="grid grid-cols-2 border-y bg-muted/10 sm:grid-cols-3 xl:grid-cols-6">
         <SummaryItem label="数据表总数" value={overview.summary.totalTables} />
         <SummaryItem label="已配置" value={overview.summary.configuredTables} />

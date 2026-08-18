@@ -57,7 +57,7 @@ export interface InspectedTableDataAccess {
 }
 ```
 
-Move permission-shape recognition from `data-access.service.ts` into the new module. Keep the existing editor behavior by mapping either actor's custom state to `managedState='custom'`. Preserve `bulk_atomic` replacement and all Batch 2A safety rules.
+Move permission-shape recognition from `data-access.service.ts` into the new module. Keep the existing editor behavior by mapping either actor's custom state to `managedState='custom'`. Preserve the Batch 2A scoped replacement safety rules; the shared metadata helper attempts `bulk_atomic` and falls back to `bulk` only for Hasura's explicit unsupported-command response.
 
 - [x] **Step 4: Run tests and verify GREEN**
 

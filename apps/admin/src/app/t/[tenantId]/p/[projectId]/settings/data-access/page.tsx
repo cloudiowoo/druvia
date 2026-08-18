@@ -5,8 +5,10 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { DashboardLayout } from '@/components/DashboardLayout'
 import { ProjectDataAccessOverviewPanel } from '@/components/data-access/ProjectDataAccessOverview'
+import { ProjectDataAccessMigration } from '@/components/data-access/ProjectDataAccessMigration'
 import { api } from '@/lib/api'
 import type { ProjectDataAccessOverview } from '@/lib/project-data-access-overview'
+import type { ProjectDataAccessMigrationReport } from '@/lib/project-data-access-migration'
 import { useAppStore } from '@/store'
 
 export default function ProjectDataAccessOverviewPage() {
@@ -15,18 +17,26 @@ export default function ProjectDataAccessOverviewPage() {
   const projectId = params.projectId as string
   const { currentTenant, currentProject } = useAppStore()
   const [overview, setOverview] = useState<ProjectDataAccessOverview | null>(null)
+  const [migration, setMigration] = useState<ProjectDataAccessMigrationReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const loadOverview = useCallback(async () => {
+  const loadPage = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await api.getProjectDataAccessOverview(projectId)
-      if (!response.success || !response.data) {
-        throw new Error(response.error?.message || '加载数据访问状态失败')
+      const [overviewResponse, migrationResponse] = await Promise.all([
+        api.getProjectDataAccessOverview(projectId),
+        api.getDataAccessMigration(projectId),
+      ])
+      if (!overviewResponse.success || !overviewResponse.data) {
+        throw new Error(overviewResponse.error?.message || '加载数据访问状态失败')
       }
-      setOverview(response.data)
+      if (!migrationResponse.success) {
+        throw new Error(migrationResponse.error?.message || '加载迁移状态失败')
+      }
+      setOverview(overviewResponse.data)
+      setMigration(migrationResponse.data ?? null)
     } catch (loadError) {
       setOverview(null)
       setError(loadError instanceof Error ? loadError.message : '加载数据访问状态失败')
@@ -35,9 +45,21 @@ export default function ProjectDataAccessOverviewPage() {
     }
   }, [projectId])
 
+  const refreshMigration = useCallback(async () => {
+    const response = await api.getDataAccessMigration(projectId)
+    if (response.success) setMigration(response.data ?? null)
+  }, [projectId])
+
+  const handleMigrationChanged = useCallback((next: ProjectDataAccessMigrationReport) => {
+    setMigration(next)
+    void api.getProjectDataAccessOverview(projectId).then((response) => {
+      if (response.success && response.data) setOverview(response.data)
+    })
+  }, [projectId])
+
   useEffect(() => {
-    void loadOverview()
-  }, [loadOverview])
+    void loadPage()
+  }, [loadPage])
 
   return (
     <DashboardLayout isProjectLevel={true}>
@@ -63,13 +85,25 @@ export default function ProjectDataAccessOverviewPage() {
         </p>
       </div>
 
+      <ProjectDataAccessMigration
+        tenantId={tenantId}
+        projectId={projectId}
+        projectAlias={currentProject?.alias ?? ''}
+        runtimeMode={overview?.runtimeMode ?? 'compatibility'}
+        migration={migration}
+        loading={loading}
+        error={error}
+        onRefresh={() => void refreshMigration()}
+        onChanged={handleMigrationChanged}
+      />
+
       <ProjectDataAccessOverviewPanel
         tenantId={tenantId}
         projectId={projectId}
         overview={overview}
         loading={loading}
         error={error}
-        onRetry={() => void loadOverview()}
+        onRetry={() => void loadPage()}
       />
     </DashboardLayout>
   )

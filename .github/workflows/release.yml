@@ -22,19 +22,19 @@ on:
       migration_required:
         description: Whether this release requires database migrations
         required: true
-        default: 'false'
+        default: 'true'
       migration_from:
         description: Current migration floor
         required: true
-        default: '0'
+        default: '18'
       migration_to:
         description: Target migration ceiling
         required: true
-        default: '0'
+        default: '19'
       migration_requires_backup:
         description: Whether updater must take a database backup before apply
         required: true
-        default: 'false'
+        default: 'true'
       migration_reversible:
         description: Whether database migrations are automatically reversible
         required: true
@@ -101,6 +101,40 @@ jobs:
           tests/unit/realtime-compose-config.test.ts
           tests/unit/release-compose-files.test.ts
           tests/unit/release-pipeline.test.ts
+
+      - name: Verify project data access migration
+        run: >-
+          pnpm vitest run
+          tests/unit/data-access-inspection.test.ts
+          tests/unit/data-access-migration-schema.test.ts
+          tests/unit/data-access-migration-inspection.test.ts
+          tests/unit/data-access-migration-plan.test.ts
+          tests/unit/data-access-migration-repository.test.ts
+          tests/unit/data-access-mutation-lock.test.ts
+          tests/unit/data-access-management-locks.test.ts
+          tests/unit/hasura-metadata-bulk.test.ts
+          tests/unit/data-access-migration-verifier.test.ts
+          tests/unit/data-access-migration-service.test.ts
+          tests/unit/data-access-migration-controller.test.ts
+          tests/unit/data-access-service.test.ts
+          tests/unit/data-access-inventory.test.ts
+          tests/unit/project-controller.test.ts
+          tests/unit/project-service.test.ts
+          tests/unit/tenant-controller.test.ts
+          tests/unit/environment-service.test.ts
+          tests/unit/table-controller.test.ts
+          tests/unit/table-service.test.ts
+          tests/unit/sql-controller.test.ts
+          tests/unit/sql-service.test.ts
+          tests/unit/backup-service.test.ts
+          tests/unit/backup-command.test.ts
+          tests/unit/realtime-controller.test.ts
+          tests/unit/project-data-actor.test.ts
+          tests/unit/realtime-actor.test.ts
+          tests/unit/admin/project-data-access-migration.test.ts
+          tests/unit/admin/project-data-access-migration-panel.test.tsx
+          tests/unit/admin/project-data-access-overview-panel.test.tsx
+          tests/unit/api-app.test.ts
 
       - name: Build SDK
         run: pnpm --filter @druvia/sdk build
@@ -228,10 +262,10 @@ jobs:
           DRUVIA_ADMIN_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_admin }}
           DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_worker }}
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
-          DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'false' }}
-          DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '0' }}
-          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '0' }}
-          DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'false' }}
+          DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'true' }}
+          DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
+          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '19' }}
+          DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'true' }}
           DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
         run: node scripts/release/generate-manifest.mjs
 
@@ -250,10 +284,10 @@ jobs:
           DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.self_hosted_worker }}
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.self_hosted_updater }}
           DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
-          DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'false' }}
-          DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '0' }}
-          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '0' }}
-          DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'false' }}
+          DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'true' }}
+          DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
+          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '19' }}
+          DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'true' }}
           DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
         run: node scripts/release/generate-manifest.mjs
 

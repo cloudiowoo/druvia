@@ -55,6 +55,7 @@ describe('data access inventory', () => {
     const [sql, params] = vi.mocked(query).mock.calls[0]
     expect(sql).toContain('LEFT JOIN "dru_test"._meta_tables')
     expect(sql).toContain("t.table_name NOT LIKE '\\_%'")
+    expect(sql).toContain('array_agg(c.column_name::text')
     expect(sql).toContain('ORDER BY c.ordinal_position')
     expect(sql).toContain('ORDER BY t.table_name')
     expect(params).toEqual(['dru_test'])

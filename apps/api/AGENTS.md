@@ -33,6 +33,11 @@
   - Hasura session variables 只能由服务端 actor 生成，令牌必须使用短期 TTL、固定 issuer `druvia` 和 audience `druvia-hasura`
   - API 与 Hasura 必须使用同一个有效 `HASURA_JWT_SECRET`；`JWT_SECRET` 仅是迁移期回退
   - 当前只保证新连接的令牌有效性；不能宣称已建立的恶意 socket 会在 JWT 到期瞬间被强制断开
+- 已有项目数据访问迁移依赖 `019_data_access_migrations`：
+  - 只允许状态机切换 `data_access_mode`，禁止新增直接切换接口
+  - permission/DDL/Realtime 配置等项目写入必须遵守 shared-global/project advisory lock；raw SQL、clean restore、全量 metadata 和破坏性删除使用 exclusive-global
+  - 自定义旧规则必须阻断，匿名写权限不得自动映射到 scoped role；Action、Remote Schema、inherited role 等顶层 actor 绑定也不得被预检忽略
+  - apply/rollback 失败必须恢复并验证持久化 source/applied snapshot，无法验证时保留 recovery-required gate
 - 涉及 Functions invoke 时，优先检查：
   - `functions.controller.ts`
   - `functions.service.ts`

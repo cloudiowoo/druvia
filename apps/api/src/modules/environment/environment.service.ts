@@ -3,6 +3,7 @@ import { pool } from '../../db/index.js';
 import { trackTableInHasura } from '../table/table.service.js';
 import { hasuraMetadataRequest } from '../realtime/realtime.service.js';
 import format from 'pg-format';
+import { withProjectDataAccessMutationLock } from '../data-access/data-access-mutation-lock.js';
 
 export interface ProjectEnvironment {
   id: number;
@@ -262,6 +263,14 @@ export async function deleteEnvironment(projectId: string, envName: string): Pro
     throw new Error('Cannot delete production environment');
   }
 
+  return withProjectDataAccessMutationLock(
+    projectId,
+    () => deleteEnvironmentUnlocked(projectId, envName),
+    { globalMode: 'exclusive' }
+  );
+}
+
+export async function deleteEnvironmentUnlocked(projectId: string, envName: string): Promise<boolean> {
   const client = await pool.connect();
 
   try {

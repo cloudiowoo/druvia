@@ -12,6 +12,10 @@ import {
   runWithEnoentFallback,
   type CommandSpec,
 } from './backup-command.js';
+import {
+  withProjectDataAccessMutationLock,
+  withSchemaDataAccessMutationLock,
+} from '../data-access/data-access-mutation-lock.js';
 
 const logger = createApiLogger({ module: 'backup' });
 
@@ -286,6 +290,15 @@ export async function restoreBackup(backupId: string): Promise<void> {
     throw new Error('Backup is not completed');
   }
 
+  const restore = () => restoreBackupUnlocked(backup);
+  if (backup.projectId) {
+    await withProjectDataAccessMutationLock(backup.projectId, restore, { globalMode: 'exclusive' });
+  } else {
+    await withSchemaDataAccessMutationLock(backup.schemaName, () => restore(), { globalMode: 'exclusive' });
+  }
+}
+
+export async function restoreBackupUnlocked(backup: Backup): Promise<void> {
   // Download from storage
   const storage = getDefaultStorageAdapter();
   let data: Buffer;

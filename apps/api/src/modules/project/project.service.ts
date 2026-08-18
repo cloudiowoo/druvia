@@ -14,6 +14,7 @@ import { hasuraMetadataRequest } from '../realtime/realtime.service.js';
 import { validateAlias } from '../../lib/validation.js';
 import { createApiLogger } from '../../lib/logger.js';
 import { getDefaultStorageAdapter, type StorageAdapter } from '../../adapters/storage/index.js';
+import { withProjectDataAccessMutationLock } from '../data-access/data-access-mutation-lock.js';
 
 const logger = createApiLogger({ module: 'project' });
 
@@ -148,6 +149,14 @@ export async function updateProject(projectId: string, input: UpdateProjectInput
 }
 
 export async function deleteProject(projectId: string): Promise<boolean> {
+  return withProjectDataAccessMutationLock(
+    projectId,
+    () => deleteProjectUnlocked(projectId),
+    { globalMode: 'exclusive' }
+  );
+}
+
+export async function deleteProjectUnlocked(projectId: string): Promise<boolean> {
   // 获取项目信息
   const project = await getProjectById(projectId);
   if (!project) {

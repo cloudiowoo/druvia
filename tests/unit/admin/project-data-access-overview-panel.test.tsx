@@ -58,8 +58,8 @@ describe('ProjectDataAccessOverviewPanel', () => {
       />
     )
 
-    expect(screen.getByText('当前处于兼容模式，新数据访问配置尚未用于应用请求'))
-      .toBeInTheDocument()
+    expect(screen.queryByText('当前处于兼容模式，新数据访问配置尚未用于应用请求'))
+      .not.toBeInTheDocument()
     expect(screen.getByText('数据表总数')).toBeInTheDocument()
     expect(screen.getByText('已配置')).toBeInTheDocument()
     expect(screen.getAllByText('匿名已配置').length).toBeGreaterThan(0)

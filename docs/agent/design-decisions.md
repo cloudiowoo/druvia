@@ -123,7 +123,7 @@
   - 匿名客户端仅提供 select 开关，不生成匿名写权限
   - 只替换当前项目两个 scoped role 的权限；旧 `user / anonymous` 及其他 role 均保留
   - scoped role 中出现非精确受支持形态时按 custom 只读处理，不允许 UI 覆盖
-- Batch 2A 最初只完成 scoped permission 物化；Batch 3A/3B 已分别切换 explicit 项目的 HTTP 与 WebSocket actor，已有项目激活仍等待 Batch 4。
+- Batch 2A 最初只完成 scoped permission 物化；Batch 3A/3B 已分别切换 explicit 项目的 HTTP 与 WebSocket actor，Batch 4 已提供已有项目的受控激活路径。
 - 表级数据访问 Batch 2B 的项目概览固定为默认生产 schema 的只读治理视图：
   - API 用一次 PostgreSQL 清单查询和一次默认 source metadata 导出组成项目快照，不逐表调用管理接口
   - 清单读取不得创建 `_meta_tables`、追踪表或改写权限；辅助表不存在时 Realtime 默认按未启用展示
@@ -136,7 +136,7 @@
   - 公开项目 GraphQL 只接受同项目 `project_user` 或 `apikey`，拒绝 `platform_user`
   - `compatibility` 保留旧 `user` role；`explicit` 使用服务端生成的 scoped role/session variables
   - Admin Playground 与 SDK Database 不再把平台 session 用作应用 GraphQL 身份
-  - 已有项目没有手工切换入口，必须等待 Batch 4 的清单、备份、验证与回滚流程
+  - 已有项目禁止手工改字段，必须使用 Batch 4 的清单、确认、验证与回滚流程
 - Project Data Access Batch 3B 的 Realtime actor 边界：
   - Realtime 不直接复用长期 Project JWT/API key；Druvia API 验证同项目 actor 后签发短期 Hasura-verifiable token
   - compatibility Project User/API key 分别映射到旧 `user` / `anonymous` role；explicit actor 使用项目 scoped role
@@ -146,6 +146,17 @@
   - 非默认环境在具备不可变 environment identity 前不开放运行时 Realtime token
   - 令牌到期可阻止新连接并触发合作式 SDK 续期，但当前不保证恶意客户端的已建立 socket 在到期瞬间被 Hasura 强制关闭
   - compatibility 的全局 `user` / `anonymous` role 不提供 scoped-role 级跨项目隔离保证；Batch 4 激活并移除旧权限后才闭合该边界
+- Project Data Access Batch 4 的已有项目迁移边界：
+  - 迁移 `019_data_access_migrations` 保存项目级不可变 permission 快照、计划、阶段、恢复目标和 digest；包含 Batch 4 的 API 启动前必须先应用 `019`
+  - 只自动迁移精确匹配历史 Druvia 默认形态的规则；自定义、重复、跨项目或不支持对象一律阻断，不做模糊推断；顶层 Action、Remote Schema 和 inherited role 的 `role_name` / `role_set` 中出现迁移 actor role 也必须阻断
+  - source snapshot 保留 Hasura `columns: '*'`，不得为了摘要归一化改写成当前列数组；二者当下可分类为同一历史能力，但回滚后的未来新增列语义不同
+  - 已存在且可管理的 scoped 规则优先；旧规则推断必须逐表复核，用户可选择迁移后保持关闭
+  - 匿名 insert/update/delete 不迁移，认证 select aggregate 能力会移除；两者都属于需独立确认的风险收紧
+  - apply/recovery/rollback 与相关 DDL、Realtime 配置、raw SQL、clean restore、项目/环境删除共享 PostgreSQL advisory-lock 协议；状态推进使用带期望状态的单条原子更新，不在 Hasura/WebSocket 调用期间持有数据库事务；直接 SQL/Hasura Console 仍需运维静默窗口
+  - Hasura v2.48 不支持 permission command 的 `bulk_atomic` 时，只对该明确错误回退到 `bulk`；回退本身非事务，安全边界依赖持久阶段、重新导出验证和 source/applied 快照恢复
+  - apply 失败恢复 source snapshot/compatibility，rollback 失败恢复 applied snapshot/explicit；无法验证时持久化 recovery target，禁止继续受影响的管理写入和删除
+  - Admin 只展示业务化摘要、确认、进度和恢复入口，不暴露物理 role、原始 metadata 或 Hasura secret
+  - `019` 为增量恢复依据，镜像/OTA 回滚不得自动 down；人工回滚旧权限可能重新引入匿名写入和兼容模式隔离风险
 - Batch 3A 只收敛公开 HTTP GraphQL。Functions internal GraphQL 的 admin-secret 执行和平台 SQL/管理接口的跨 schema 能力仍需独立安全审计。
 - Admin 默认使用“数据接口、数据访问、实时更新”等应用概念；Hasura role、metadata 和 secret 只属于高级诊断或服务端实现。
 - Druvia 管理端对列级 DDL 的正式策略是：

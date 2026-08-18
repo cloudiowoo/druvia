@@ -23,7 +23,7 @@
 
 - Project Data Access Batch 1 已建立安全 metadata 基线：表 tracking 不再自动生成宽泛 CRUD permissions，Realtime 开关不再修改 select permission，Admin 默认改用数据接口/实时更新语义展示就绪状态
 - 已引入版本化 data-scope role resolver 作为后续项目角色、环境作用域和 service principal 的内部扩展基础；现有项目尚未切换到 scoped role，需等待显式权限编辑和迁移批次
-- Project Data Access Batch 2A 已落地默认生产 schema 的表级访问配置：认证用户 CRUD 支持关闭/全部记录/仅自己的记录，匿名侧仅支持读取；保存只原子替换当前项目受管 scoped roles，保留旧角色和自定义规则，HTTP/WebSocket actor 尚未切换
+- Project Data Access Batch 2A 已落地默认生产 schema 的表级访问配置：认证用户 CRUD 支持关闭/全部记录/仅自己的记录，匿名侧仅支持读取；保存只批量替换当前项目受管 scoped roles，保留旧角色和自定义规则，HTTP/WebSocket actor 尚未切换。Hasura v2.48 不接受 permission command 的 `bulk_atomic` 时会精确回退到 `bulk`，并由迁移快照、差异恢复和验证闭环兜底
 - Project Data Access Batch 2B 已落地默认生产 schema 的只读项目概览：
   - 项目设置新增数据访问汇总、筛选和表级配置导航
   - API 以一次数据库清单读取和一次默认数据源快照统一判定连接、认证、匿名、Realtime、旧规则和需检查状态
@@ -43,6 +43,13 @@
   - Admin 使用内存应用凭证执行真实 token exchange/WebSocket 探测，非默认环境在 environment identity 就绪前保持不可用
   - Compose、环境示例和 release workflow 已统一 API/Hasura 签名密钥，并增加源契约与真实渲染门禁
   - 已用真实 Hasura 覆盖有效、篡改、过期、兼容匿名和 explicit 跨项目拒绝；已建立 socket 的强制到期断开仍不作保证
+- Project Data Access Batch 4 已完成已有项目迁移控制面：
+  - 迁移 `019` 持久化不可变权限快照、计划、阶段、digest 和恢复目标
+  - 仅精确历史规则可自动推断；自定义/重复/跨项目以及 Action/Remote Schema/inherited role 顶层绑定阻断，匿名写和认证 aggregate 收紧需要独立确认
+  - apply、恢复和 rollback 使用项目级状态机，并通过 metadata、HTTP introspection 和 Realtime acknowledgment 做只读验证
+  - 相关 DDL、权限、Realtime、raw SQL、clean restore 和删除路径接入 ordered advisory locks 与持久状态 gate
+  - Admin 数据访问页提供预检、逐表保持关闭、阶段进度、失败恢复和回滚预检，不暴露 Hasura 实现细节
+  - release workflow 已在镜像构建前加入 Batch 4 回归，tag 默认 manifest 要求 `018 -> 019`、备份和不可自动逆转；本地真实 PostgreSQL/Hasura apply/rollback/故障恢复已通过，真实发布和 OTA 演练按当前安排继续延期
 
 - API 已支持 `apikey` fallback 认证
 - Realtime 权限开始与表管理权限解耦
@@ -106,7 +113,7 @@
 
 ## Current Next Steps
 
-- 设计 Batch 4 已有项目迁移门禁：metadata 清单、备份、dry-run、正反向 actor 验证、激活与回滚，不直接暴露 `data_access_mode` 开关
+- 在后续实际 release/OTA 窗口验证迁移 `019` 的备份、部署顺序和生产恢复手册；当前不触发发布
 - 统一 project-user 在 GraphQL、Realtime、Storage、RPC 和 Functions 中的身份传播与审计
 - 修正 MCP Server 与 API 的认证头、路由身份和 scope 契约，并增加真实 API 契约测试
 - 继续完善 build、lint、核心测试和 manifest/digest 的自动化门禁；实际 `workflow_dispatch`、本地/生产 OTA、双 Registry、回滚和恢复演练暂不作为下一开发任务，待形成后续发布版本时统一安排

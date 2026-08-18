@@ -290,7 +290,7 @@ describe('Realtime access token against Hasura', () => {
     tenantId = tenant.tenantId
     projectA = await createProjectFixture(`a${suffix}`.slice(0, 16))
     projectB = await createProjectFixture(`b${suffix}`.slice(0, 16))
-  })
+  }, 30_000)
 
   afterAll(async () => {
     await Promise.all([...activeClients].map((client) => dispose(client)))
@@ -324,7 +324,7 @@ describe('Realtime access token against Hasura', () => {
     }
     if (tenantId) await pool.query('DELETE FROM druvia_tenants WHERE tenant_id = $1', [tenantId])
     if (userId) await pool.query('DELETE FROM druvia_users WHERE id = $1', [userId])
-  })
+  }, 30_000)
 
   it('acknowledges a valid token', async () => {
     const connection = openConnection(issueToken(projectA, projectUser(projectA.projectId), 'explicit'))

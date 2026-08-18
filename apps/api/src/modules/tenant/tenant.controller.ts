@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { JwtPayload } from '../../middleware/auth.js';
 import * as tenantService from './tenant.service.js';
 import type { CreateTenantInput, UpdateTenantInput } from '@druvia/shared';
+import { isDataAccessMigrationDeleteGuardError } from '../data-access/data-access-mutation-lock.js';
 
 interface TenantParams {
   tenantId: string;
@@ -115,14 +116,27 @@ export async function deleteTenant(
   request: FastifyRequest<{ Params: TenantParams }>,
   reply: FastifyReply
 ) {
-  const deleted = await tenantService.deleteTenant(request.params.tenantId);
-  if (!deleted) {
-    return reply.status(404).send({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Tenant not found' },
-    });
+  try {
+    const deleted = await tenantService.deleteTenant(request.params.tenantId);
+    if (!deleted) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Tenant not found' },
+      });
+    }
+    return reply.status(204).send();
+  } catch (error) {
+    if (isDataAccessMigrationDeleteGuardError(error)) {
+      return reply.status(409).send({
+        success: false,
+        error: {
+          code: 'DATA_ACCESS_MIGRATION_IN_PROGRESS',
+          message: 'A project data access migration must finish before deleting this workspace',
+        },
+      });
+    }
+    throw error;
   }
-  return reply.status(204).send();
 }
 
 export async function getTenantUsage(

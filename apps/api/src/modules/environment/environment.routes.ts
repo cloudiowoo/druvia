@@ -4,6 +4,7 @@ import { authenticate } from '../../middleware/auth.js';
 import type { JwtPayload } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import * as environmentService from './environment.service.js';
+import { DataAccessMutationLockedError } from '../data-access/data-access-mutation-lock.js';
 
 interface ProjectParams {
   projectId: string;
@@ -138,6 +139,12 @@ export async function environmentRoutes(app: FastifyInstance) {
         return reply.status(204).send();
       } catch (error) {
         request.log.error(error);
+        if (error instanceof DataAccessMutationLockedError) {
+          return reply.status(409).send({
+            success: false,
+            error: { code: error.code, message: 'Project data changes are temporarily locked' },
+          });
+        }
         if (error instanceof Error && error.message === 'Cannot delete production environment') {
           return reply.status(400).send({
             success: false,

@@ -2,6 +2,10 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as tableService from './table.service.js';
 import * as schemaService from '../schema/schema.service.js';
 import type { TableDefinition, ColumnDefinition, ForeignKeyDetail } from './table.service.js';
+import {
+  DataAccessMutationLockedError,
+  withSchemaDataAccessMutationLock,
+} from '../data-access/data-access-mutation-lock.js';
 
 interface SchemaParams {
   schemaName: string;
@@ -13,6 +17,14 @@ interface TableParams extends SchemaParams {
 
 interface ColumnParams extends TableParams {
   columnName: string;
+}
+
+function sendMutationLocked(reply: FastifyReply, error: unknown) {
+  if (!(error instanceof DataAccessMutationLockedError)) return null;
+  return reply.status(409).send({
+    success: false,
+    error: { code: error.code, message: 'Project data changes are temporarily locked' },
+  });
 }
 
 // Create table
@@ -31,10 +43,12 @@ export async function createTable(
   }
 
   try {
-    await tableService.createTable(schemaName, table);
+    await withSchemaDataAccessMutationLock(schemaName, () => tableService.createTable(schemaName, table));
     const metadata = await tableService.getTableMetadata(schemaName, table.name);
     return reply.status(201).send({ success: true, data: metadata });
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,
@@ -51,9 +65,15 @@ export async function dropTable(
   const { schemaName, tableName } = request.params;
 
   try {
-    await tableService.dropTable(schemaName, tableName);
+    await withSchemaDataAccessMutationLock(
+      schemaName,
+      () => tableService.dropTable(schemaName, tableName),
+      { globalMode: 'exclusive' }
+    );
     return reply.status(204).send();
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,
@@ -116,10 +136,12 @@ export async function addColumn(
   }
 
   try {
-    await tableService.addColumn(schemaName, tableName, column);
+    await withSchemaDataAccessMutationLock(schemaName, () => tableService.addColumn(schemaName, tableName, column));
     const metadata = await tableService.getTableMetadata(schemaName, tableName);
     return reply.send({ success: true, data: metadata });
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,
@@ -136,10 +158,12 @@ export async function dropColumn(
   const { schemaName, tableName, columnName } = request.params;
 
   try {
-    await tableService.dropColumn(schemaName, tableName, columnName);
+    await withSchemaDataAccessMutationLock(schemaName, () => tableService.dropColumn(schemaName, tableName, columnName));
     const metadata = await tableService.getTableMetadata(schemaName, tableName);
     return reply.send({ success: true, data: metadata });
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,
@@ -164,10 +188,14 @@ export async function renameColumn(
   }
 
   try {
-    await tableService.renameColumn(schemaName, tableName, columnName, newName);
+    await withSchemaDataAccessMutationLock(schemaName, () => (
+      tableService.renameColumn(schemaName, tableName, columnName, newName)
+    ));
     const metadata = await tableService.getTableMetadata(schemaName, tableName);
     return reply.send({ success: true, data: metadata });
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,
@@ -184,9 +212,15 @@ export async function syncMetadata(
   const { schemaName } = request.params;
 
   try {
-    await tableService.syncTableMetadata(schemaName);
+    await withSchemaDataAccessMutationLock(
+      schemaName,
+      () => tableService.syncTableMetadata(schemaName),
+      { globalMode: 'exclusive' }
+    );
     return reply.send({ success: true, message: 'Metadata synced successfully' });
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,
@@ -311,9 +345,14 @@ export async function addForeignKey(
   }
 
   try {
-    const constraintName = await tableService.addForeignKey(schemaName, tableName, body);
+    const constraintName = await withSchemaDataAccessMutationLock(
+      schemaName,
+      () => tableService.addForeignKey(schemaName, tableName, body)
+    );
     return reply.status(201).send({ success: true, data: { constraintName } });
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,
@@ -330,9 +369,13 @@ export async function dropForeignKey(
   const { schemaName, tableName, constraintName } = request.params;
 
   try {
-    await tableService.dropForeignKey(schemaName, tableName, constraintName);
+    await withSchemaDataAccessMutationLock(schemaName, () => (
+      tableService.dropForeignKey(schemaName, tableName, constraintName)
+    ));
     return reply.send({ success: true });
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,
@@ -349,13 +392,19 @@ export async function trackAllTablesInHasura(
   const { schemaName } = request.params;
 
   try {
-    const result = await tableService.trackAllTablesInHasura(schemaName);
+    const result = await withSchemaDataAccessMutationLock(
+      schemaName,
+      () => tableService.trackAllTablesInHasura(schemaName),
+      { globalMode: 'exclusive' }
+    );
     return reply.send({
       success: true,
       data: result,
       message: `Tracked ${result.tracked.length} tables, ${result.failed.length} failed`,
     });
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,
@@ -391,7 +440,10 @@ export async function trackTableInHasura(
   const { schemaName, tableName } = request.params;
 
   try {
-    const tracked = await tableService.trackTableInHasura(schemaName, tableName);
+    const tracked = await withSchemaDataAccessMutationLock(
+      schemaName,
+      () => tableService.trackTableInHasura(schemaName, tableName)
+    );
     if (!tracked) {
       return reply.status(502).send({
         success: false,
@@ -406,6 +458,8 @@ export async function trackTableInHasura(
       message: `Table ${tableName} tracked in Hasura`,
     });
   } catch (error) {
+    const locked = sendMutationLocked(reply, error);
+    if (locked) return locked;
     const err = error as Error;
     return reply.status(400).send({
       success: false,

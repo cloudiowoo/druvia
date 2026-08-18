@@ -2,7 +2,7 @@
 
 Date: 2026-08-17
 
-Status: Approved for phased implementation
+Status: Approved; Batches 1-4 implemented for the default project schema
 
 ## 1. Goal
 
@@ -228,11 +228,11 @@ Implementation status:
 - anonymous access is select-only in the simplified editor;
 - only the two project-scoped managed roles are replaced atomically; legacy roles are preserved;
 - unsupported custom metadata on a managed scoped role is read-only and blocks replacement;
-- materialized scoped permissions are selected by HTTP actors for explicit projects after Batch 3A; WebSocket actors are still pending Batch 3B;
+- materialized scoped permissions are selected by HTTP actors for explicit projects after Batch 3A and by WebSocket actors after Batch 3B;
 - Batch 2B project overview is implemented for the default production schema;
 - the overview uses one side-effect-free PostgreSQL inventory and one default-source metadata export, reports actor-specific custom states, and exposes no physical role names;
 - Admin provides read-only summary/filter/navigation under project settings, with explicit `scope=default` navigation back to table editing;
-- Batch 2B originally reported `compatibility`; Batch 3A now reports the persisted project runtime mode, while legacy migration preview remains Batch 4.
+- Batch 2B originally reported `compatibility`; Batch 3A now reports the persisted project runtime mode, and Batch 4 provides legacy migration preview and activation.
 
 ### Batch 3: Actor Cutover
 
@@ -242,19 +242,20 @@ Batch 3A HTTP implementation is complete:
 - the HTTP proxy accepts only same-project `project_user` and `apikey` identities and derives all Hasura roles/session variables server-side;
 - platform JWTs and client-supplied Hasura headers are rejected or ignored at the application GraphQL boundary;
 - SDK Database and Admin Playground use application credentials only and never fall back to the platform session;
-- existing-project activation remains unavailable until the Batch 4 migration gate exists.
+- existing-project activation is available only through the Batch 4 migration gate.
 
-Batch 3B remains pending:
+Batch 3B implementation is complete:
 
 - Project JWT/API-key exchange for a short-lived Hasura-verifiable Realtime token;
 - SDK authenticated and anonymous WebSocket connection, refresh and reconnect behavior.
 
 ### Batch 4: Legacy Migration And Production Gate
 
-- metadata inventory, backup, dry-run, apply and rollback;
-- cross-actor and cross-project negative tests;
-- existing-project migration rehearsal;
-- release and OTA compatibility checks.
+Batch 4 implementation is complete. Migration `019_data_access_migrations`, guarded preview/apply/recovery/rollback APIs, adjacent management-write locks, read-only Hasura HTTP/WebSocket verification, and the business-facing Admin workflow are implemented. Deployment and recovery details live in `docs/004-project-data-access-migration-guide.md`; actual release/OTA rehearsal remains deferred.
+
+- delivered: metadata inventory, persisted preview, apply, recovery, rollback, cross-actor verification, unit regressions and release build gates;
+- operator prerequisite: full database/metadata backup before migration or manual remediation;
+- deferred: actual release publication, OTA compatibility rehearsal and production migration exercise.
 
 Storage, RPC and Functions actor propagation remains part of the wider Phase A exit and must be verified after the GraphQL/Realtime actor cutover.
 

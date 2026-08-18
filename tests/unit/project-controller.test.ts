@@ -12,6 +12,7 @@ vi.mock('../../apps/api/src/lib/access.js', () => ({
 import * as projectController from '../../apps/api/src/modules/project/project.controller.js'
 import * as projectService from '../../apps/api/src/modules/project/project.service.js'
 import * as access from '../../apps/api/src/lib/access.js'
+import { DataAccessMutationLockedError } from '../../apps/api/src/modules/data-access/data-access-mutation-lock.js'
 
 type ReplyStub = {
   status: ReturnType<typeof vi.fn>
@@ -119,5 +120,35 @@ describe('Project Controller', () => {
     expect(access.checkProjectAccess).toHaveBeenCalledWith('usr_owner', 'proj_123')
     expect(projectService.deleteProject).toHaveBeenCalledWith('proj_123')
     expect(reply.status).toHaveBeenCalledWith(204)
+  })
+
+  it.each([
+    new DataAccessMutationLockedError('busy'),
+    { code: '55006', constraint: 'druvia_data_access_migrations_inflight_delete_guard' },
+  ])('maps migration deletion guards to a stable conflict', async (failure) => {
+    vi.mocked(access.checkProjectAccess).mockResolvedValue(true)
+    vi.mocked(projectService.deleteProject).mockRejectedValue(failure)
+    const reply = createReply()
+
+    await projectController.deleteProject({
+      params: { projectId: 'proj_123' },
+      user: { kind: 'platform_user', userId: 'usr_owner', uid: 1, role: 'admin' },
+    } as never, reply as never)
+
+    expect(reply.status).toHaveBeenCalledWith(409)
+    expect(reply.payload).toEqual(expect.objectContaining({
+      error: expect.objectContaining({ code: 'DATA_ACCESS_MIGRATION_IN_PROGRESS' }),
+    }))
+  })
+
+  it('rethrows unrelated project deletion failures', async () => {
+    vi.mocked(access.checkProjectAccess).mockResolvedValue(true)
+    const failure = new Error('storage unavailable')
+    vi.mocked(projectService.deleteProject).mockRejectedValue(failure)
+
+    await expect(projectController.deleteProject({
+      params: { projectId: 'proj_123' },
+      user: { kind: 'platform_user', userId: 'usr_owner', uid: 1, role: 'admin' },
+    } as never, createReply() as never)).rejects.toBe(failure)
   })
 })

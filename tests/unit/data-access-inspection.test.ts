@@ -45,6 +45,30 @@ describe('data access metadata inspection', () => {
     })
   })
 
+  it('accepts Hasura wildcard columns for managed select permissions', () => {
+    const result = inspectTableDataAccessMetadata({
+      table: { schema: 'dru_test', name: 'orders' },
+      select_permissions: [
+        {
+          role: roles.authenticated,
+          permission: {
+            columns: '*',
+            filter: { owner_id: { _eq: 'X-Hasura-User-Id' } },
+          },
+        },
+        {
+          role: roles.anonymous,
+          permission: { columns: '*', filter: {} },
+        },
+      ],
+    }, roles, columns)
+
+    expect(result.authenticatedState).toBe('managed')
+    expect(result.anonymousState).toBe('managed')
+    expect(result.policy.authenticated).toMatchObject({ select: 'owner', ownerColumn: 'owner_id' })
+    expect(result.policy.anonymous.select).toBe(true)
+  })
+
   it('marks anonymous writes custom without changing authenticated state', () => {
     const result = inspectTableDataAccessMetadata({
       table: { schema: 'dru_test', name: 'orders' },

@@ -16,6 +16,8 @@ import {
   getDataAccessInventory,
 } from './data-access-inventory.js'
 import { buildProjectDataAccessOverview } from './data-access-overview.js'
+import { withProjectDataAccessMutationLock } from './data-access-mutation-lock.js'
+import { applyHasuraMetadataCommands } from './hasura-metadata-bulk.js'
 import type {
   DataAccessRoleNames,
   ProjectDataAccessOverview,
@@ -95,6 +97,16 @@ export async function updateTableDataAccess(
   tableName: string,
   input: TableDataAccessInput
 ): Promise<TableDataAccessState> {
+  return withProjectDataAccessMutationLock(projectId, () => (
+    updateTableDataAccessUnlocked(projectId, tableName, input)
+  ))
+}
+
+export async function updateTableDataAccessUnlocked(
+  projectId: string,
+  tableName: string,
+  input: TableDataAccessInput
+): Promise<TableDataAccessState> {
   const context = await loadDataAccessContext(projectId, tableName)
   const inspected = inspectContext(context)
   if (
@@ -139,7 +151,7 @@ export async function updateTableDataAccess(
 
   if (commands.length > 0) {
     try {
-      await hasuraMetadataRequest('bulk_atomic', commands as never)
+      await applyHasuraMetadataCommands(commands)
     } catch (error) {
       throw new DataAccessUpstreamError(
         error instanceof Error ? error.message : 'Unable to update data access metadata'

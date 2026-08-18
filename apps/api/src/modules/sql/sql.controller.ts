@@ -2,6 +2,10 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as sqlService from './sql.service.js';
 import * as projectService from '../project/project.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
+import {
+  DataAccessMutationLockedError,
+  withProjectDataAccessMutationLock,
+} from '../data-access/data-access-mutation-lock.js';
 
 interface ProjectParams {
   projectId: string;
@@ -129,7 +133,11 @@ export async function importSql(
 
       const buffer = await data.toBuffer();
       const sqlContent = buffer.toString('utf-8');
-      const result = await sqlService.importSql(schemaName, sqlContent);
+      const result = await withProjectDataAccessMutationLock(
+        request.params.projectId,
+        () => sqlService.importSql(schemaName, sqlContent),
+        { globalMode: 'exclusive' }
+      );
 
       return reply.send({
         success: result.errors.length === 0,
@@ -145,12 +153,20 @@ export async function importSql(
         });
       }
 
-      const result = await sqlService.importSql(schemaName, body.sql, {
-        atomic: body.atomic ?? false,
-      });
+      const result = await withProjectDataAccessMutationLock(
+        request.params.projectId,
+        () => sqlService.importSql(schemaName, body.sql!, { atomic: body.atomic ?? false }),
+        { globalMode: 'exclusive' }
+      );
       return reply.send({ success: result.errors.length === 0, data: result });
     }
   } catch (error) {
+    if (error instanceof DataAccessMutationLockedError) {
+      return reply.status(409).send({
+        success: false,
+        error: { code: error.code, message: 'Project data changes are temporarily locked' },
+      });
+    }
     const err = error as Error;
     return reply.status(500).send({
       success: false,

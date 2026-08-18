@@ -16,6 +16,8 @@ export interface RealtimeTokenResult {
   websocketUrl: string
 }
 
+export type InternalRealtimeTokenResult = Omit<RealtimeTokenResult, 'websocketUrl'>
+
 export class RealtimeTokenUnavailableError extends Error {
   readonly code = 'REALTIME_TOKEN_UNAVAILABLE'
 
@@ -90,17 +92,26 @@ export function issueRealtimeAccessToken(input: {
   now?: Date
   operationId?: string
 }): RealtimeTokenResult {
-  const now = input.now ?? new Date()
-  const issuedAt = Math.floor(now.getTime() / 1000)
-  const expiresIn = config.realtime.tokenTtlSeconds
-  const expiresAtSeconds = issuedAt + expiresIn
-  const operationId = input.operationId ?? randomUUID()
   const websocketUrl = derivePublicRealtimeUrl({
     hasuraPublicUrl: config.realtime.hasuraPublicUrl,
     apiBaseUrl: config.realtime.apiBaseUrl,
     nodeEnv: config.nodeEnv,
     hasuraEndpoint: config.hasura.endpoint,
   })
+  return { ...issueInternalRealtimeAccessToken(input), websocketUrl }
+}
+
+export function issueInternalRealtimeAccessToken(input: {
+  projectId: string
+  context: RealtimeExecutionContext
+  now?: Date
+  operationId?: string
+}): InternalRealtimeTokenResult {
+  const now = input.now ?? new Date()
+  const issuedAt = Math.floor(now.getTime() / 1000)
+  const expiresIn = config.realtime.tokenTtlSeconds
+  const expiresAtSeconds = issuedAt + expiresIn
+  const operationId = input.operationId ?? randomUUID()
   const token = jwt.sign({
     sub: input.context.subject,
     iat: issuedAt,
@@ -125,6 +136,5 @@ export function issueRealtimeAccessToken(input: {
     operationId,
     expiresIn,
     expiresAt: new Date(expiresAtSeconds * 1000).toISOString(),
-    websocketUrl,
   }
 }

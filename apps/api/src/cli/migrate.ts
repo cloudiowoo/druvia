@@ -192,6 +192,7 @@ async function bootstrap(): Promise<void> {
     // 010 通过数据行检查，见下方 dataChecks
     11: 'druvia_api_keys',
     12: 'druvia_project_environments',
+    19: 'druvia_data_access_migrations',
   };
 
   // 纯数据迁移：通过查询数据行判断是否已应用

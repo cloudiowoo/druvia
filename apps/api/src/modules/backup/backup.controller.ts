@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { JwtPayload } from '../../middleware/auth.js';
 import * as backupService from './backup.service.js';
+import { DataAccessMutationLockedError } from '../data-access/data-access-mutation-lock.js';
 
 interface TenantParams {
   tenantId: string;
@@ -107,6 +108,12 @@ export async function restoreBackup(
     await backupService.restoreBackup(request.params.backupId);
     return reply.send({ success: true, message: 'Restore initiated successfully' });
   } catch (error) {
+    if (error instanceof DataAccessMutationLockedError) {
+      return reply.status(409).send({
+        success: false,
+        error: { code: error.code, message: 'Project data changes are temporarily locked' },
+      });
+    }
     const err = error as Error;
     return reply.status(400).send({
       success: false,

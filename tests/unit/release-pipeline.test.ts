@@ -99,6 +99,13 @@ describe('release workflow', () => {
     expect(workflow).toContain('tests/unit/realtime-compose-config.test.ts');
   });
 
+  it('gates image publication on both managed and legacy data access classifiers', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+
+    expect(workflow).toContain('tests/unit/data-access-inspection.test.ts');
+    expect(workflow).toContain('tests/unit/data-access-migration-inspection.test.ts');
+  });
+
   it('builds release images for GHCR and the self-hosted registry with separate OTA manifests', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
@@ -127,5 +134,18 @@ describe('release workflow', () => {
     expect(workflow).toContain('release-manifest.json');
     expect(workflow).toContain('release-manifest.cn.json');
     expect(workflow).toContain('docker/docker-compose.release.yml');
+  });
+
+  it('marks migration 019 as the safe default for tag and manual releases', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+
+    expect(workflow).toContain("migration_required:\n        description: Whether this release requires database migrations\n        required: true\n        default: 'true'");
+    expect(workflow).toContain("migration_from:\n        description: Current migration floor\n        required: true\n        default: '18'");
+    expect(workflow).toContain("migration_to:\n        description: Target migration ceiling\n        required: true\n        default: '19'");
+    expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: \$\{\{ inputs\.migration_required \|\| 'true' \}\}/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_FROM: \$\{\{ inputs\.migration_from \|\| '18' \}\}/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: \$\{\{ inputs\.migration_to \|\| '19' \}\}/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_REQUIRES_BACKUP: \$\{\{ inputs\.migration_requires_backup \|\| 'true' \}\}/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_REVERSIBLE: \$\{\{ inputs\.migration_reversible \|\| 'false' \}\}/g)).toHaveLength(2);
   });
 });

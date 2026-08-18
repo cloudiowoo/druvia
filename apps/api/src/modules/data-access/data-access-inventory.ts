@@ -42,7 +42,7 @@ export async function getDataAccessInventory(
 
   const rows = await query<InventoryRow>(
     `SELECT t.table_name,
-            array_agg(c.column_name ORDER BY c.ordinal_position) AS columns,
+            array_agg(c.column_name::text ORDER BY c.ordinal_position) AS columns,
             ${realtimeExpression} AS realtime_enabled
      FROM information_schema.tables t
      JOIN information_schema.columns c

@@ -34,11 +34,16 @@ vi.mock('../../apps/api/src/lib/logger.js', () => ({
   })),
 }))
 
+vi.mock('../../apps/api/src/modules/data-access/data-access-mutation-lock.js', () => ({
+  withProjectDataAccessMutationLock: vi.fn(async (_projectId, callback) => callback()),
+}))
+
 import { query, queryOne } from '../../apps/api/src/db/index.js'
 import * as schemaService from '../../apps/api/src/modules/schema/schema.service.js'
 import * as environmentService from '../../apps/api/src/modules/environment/environment.service.js'
 import * as dbCredentialsService from '../../apps/api/src/modules/project/db-credentials.service.js'
 import { getDefaultStorageAdapter } from '../../apps/api/src/adapters/storage/index.js'
+import * as mutationLock from '../../apps/api/src/modules/data-access/data-access-mutation-lock.js'
 import {
   createProject,
   deleteProject,
@@ -188,6 +193,20 @@ describe('Project Service', () => {
     )
   })
 
+  it('checks the exclusive migration lock before loading destructive cleanup state', async () => {
+    const failure = new Error('migration active')
+    vi.mocked(mutationLock.withProjectDataAccessMutationLock).mockRejectedValueOnce(failure)
+
+    await expect(deleteProject('proj_123')).rejects.toBe(failure)
+
+    expect(mutationLock.withProjectDataAccessMutationLock).toHaveBeenCalledWith(
+      'proj_123', expect.any(Function), { globalMode: 'exclusive' }
+    )
+    expect(mockQueryOne).not.toHaveBeenCalled()
+    expect(mockDropProjectDbUser).not.toHaveBeenCalled()
+    expect(mockDropSchema).not.toHaveBeenCalled()
+  })
+
   it('cleans physical artifacts only after schema and db user cleanup succeeds', async () => {
     const storage = {
       name: 'local',
@@ -231,6 +250,9 @@ describe('Project Service', () => {
     const deleted = await deleteProject('proj_123')
 
     expect(deleted).toBe(true)
+    expect(mutationLock.withProjectDataAccessMutationLock).toHaveBeenCalledWith(
+      'proj_123', expect.any(Function), { globalMode: 'exclusive' }
+    )
     expect(mockDropProjectDbUser.mock.invocationCallOrder[0]).toBeLessThan(mockDropSchema.mock.invocationCallOrder[0])
     expect(mockDropSchema).toHaveBeenCalledWith('dru_demo_dev')
     expect(mockDropSchema).toHaveBeenCalledWith('dru_demo')

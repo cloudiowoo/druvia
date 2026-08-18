@@ -23,6 +23,7 @@
 - GraphQL Playground 是应用权限测试入口，只能使用组件内存中的项目 API Key 或 Project access token；不得读取平台登录 token、持久化测试凭证或直连 Hasura `/v1/graphql`。
 - Realtime 连接测试同样只使用组件内存中的项目 API Key 或 Project access token，经 Druvia API 换取短期令牌后连接 Hasura；不得使用平台 token、持久化应用凭证或模拟连接成功。
 - 非默认环境在缺少不可变 environment identity 前只能显示运行时不可用，不得让用户误以为 dev/test 环境已具备隔离的 Realtime actor。
+- 已有项目数据访问升级必须通过预检、独立风险确认、持久阶段进度、恢复和回滚预检完成；界面不得提供直接切换 `data_access_mode`，也不得展示物理 role、原始 metadata 或 Hasura secret。
 
 ## 近期风险
 

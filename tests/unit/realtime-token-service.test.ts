@@ -5,6 +5,7 @@ import {
   RealtimeTokenUnavailableError,
   derivePublicRealtimeUrl,
   issueRealtimeAccessToken,
+  issueInternalRealtimeAccessToken,
 } from '../../apps/api/src/modules/realtime/realtime-token.service.js'
 
 const originalRealtime = { ...config.realtime }
@@ -108,6 +109,27 @@ describe('public Realtime URL', () => {
 })
 
 describe('Realtime access token issuer', () => {
+  it('issues an internal verifier token without requiring a public URL', () => {
+    Object.assign(config.realtime, {
+      tokenSecret: 'h'.repeat(32),
+      tokenSecretSource: 'HASURA_JWT_SECRET',
+      tokenTtlSeconds: 60,
+      hasuraPublicUrl: '',
+      apiBaseUrl: '',
+    })
+    config.nodeEnv = 'production'
+
+    const result = issueInternalRealtimeAccessToken({
+      projectId: 'proj_123',
+      context: {
+        role: 'project_user', actorType: 'project_user', subject: 'usr_1', sessionVariables: {},
+      },
+    })
+
+    expect(result.token).toBeTruthy()
+    expect(result).not.toHaveProperty('websocketUrl')
+  })
+
   it('signs a short-lived project-user token with server-derived Hasura claims', () => {
     Object.assign(config.realtime, {
       tokenSecret: 'h'.repeat(32),

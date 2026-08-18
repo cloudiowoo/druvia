@@ -15,6 +15,10 @@ import {
   issueRealtimeAccessToken,
   RealtimeTokenUnavailableError,
 } from './realtime-token.service.js';
+import {
+  DataAccessMutationLockedError,
+  withProjectDataAccessMutationLock,
+} from '../data-access/data-access-mutation-lock.js';
 
 const logger = createApiLogger({ module: 'realtime' });
 
@@ -284,18 +288,24 @@ export async function configureSubscription(
   }
 
   try {
-    const subscription = await realtimeService.configureTableSubscription(
-      target.schemaName,
-      tableName,
-      enabled,
-      target.runtimeScope,
+    const configure = () => realtimeService.configureTableSubscription(
+      target.schemaName, tableName, enabled, target.runtimeScope,
     );
+    const subscription = !envName || envName === 'prod'
+      ? await withProjectDataAccessMutationLock(projectId, configure)
+      : await configure();
 
     return reply.send({
       success: true,
       data: subscription,
     });
   } catch (error) {
+    if (error instanceof DataAccessMutationLockedError) {
+      return reply.status(409).send({
+        success: false,
+        error: { code: error.code, message: 'Project data changes are temporarily locked' },
+      });
+    }
     const message = error instanceof Error ? error.message : 'Unknown error';
     return reply.status(500).send({
       success: false,

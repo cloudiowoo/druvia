@@ -171,6 +171,26 @@ describe('API app data access routes', () => {
       await app.close()
     }
   })
+
+  it('registers all guarded project data access migration routes', async () => {
+    const app = buildApp()
+
+    try {
+      const requests = [
+        { method: 'GET', url: '/api/v1/projects/proj_123/data-access/migration' },
+        { method: 'POST', url: '/api/v1/projects/proj_123/data-access/migration/preview', payload: {} },
+        { method: 'POST', url: '/api/v1/projects/proj_123/data-access/migration/mig_123/apply', payload: {} },
+        { method: 'POST', url: '/api/v1/projects/proj_123/data-access/migration/mig_123/recover', payload: {} },
+        { method: 'POST', url: '/api/v1/projects/proj_123/data-access/migration/mig_123/rollback-preview', payload: {} },
+        { method: 'POST', url: '/api/v1/projects/proj_123/data-access/migration/mig_123/rollback', payload: {} },
+      ] as const
+      const responses = await Promise.all(requests.map((request) => app.inject(request)))
+
+      expect(responses.map((response) => response.statusCode)).toEqual([401, 401, 401, 401, 401, 401])
+    } finally {
+      await app.close()
+    }
+  })
 })
 
 describe('API app Realtime token route', () => {
