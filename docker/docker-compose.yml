@@ -51,7 +51,7 @@ services:
       HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD_ENCODED}@postgres:5432/druvia
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_ADMIN_SECRET}
-      HASURA_GRAPHQL_JWT_SECRET: '{"type":"HS256","key":"${JWT_SECRET}"}'
+      HASURA_GRAPHQL_JWT_SECRET: '{"type":"HS256","key":"${HASURA_JWT_SECRET:-${JWT_SECRET}}","issuer":"druvia","audience":"druvia-hasura"}'
       HASURA_GRAPHQL_UNAUTHORIZED_ROLE: anonymous
       HASURA_GRAPHQL_CORS_DOMAIN: "*"
       HASURA_GRAPHQL_ENABLE_TELEMETRY: "false"

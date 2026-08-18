@@ -76,6 +76,29 @@ describe('release manifest generator', () => {
 });
 
 describe('release workflow', () => {
+  it('gates image publication on Realtime tests, SDK build and rendered Compose contracts', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+    const setupPnpm = workflow.indexOf('name: Setup pnpm');
+    const setupNode = workflow.indexOf('name: Setup Node.js');
+    const install = workflow.indexOf('pnpm install --frozen-lockfile');
+    const realtimeTests = workflow.indexOf('name: Verify Realtime behavior');
+    const sdkBuild = workflow.indexOf('pnpm --filter @druvia/sdk build');
+    const composeGate = workflow.indexOf('node scripts/release/verify-realtime-compose.mjs');
+    const firstImageBuild = workflow.indexOf('uses: docker/build-push-action');
+
+    expect(setupPnpm).toBeGreaterThan(0);
+    expect(setupNode).toBeGreaterThan(setupPnpm);
+    expect(install).toBeGreaterThan(setupNode);
+    expect(realtimeTests).toBeGreaterThan(install);
+    expect(sdkBuild).toBeGreaterThan(realtimeTests);
+    expect(composeGate).toBeGreaterThan(sdkBuild);
+    expect(firstImageBuild).toBeGreaterThan(composeGate);
+    expect(workflow).toContain('tests/unit/realtime-token-service.test.ts');
+    expect(workflow).toContain('tests/sdk/realtime.test.ts');
+    expect(workflow).toContain('tests/unit/admin/realtime-page.test.tsx');
+    expect(workflow).toContain('tests/unit/realtime-compose-config.test.ts');
+  });
+
   it('builds release images for GHCR and the self-hosted registry with separate OTA manifests', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 

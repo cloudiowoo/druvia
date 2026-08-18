@@ -26,6 +26,9 @@ importers:
       fastify:
         specifier: ^5.2.0
         version: 5.7.4
+      graphql-ws:
+        specifier: ^6.0.7
+        version: 6.0.7(graphql@16.13.1)(ws@8.20.0)
       jsdom:
         specifier: ^26.1.0
         version: 26.1.0

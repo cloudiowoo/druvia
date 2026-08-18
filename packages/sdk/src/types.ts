@@ -20,6 +20,22 @@ export interface WebSocketLike {
 
 export type WebSocketFactory = (url: string, protocols?: string[]) => WebSocketLike
 
+export type RealtimeChannelStatus =
+  | 'CONNECTING'
+  | 'SUBSCRIBED'
+  | 'RECONNECTING'
+  | 'CHANNEL_ERROR'
+  | 'CLOSED'
+
+export type RealtimeChannelStatusCallback = (
+  status: RealtimeChannelStatus,
+  error?: DruviaError
+) => void
+
+export interface RealtimeSubscription {
+  unsubscribe: () => void
+}
+
 export interface DruviaClientOptions {
   projectId: string
   schema?: string

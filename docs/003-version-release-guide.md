@@ -146,6 +146,23 @@ cd docker && docker compose -f docker-compose.prod.yml up -d --build
 
 OTA 仍使用既有 updater 流程，但 release manifest 对应的 API 镜像不能在迁移 `018` 未完成时创建新项目。
 
+#### Batch 3B / Realtime 短期令牌部署门禁
+
+包含 Realtime token exchange 的版本按以下顺序发布：
+
+1. 盘点仍将平台 JWT 或自定义 JWT 直接发送到 Hasura 的客户端，特别标记缺少 `iss=druvia`、`aud=druvia-hasura` 的 token。
+2. 在目标主机 `.env.prod` 配置独立、至少 32 字符的 `HASURA_JWT_SECRET`；API 签发和 Hasura 验签必须使用同一值。
+3. 在 `.env.prod` 配置浏览器可达的 `HASURA_PUBLIC_URL`；同源部署可与必填的 `API_BASE_URL` 使用相同站点 origin，不能使用 `http://hasura:8080` 或 API 容器内地址。
+4. 执行 `node scripts/release/verify-realtime-compose.mjs`，并用目标环境文件运行 `docker compose ... config`，确认 API/Hasura 使用同一有效密钥和正确公网 origin。
+5. 由签名 release manifest 暂存并替换 `docker-compose.release.yml`，再重建 Hasura 和 API，使 verifier 的 issuer/audience 与 API 签发契约同时生效。
+6. 部署 Admin 和 SDK consumers，确保 SDK 通过 Druvia API token exchange 建连，不直传长期凭证。
+7. 分别以 compatibility API Key、explicit API Key 和 explicit Project Session 建立订阅；explicit 项目还必须验证跨项目表读取被拒绝。
+8. 回滚旧客户端或旧 API 时，如其自定义 JWT 依赖旧 Hasura verifier JSON，必须同时恢复上一版 verifier 配置并重建 Hasura。
+
+`HASURA_JWT_SECRET`、`HASURA_REALTIME_TOKEN_TTL_SECONDS` 和 `HASURA_PUBLIC_URL` 属于目标主机的持久部署配置，应保存在 `.env.prod`。OTA 会替换 release Compose，并只把 image/version 等发布值合并到 `.env.release`；不要依赖一次性 shell 变量保存这些值。本地 release OTA 演练例外：应在未跟踪的 `.env.release` 持久写入 `HASURA_PUBLIC_URL=http://localhost:8088`。
+
+暂时不配置 `HASURA_JWT_SECRET` 时，API/Hasura 可以共同回退到 `JWT_SECRET`，API 会输出迁移警告。该回退只复用签名材料，不会让缺少新 issuer/audience 的旧直连 JWT 在 verifier 切换后继续有效；自动保留的兼容路径只有无 token 的 Hasura `anonymous` 连接。compatibility 的全局 `user` / `anonymous` permissions 仍是 Batch 4 迁移债务，不能作为跨项目隔离保证。
+
 ### 场景 E：生产环境回滚
 
 ```bash
@@ -230,4 +247,4 @@ pnpm migrate up
 
 ---
 
-*Last Updated: 2026-08-17*
+*Last Updated: 2026-08-18*

@@ -22,7 +22,10 @@
   - 无 Project Session 时只发送项目 API key
   - 禁止回退 platform token
 - `rpc/functions` 当前仍保留原有 project token -> platform token 回退，后续 actor cutover 前不要随 database 改动连带收紧。
-- Realtime 建连必须通过 Druvia API 换取短期 Hasura-verifiable token；不能把长期 Project JWT 直接发送给 Hasura，也不能把空 `connection_init` 当作支持完成。
+- Realtime 建连必须通过 Druvia API 换取短期 Hasura-verifiable token；不能把长期 Project JWT/API key 直接发送给 Hasura，也不能把空 `connection_init` 当作正式 actor 支持。
+- Realtime 每次 token exchange 必须通过 `projectAuth` 读取当前 Project Session，并同时支持同步/异步 `StorageAdapter`；不能只依赖客户端构造阶段的同步 session 缓存。
+- Realtime channel 必须维护 `connecting / connected / reconnecting / error / closed` 状态，短期令牌续期或身份变化时关闭旧 socket、重新交换并恢复现有订阅；重新连接只恢复快照，不承诺重放断线期间事件。
+- `unsubscribe()` / `removeChannel()` 必须终止自动重连；只有调用方再次显式 `subscribe()` 才能启动新连接。
 - SDK 认证头或 session 选择顺序变化时，必须用 API 端真实中间件契约验证，不能只做客户端单测。
 - SDK prerelease 发包必须显式带 dist-tag：
   - 例如 `0.1.0-beta.3` 应使用 `npm publish --tag beta`

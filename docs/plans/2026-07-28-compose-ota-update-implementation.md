@@ -1,7 +1,7 @@
 # Docker Compose OTA 升级实施文档
 
 > 状态：初版已实施，待真实生产演练
-> 关联执行计划：`docs/superpowers/plans/2026-07-28-druvia-compose-ota-update.md`
+> 关联执行计划：`docs/plans/2026-07-28-druvia-compose-ota-update.md`
 > 适用部署：Druvia 自托管 Docker Compose 生产环境
 > 日期：2026-07-28
 

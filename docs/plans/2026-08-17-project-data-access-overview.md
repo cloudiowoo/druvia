@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Fastify 5, PostgreSQL 17, Hasura Metadata API, Next.js 16, React 19, Vitest, Testing Library
 
-**Spec:** `docs/superpowers/specs/2026-08-17-project-data-access-overview-design.md`
+**Spec:** `docs/plans/2026-08-17-project-data-access-overview-design.md`
 
 **Execution constraint:** Work directly in the main checkout, do not create a worktree or subagent, and do not commit automatically. The user reviews and commits the completed batch.
 
@@ -265,8 +265,8 @@ Expected: tests and lint pass, and Admin production build exits 0.
 **Files:**
 - Modify: `docs/agent/design-decisions.md`
 - Modify: `docs/progress.md`
-- Modify: `docs/superpowers/specs/2026-08-17-project-data-access-design.md`
-- Modify: `docs/superpowers/specs/2026-08-17-project-data-access-overview-design.md`
+- Modify: `docs/plans/2026-08-17-project-data-access-design.md`
+- Modify: `docs/plans/2026-08-17-project-data-access-overview-design.md`
 
 - [x] **Step 1: Record the Batch 2B boundary**
 

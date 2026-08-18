@@ -39,6 +39,12 @@ function loadRepoEnvDefaults() {
 // Load repo-local defaults first so Vitest follows the current local stack.
 loadRepoEnvDefaults()
 
+// Preserve the real integration credential before unit tests disable webhook verification.
+applyDefaultEnv(
+  'DRUVIA_INTEGRATION_HASURA_ADMIN_SECRET',
+  process.env.HASURA_ADMIN_SECRET || ''
+)
+
 // Set test environment variables before any imports.
 applyDefaultEnv('JWT_SECRET', 'test-secret-key-for-testing-only-32chars')
 applyDefaultEnv('DB_HOST', 'localhost')

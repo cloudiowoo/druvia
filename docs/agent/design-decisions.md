@@ -111,7 +111,7 @@
 - `_meta_tables.realtime_enabled` 只表示应用是否需要该表的实时更新能力：
   - 开启或关闭 Realtime 不得创建、覆盖或删除 select permission
   - Realtime 就绪状态由能力开关和已有读取权限共同推导
-  - Batch 1 的 SDK WebSocket 仍以 Hasura `anonymous` 角色连接，因此当前 `ready` 只代表已有 `anonymous` select permission；认证用户与 scoped role 的正式就绪判定等待 Project JWT/短期匿名令牌切换
+  - Batch 3B 后就绪状态按项目运行模式同时检查认证与匿名读取路径；SDK 建连前必须先交换短期 actor token
 - 项目数据角色采用“逻辑 actor -> data scope -> 版本化物理 role”的内部映射：
   - 物理 role 名不进入 SDK 公共契约和 Admin 默认表单
   - 当前公共运行时只覆盖项目默认 schema；非默认环境对外开放前必须先定义环境级 API Key/session audience
@@ -123,7 +123,7 @@
   - 匿名客户端仅提供 select 开关，不生成匿名写权限
   - 只替换当前项目两个 scoped role 的权限；旧 `user / anonymous` 及其他 role 均保留
   - scoped role 中出现非精确受支持形态时按 custom 只读处理，不允许 UI 覆盖
-- Batch 2A 最初只完成 scoped permission 物化；Batch 3A 已切换 explicit 项目的 HTTP actor，WebSocket 仍等待 Batch 3B，已有项目激活仍等待 Batch 4。
+- Batch 2A 最初只完成 scoped permission 物化；Batch 3A/3B 已分别切换 explicit 项目的 HTTP 与 WebSocket actor，已有项目激活仍等待 Batch 4。
 - 表级数据访问 Batch 2B 的项目概览固定为默认生产 schema 的只读治理视图：
   - API 用一次 PostgreSQL 清单查询和一次默认 source metadata 导出组成项目快照，不逐表调用管理接口
   - 清单读取不得创建 `_meta_tables`、追踪表或改写权限；辅助表不存在时 Realtime 默认按未启用展示
@@ -137,7 +137,15 @@
   - `compatibility` 保留旧 `user` role；`explicit` 使用服务端生成的 scoped role/session variables
   - Admin Playground 与 SDK Database 不再把平台 session 用作应用 GraphQL 身份
   - 已有项目没有手工切换入口，必须等待 Batch 4 的清单、备份、验证与回滚流程
-- Realtime 不直接复用长期 Project JWT。Batch 3B 由 Druvia API 验证 Project JWT/API key 后签发短期 Hasura-verifiable token，避免依赖 `PROJECT_AUTH_JWT_SECRET` 与 Hasura `JWT_SECRET` 恰好相同。
+- Project Data Access Batch 3B 的 Realtime actor 边界：
+  - Realtime 不直接复用长期 Project JWT/API key；Druvia API 验证同项目 actor 后签发短期 Hasura-verifiable token
+  - compatibility Project User/API key 分别映射到旧 `user` / `anonymous` role；explicit actor 使用项目 scoped role
+  - SDK 在建连前交换令牌，在令牌续期和项目身份变化时重建 socket 并恢复订阅；断线期间事件不重放
+  - API 与 Hasura 共享独立 `HASURA_JWT_SECRET`，固定 issuer `druvia`、audience `druvia-hasura`；`JWT_SECRET` 仅保留迁移期回退
+  - Admin 只用内存中的应用凭证执行真实 token exchange 和 WebSocket 探测，不读取平台 session
+  - 非默认环境在具备不可变 environment identity 前不开放运行时 Realtime token
+  - 令牌到期可阻止新连接并触发合作式 SDK 续期，但当前不保证恶意客户端的已建立 socket 在到期瞬间被 Hasura 强制关闭
+  - compatibility 的全局 `user` / `anonymous` role 不提供 scoped-role 级跨项目隔离保证；Batch 4 激活并移除旧权限后才闭合该边界
 - Batch 3A 只收敛公开 HTTP GraphQL。Functions internal GraphQL 的 admin-secret 执行和平台 SQL/管理接口的跨 schema 能力仍需独立安全审计。
 - Admin 默认使用“数据接口、数据访问、实时更新”等应用概念；Hasura role、metadata 和 secret 只属于高级诊断或服务端实现。
 - Druvia 管理端对列级 DDL 的正式策略是：

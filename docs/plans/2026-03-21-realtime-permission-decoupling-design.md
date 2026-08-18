@@ -1,6 +1,6 @@
 # Realtime 权限解耦设计
 
-> **状态：已被后续设计部分取代。** 2026-08-17 起，`realtime_enabled` 仅作为实时能力开关，不再创建或删除 `anonymous` select permission。当前设计见 `docs/superpowers/specs/2026-08-17-project-data-access-design.md`。本文保留为历史背景，不再作为当前实现依据。
+> **状态：已被后续设计部分取代。** 2026-08-17 起，`realtime_enabled` 仅作为实时能力开关，不再创建或删除 `anonymous` select permission。当前设计见 `docs/plans/2026-08-17-project-data-access-design.md`。本文保留为历史背景，不再作为当前实现依据。
 
 ## 问题
 

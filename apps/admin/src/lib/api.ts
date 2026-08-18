@@ -22,6 +22,17 @@ interface ApiResponse<T> {
   };
 }
 
+export type RealtimeTestCredential =
+  | { kind: 'apikey'; value: string }
+  | { kind: 'project_token'; value: string };
+
+export interface RealtimeTokenResponse {
+  token: string;
+  expiresIn: number;
+  expiresAt: string;
+  websocketUrl: string;
+}
+
 export interface TenantDashboardCapability {
   key: 'database' | 'auth' | 'storage' | 'realtime' | 'functions';
   label: string;
@@ -1318,8 +1329,44 @@ class ApiClient {
       schemaName: string;
       websocketEndpoint: string;
       graphqlEndpoint: string;
+      runtimeAvailability: 'available' | 'environment_identity_required';
       hasuraConnected: boolean;
     }>('GET', `/api/v1/projects/${projectId}/realtime/config${params}`);
+  }
+
+  async issueRealtimeToken(
+    projectId: string,
+    credential: RealtimeTestCredential
+  ): Promise<ApiResponse<RealtimeTokenResponse>> {
+    const headers: Record<string, string> = credential.kind === 'apikey'
+      ? { apikey: credential.value }
+      : { Authorization: `Bearer ${credential.value}` };
+
+    try {
+      const response = await fetch(`${API_URL}/api/v1/projects/${projectId}/realtime/token`, {
+        method: 'POST',
+        headers,
+      });
+      const result = await response.json() as ApiResponse<RealtimeTokenResponse>;
+      if (!response.ok && result.success !== false) {
+        return {
+          success: false,
+          error: {
+            code: 'REALTIME_TOKEN_REQUEST_FAILED',
+            message: 'Realtime token request failed',
+          },
+        };
+      }
+      return result;
+    } catch {
+      return {
+        success: false,
+        error: {
+          code: 'NETWORK_ERROR',
+          message: 'Unable to reach the Realtime token service',
+        },
+      };
+    }
   }
 
   async getSubscriptionExample(projectId: string, tableName: string, operation?: string, envName?: string) {

@@ -1,6 +1,6 @@
 # Realtime 权限解耦 Implementation Plan
 
-> **状态：历史实施记录。** 其中“Realtime 开关管理 `anonymous` select permission”的结论已由 `docs/superpowers/specs/2026-08-17-project-data-access-design.md` 取代。
+> **状态：历史实施记录。** 其中“Realtime 开关管理 `anonymous` select permission”的结论已由 `docs/plans/2026-08-17-project-data-access-design.md` 取代。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **Tech Stack:** PostgreSQL (PL/pgSQL migration), Fastify (API), Hasura CE metadata API, TypeScript
 
-**Spec:** `docs/superpowers/specs/2026-03-21-realtime-permission-decoupling-design.md`
+**Spec:** `docs/plans/2026-03-21-realtime-permission-decoupling-design.md`
 
 ---
 

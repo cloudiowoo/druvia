@@ -1,5 +1,8 @@
 import { query } from '../../db/index.js';
 import { config } from '../../config/index.js';
+import type { ProjectDataAccessMode } from '@druvia/shared';
+import { resolveDataScopeRole } from '../data-access/data-scope-role.js';
+import { derivePublicRealtimeUrl } from './realtime-token.service.js';
 
 // ============================================
 // Types
@@ -31,6 +34,12 @@ export interface SubscriptionStats {
   disabledTables: number;
 }
 
+export interface RealtimeRuntimeScope {
+  projectId: string;
+  runtimeMode: ProjectDataAccessMode;
+  environmentId?: number;
+}
+
 interface HasuraTableMetadata {
   table: { schema: string; name: string };
   select_permissions?: Array<{ role: string }>;
@@ -45,12 +54,6 @@ interface HasuraMetadata {
 // ============================================
 
 const HASURA_METADATA_URL = `${config.hasura.endpoint}/v1/metadata`;
-const HASURA_GRAPHQL_URL = `${config.hasura.endpoint}/v1/graphql`;
-
-function getPublicGraphqlBaseUrl(): string | null {
-  const apiBaseUrl = process.env.API_BASE_URL?.trim().replace(/\/+$/, '');
-  return apiBaseUrl || null;
-}
 
 export async function hasuraMetadataRequest<T = unknown>(
   type: string,
@@ -81,7 +84,10 @@ export async function hasuraMetadataRequest<T = unknown>(
  * 获取 schema 下所有表的订阅配置
  * 从 _meta_tables 读取 realtime_enabled 标记
  */
-export async function getTableSubscriptions(schemaName: string): Promise<TableSubscription[]> {
+export async function getTableSubscriptions(
+  schemaName: string,
+  runtimeScope: RealtimeRuntimeScope
+): Promise<TableSubscription[]> {
   validateSchemaName(schemaName);
   await ensureRealtimeMetaTable(schemaName);
 
@@ -100,7 +106,10 @@ export async function getTableSubscriptions(schemaName: string): Promise<TableSu
   const selectRoles = await tryGetSchemaSelectRoles(schemaName);
 
   return rows.map((row) => {
-    const readAccess = classifyRuntimeReadAccess(selectRoles?.get(row.table_name));
+    const readAccess = classifyRuntimeReadAccess(
+      selectRoles?.get(row.table_name),
+      runtimeScope
+    );
     const permissionStatus = selectRoles ? 'known' : 'unknown';
 
     return {
@@ -122,8 +131,11 @@ export async function getTableSubscriptions(schemaName: string): Promise<TableSu
 /**
  * 获取订阅统计信息
  */
-export async function getSubscriptionStats(schemaName: string): Promise<SubscriptionStats> {
-  const subscriptions = await getTableSubscriptions(schemaName);
+export async function getSubscriptionStats(
+  schemaName: string,
+  runtimeScope: RealtimeRuntimeScope
+): Promise<SubscriptionStats> {
+  const subscriptions = await getTableSubscriptions(schemaName, runtimeScope);
 
   return summarizeSubscriptions(subscriptions);
 }
@@ -145,6 +157,7 @@ export async function configureTableSubscription(
   schemaName: string,
   tableName: string,
   enabled: boolean,
+  runtimeScope: RealtimeRuntimeScope,
 ): Promise<TableSubscription> {
   validateSchemaName(schemaName);
   validateTableName(tableName);
@@ -173,7 +186,7 @@ export async function configureTableSubscription(
   );
 
   const selectRoles = await tryGetSchemaSelectRoles(schemaName);
-  const readAccess = classifyRuntimeReadAccess(selectRoles?.get(tableName));
+  const readAccess = classifyRuntimeReadAccess(selectRoles?.get(tableName), runtimeScope);
   const permissionStatus = selectRoles ? 'known' : 'unknown';
 
   return {
@@ -191,19 +204,44 @@ export async function configureTableSubscription(
   };
 }
 
-function classifyRuntimeReadAccess(selectRoles: string[] | undefined): {
+function resolveRuntimeReadRoles(runtimeScope: RealtimeRuntimeScope): {
+  authenticatedRole: string;
+  anonymousRole: string;
+} {
+  if (runtimeScope.runtimeMode !== 'explicit') {
+    return { authenticatedRole: 'user', anonymousRole: 'anonymous' };
+  }
+
+  return {
+    authenticatedRole: resolveDataScopeRole({
+      projectId: runtimeScope.projectId,
+      environmentId: runtimeScope.environmentId,
+      actor: 'authenticated',
+    }),
+    anonymousRole: resolveDataScopeRole({
+      projectId: runtimeScope.projectId,
+      environmentId: runtimeScope.environmentId,
+      actor: 'anonymous',
+    }),
+  };
+}
+
+function classifyRuntimeReadAccess(
+  selectRoles: string[] | undefined,
+  runtimeScope: RealtimeRuntimeScope
+): {
   hasAuthenticatedRead: boolean;
   hasAnonymousRead: boolean;
   hasSelectPermission: boolean;
 } {
-  const hasAuthenticatedRead = selectRoles?.includes('user') ?? false;
-  const hasAnonymousRead = selectRoles?.includes('anonymous') ?? false;
+  const { authenticatedRole, anonymousRole } = resolveRuntimeReadRoles(runtimeScope);
+  const hasAuthenticatedRead = selectRoles?.includes(authenticatedRole) ?? false;
+  const hasAnonymousRead = selectRoles?.includes(anonymousRole) ?? false;
 
   return {
     hasAuthenticatedRead,
     hasAnonymousRead,
-    // The current SDK realtime transport connects with the anonymous Hasura role.
-    hasSelectPermission: hasAnonymousRead,
+    hasSelectPermission: hasAuthenticatedRead || hasAnonymousRead,
   };
 }
 
@@ -251,22 +289,20 @@ export async function getSchemaSelectRoles(schemaName: string): Promise<Map<stri
  * 获取实时配置信息
  */
 export function getRealtimeConfig(schemaName: string): RealtimeConfig {
-  const publicBaseUrl = getPublicGraphqlBaseUrl();
-  if (publicBaseUrl) {
-    return {
-      schemaName,
-      websocketEndpoint: `${publicBaseUrl.replace(/^http/, 'ws')}/v1/graphql`,
-      graphqlEndpoint: `${publicBaseUrl}/v1/graphql`,
-    };
-  }
-
-  const wsProtocol = config.hasura.endpoint.startsWith('https') ? 'wss' : 'ws';
-  const wsEndpoint = config.hasura.endpoint.replace(/^https?/, wsProtocol);
+  const websocketEndpoint = derivePublicRealtimeUrl({
+    hasuraPublicUrl: config.realtime.hasuraPublicUrl,
+    apiBaseUrl: config.realtime.apiBaseUrl,
+    nodeEnv: config.nodeEnv,
+    hasuraEndpoint: config.hasura.endpoint,
+  });
+  const graphqlEndpoint = websocketEndpoint
+    .replace(/^wss:/, 'https:')
+    .replace(/^ws:/, 'http:');
 
   return {
     schemaName,
-    websocketEndpoint: `${wsEndpoint}/v1/graphql`,
-    graphqlEndpoint: HASURA_GRAPHQL_URL,
+    websocketEndpoint,
+    graphqlEndpoint,
   };
 }
 
@@ -305,17 +341,13 @@ export function generateSubscriptionExample(
   }
 }`;
 
-  const realtimeBaseUrl = getRealtimeConfig(schemaName).websocketEndpoint
-    .replace(/\/v1\/graphql$/, '');
   const realtimeEvent = operation === 'ALL' ? '*' : operation;
 
-  // JavaScript 客户端示例。当前 Realtime 通道使用表的匿名读取权限。
   const jsCode = `import { createClient } from '@druvia/sdk';
 
-const druvia = createClient('YOUR_DRUVIA_URL', 'YOUR_PROJECT_API_KEY', {
+const druvia = createClient('YOUR_DRUVIA_URL/api/v1', 'YOUR_PROJECT_API_KEY', {
   projectId: 'YOUR_PROJECT_ID',
   schema: '${schemaName}',
-  realtimeUrl: '${realtimeBaseUrl}',
 });
 
 const subscription = druvia

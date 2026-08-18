@@ -21,7 +21,7 @@
 
 ## Recent Milestones
 
-- Project Data Access Batch 1 已建立安全 metadata 基线：表 tracking 不再自动生成宽泛 CRUD permissions，Realtime 开关不再修改 select permission，Admin 默认改用数据接口/实时更新语义展示就绪状态；当前 SDK WebSocket 仍按 `anonymous` select permission 判定可用，正式 actor 鉴权留待后续批次
+- Project Data Access Batch 1 已建立安全 metadata 基线：表 tracking 不再自动生成宽泛 CRUD permissions，Realtime 开关不再修改 select permission，Admin 默认改用数据接口/实时更新语义展示就绪状态
 - 已引入版本化 data-scope role resolver 作为后续项目角色、环境作用域和 service principal 的内部扩展基础；现有项目尚未切换到 scoped role，需等待显式权限编辑和迁移批次
 - Project Data Access Batch 2A 已落地默认生产 schema 的表级访问配置：认证用户 CRUD 支持关闭/全部记录/仅自己的记录，匿名侧仅支持读取；保存只原子替换当前项目受管 scoped roles，保留旧角色和自定义规则，HTTP/WebSocket actor 尚未切换
 - Project Data Access Batch 2B 已落地默认生产 schema 的只读项目概览：
@@ -35,7 +35,14 @@
   - explicit 请求由服务端生成 scoped role 与项目用户 session variables，compatibility 继续使用旧 `user` role
   - SDK Database 不再回退平台 session；RPC/Functions 保持原行为等待独立 cutover
   - Admin Playground 改用内存中的 API Key 或 Project access token，并统一展示 Druvia GraphQL 代理地址
-  - Realtime 短期令牌交换、已有项目迁移激活仍分别属于 Batch 3B 和 Batch 4
+  - 已有项目迁移激活仍属于 Batch 4
+- Project Data Access Batch 3B 已完成 Realtime actor 切换：
+  - API 只为同项目 Project Session/API key 签发短期 Hasura token，固定 issuer/audience，并实施项目 actor 限流
+  - compatibility actor 继续使用旧 `user` / `anonymous` permissions；explicit actor 使用项目 scoped roles
+  - SDK 不向 Hasura 发送长期凭证，支持状态回调、令牌续期、指数退避、身份变化重连和显式停止
+  - Admin 使用内存应用凭证执行真实 token exchange/WebSocket 探测，非默认环境在 environment identity 就绪前保持不可用
+  - Compose、环境示例和 release workflow 已统一 API/Hasura 签名密钥，并增加源契约与真实渲染门禁
+  - 已用真实 Hasura 覆盖有效、篡改、过期、兼容匿名和 explicit 跨项目拒绝；已建立 socket 的强制到期断开仍不作保证
 
 - API 已支持 `apikey` fallback 认证
 - Realtime 权限开始与表管理权限解耦
@@ -99,13 +106,10 @@
 
 ## Current Next Steps
 
-- 实施 Project Data Access Batch 3B：由 Project JWT/API key 换取短期 Hasura-verifiable Realtime token，并补齐 SDK WebSocket 重连与续期
 - 设计 Batch 4 已有项目迁移门禁：metadata 清单、备份、dry-run、正反向 actor 验证、激活与回滚，不直接暴露 `data_access_mode` 开关
 - 统一 project-user 在 GraphQL、Realtime、Storage、RPC 和 Functions 中的身份传播与审计
 - 修正 MCP Server 与 API 的认证头、路由身份和 scope 契约，并增加真实 API 契约测试
-- 将 build、lint、核心测试、manifest/digest 校验和 OTA smoke test 纳入 release 门禁
-- 在生产目标主机重新生成 release 路径配置，完成 `0.3.3 -> 0.3.4+` 的 apply/finalizer 验收
-- 分别演练 GHCR 与自建 Registry 更新源、故障镜像回滚和数据库 dump 恢复
+- 继续完善 build、lint、核心测试和 manifest/digest 的自动化门禁；实际 `workflow_dispatch`、本地/生产 OTA、双 Registry、回滚和恢复演练暂不作为下一开发任务，待形成后续发布版本时统一安排
 - 继续用 taro-app 迁移验证 project auth、Storage helper、Realtime 重连和 SDK token 选择顺序
 - 在权限和发布基线稳定后，以足球运动数据应用验证原生客户端、批量写入、IMU Storage 和 Trusted Backend Worker；领域模型与算法保留在应用侧
 - 根据真实应用证据决定 PostgreSQL 扩展入口、Swift SDK 和 Recipe 的晋升，暂不建设通用 Jobs、Queue 或 Worker Runtime

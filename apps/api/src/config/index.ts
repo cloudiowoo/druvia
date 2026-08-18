@@ -13,6 +13,27 @@ function parseBooleanEnv(value: string | undefined, defaultValue = false): boole
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
+export function resolveRealtimeConfig(env: NodeJS.ProcessEnv = process.env) {
+  const rawTtl = Number.parseInt(env.HASURA_REALTIME_TOKEN_TTL_SECONDS || '300', 10);
+  const tokenTtlSeconds = Number.isFinite(rawTtl)
+    ? Math.min(900, Math.max(60, rawTtl))
+    : 300;
+  const dedicatedSecret = env.HASURA_JWT_SECRET || '';
+  const fallbackSecret = env.JWT_SECRET || '';
+
+  return {
+    tokenSecret: dedicatedSecret || fallbackSecret,
+    tokenSecretSource: dedicatedSecret
+      ? 'HASURA_JWT_SECRET' as const
+      : fallbackSecret
+        ? 'JWT_SECRET' as const
+        : 'missing' as const,
+    tokenTtlSeconds,
+    hasuraPublicUrl: env.HASURA_PUBLIC_URL || '',
+    apiBaseUrl: env.API_BASE_URL || '',
+  };
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   host: process.env.HOST || '0.0.0.0',
@@ -36,6 +57,7 @@ export const config = {
     adminSecret: process.env.HASURA_ADMIN_SECRET || '',
     endpoint: process.env.HASURA_ENDPOINT || 'http://localhost:8080',
   },
+  realtime: resolveRealtimeConfig(),
   functions: {
     internalTokenSecret: process.env.FUNCTIONS_INTERNAL_TOKEN_SECRET || process.env.JWT_SECRET || '',
     internalTokenTtlSeconds: parseInt(process.env.FUNCTIONS_INTERNAL_TOKEN_TTL_SECONDS || '300', 10),

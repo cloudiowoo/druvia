@@ -9,6 +9,10 @@ describe('RealtimeService Integration', () => {
   let testTenantId: string;
   let testProjectId: string;
   let testSchemaName: string;
+  const runtimeScope = () => ({
+    projectId: testProjectId || 'proj_realtime_test',
+    runtimeMode: 'explicit' as const,
+  });
 
   beforeAll(async () => {
     // 创建测试用户
@@ -71,13 +75,13 @@ describe('RealtimeService Integration', () => {
   describe('Input Validation', () => {
     it('should reject invalid schema name', async () => {
       await expect(
-        realtimeService.getTableSubscriptions('invalid-schema!')
+        realtimeService.getTableSubscriptions('invalid-schema!', runtimeScope())
       ).rejects.toThrow('Invalid schema name format');
     });
 
     it('should reject schema name with SQL injection attempt', async () => {
       await expect(
-        realtimeService.getTableSubscriptions("schema'; DROP TABLE users; --")
+        realtimeService.getTableSubscriptions("schema'; DROP TABLE users; --", runtimeScope())
       ).rejects.toThrow('Invalid schema name format');
     });
 
@@ -97,7 +101,7 @@ describe('RealtimeService Integration', () => {
       // 这会调用 Hasura API，如果 Hasura 不可用会失败
       // 但不应该因为验证失败
       try {
-        await realtimeService.getTableSubscriptions(testSchemaName);
+        await realtimeService.getTableSubscriptions(testSchemaName, runtimeScope());
       } catch (error) {
         // 如果是 Hasura 连接错误，忽略（验证通过了）
         const message = error instanceof Error ? error.message : '';
@@ -221,7 +225,7 @@ describe('RealtimeService Integration', () => {
     });
 
     it('getTableSubscriptions should return enabled=false by default', async () => {
-      const subscriptions = await realtimeService.getTableSubscriptions(testSchemaName);
+      const subscriptions = await realtimeService.getTableSubscriptions(testSchemaName, runtimeScope());
       const testTable = subscriptions.find(s => s.tableName === 'test_realtime_table');
 
       expect(testTable).toBeDefined();
@@ -240,6 +244,7 @@ describe('RealtimeService Integration', () => {
         testSchemaName,
         'test_realtime_table',
         true,
+        runtimeScope(),
       );
       expect(result.enabled).toBe(true);
 
@@ -251,7 +256,7 @@ describe('RealtimeService Integration', () => {
       expect(dbResult.rows[0].realtime_enabled).toBe(true);
 
       // Verify getTableSubscriptions reflects the change
-      const subscriptions = await realtimeService.getTableSubscriptions(testSchemaName);
+      const subscriptions = await realtimeService.getTableSubscriptions(testSchemaName, runtimeScope());
       const testTable = subscriptions.find(s => s.tableName === 'test_realtime_table');
       expect(testTable!.enabled).toBe(true);
 
@@ -260,6 +265,7 @@ describe('RealtimeService Integration', () => {
         testSchemaName,
         'test_realtime_table',
         false,
+        runtimeScope(),
       );
 
       const after = await pool.query(
@@ -288,6 +294,7 @@ describe('RealtimeService Integration', () => {
         testSchemaName,
         'unregistered_table',
         true,
+        runtimeScope(),
       );
       expect(result.enabled).toBe(true);
 
@@ -327,7 +334,10 @@ describe('RealtimeService Integration', () => {
     });
 
     it('getTableSubscriptions should bootstrap _meta_tables when missing', async () => {
-      const subscriptions = await realtimeService.getTableSubscriptions(importedSchemaName);
+      const subscriptions = await realtimeService.getTableSubscriptions(
+        importedSchemaName,
+        runtimeScope()
+      );
 
       expect(subscriptions).toEqual([
         expect.objectContaining({
@@ -367,6 +377,7 @@ describe('RealtimeService Integration', () => {
         importedSchemaName,
         'imported_players',
         true,
+        runtimeScope(),
       );
 
       expect(result.enabled).toBe(true);

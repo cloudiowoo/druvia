@@ -173,6 +173,46 @@ describe('API app data access routes', () => {
   })
 })
 
+describe('API app Realtime token route', () => {
+  it('registers the authenticated project Realtime token route', async () => {
+    const app = buildApp()
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/proj_123/realtime/token',
+      })
+
+      expect(response.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('does not downgrade an invalid Bearer credential to an API key', async () => {
+    const app = buildApp()
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/proj_123/realtime/token',
+        headers: {
+          authorization: 'Bearer invalid-token',
+          apikey: 'syntactically-present-api-key',
+        },
+      })
+
+      expect(response.statusCode).toBe(401)
+      expect(response.json()).toMatchObject({
+        success: false,
+        error: { code: 'UNAUTHORIZED' },
+      })
+    } finally {
+      await app.close()
+    }
+  })
+})
+
 describe('API app project auth routes', () => {
   it('registers the public project auth routes', async () => {
     const app = buildApp()

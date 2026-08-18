@@ -315,7 +315,7 @@ Implementation completion updates the smallest durable targets:
 - `apps/admin/AGENTS.md` for application-credential-only Playground execution;
 - `docs/agent/design-decisions.md` for the persisted mode and no-direct-Project-JWT decision;
 - `docs/progress.md` for Batch 3A milestone status and Batch 3B as the next step;
-- `docs/superpowers/specs/2026-08-17-project-data-access-design.md` for the platform GraphQL boundary, SDK HTTP selection and short-lived Realtime token exchange;
+- `docs/plans/2026-08-17-project-data-access-design.md` for the platform GraphQL boundary, SDK HTTP selection and short-lived Realtime token exchange;
 - taro-app/Supabase compatibility documentation to state that existing projects remain compatible until an explicit Batch 4 migration;
 - SDK migration notes to state that platform sessions no longer grant application GraphQL access.
 

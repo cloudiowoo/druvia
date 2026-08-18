@@ -28,7 +28,7 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - 业务数据按 tenant/project schema 隔离，当前实际运行更接近 Schema-per-Project。
 - 权限主要依赖 Hasura permissions，不依赖 PostgreSQL RLS。
 - 平台用户、项目终端用户、匿名项目 API key、trusted backend key 是不同身份边界，不得在新代码中合并语义。
-- Project Data Access Batch 3A 后，公开项目 GraphQL 只接受同项目 `project_user` / `apikey`；平台 session 不能作为应用数据凭证。Realtime 短期令牌交换仍属于 Batch 3B。
+- Project Data Access Batch 3A/3B 后，公开项目 GraphQL 和 Realtime token exchange 只接受同项目 `project_user` / `apikey`；平台 session 不能作为应用数据凭证，SDK 也不得把长期项目凭证直传 Hasura。
 - 改权限、GraphQL 代理、Realtime、Storage、Functions 或 SDK Auth 返回结构时，必须检查 Supabase 迁移和 taro-app 兼容路径。
 
 ## Current Priorities
@@ -57,9 +57,11 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - `docs/agent/design-decisions.md`: 已确认、应长期遵守的架构与安全决策。
 - `docs/agent/playbooks.md`: 可重复执行的维护流程。
 - `docs/progress.md`: 人类可读的阶段状态和下一步。
-- `docs/plans/YYYY-MM-DD-*.md`: 设计、实施计划、评估证据和完整背景。
+- `docs/plans/YYYY-MM-DD-*.md`: 日期化功能文档；同一功能的目标、设计决策、实施步骤、验收标准、验证证据和最终状态必须合并在同一文件中。
 - `.agents/skills/*`: Codex 按需发现的仓库级可复用工作流；不能替代 `AGENTS.md` 的常驻作用域规则。
 - `.claude/*` 仅为兼容现有 Claude 工作流，不是 Codex 的事实来源。
+
+无论使用 Codex、Superpowers 或其他 agent 工作流，新功能都不得创建 `docs/superpowers`、`specs/plans` 双目录或独立的 `*-design.md` / `*-implementation.md` 配对文档。需要规划时，在 `docs/plans` 创建一份综合文档，并在实施过程中持续更新同一文件；历史拆分文档可以保留，但不得作为新文档模板。
 
 仓库不维护额外的 `project-memory.md`。新事实必须按上述职责落入最近的 `AGENTS.md`、长期决策、进度或日期化文档，避免并行事实源漂移。
 

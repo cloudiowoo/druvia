@@ -2,6 +2,8 @@
 
 日期：2026-08-14
 
+状态更新：2026-08-18 已完成 Project Data Access Batch 3A/3B 的 HTTP GraphQL 与 Realtime actor 切换；本文其余风险和路线继续有效。
+
 ## 1. 目的
 
 本文归档 Druvia 当前在应用能力、权限模型、SDK、MCP、Docker 发布和 OTA 更新方面的整体评估，并给出后续版本建议。
@@ -34,13 +36,13 @@ Druvia 已经跨过原型阶段，具备管理后台、管理 API、Hasura 数�
 | --- | --- | --- |
 | Admin / API | 已有完整业务骨架和大量真实功能 | 权限边界、错误契约和生产验证需要统一 |
 | Tables / SQL / Hasura | 可管理 schema、数据和 metadata | 默认 permissions 过宽，匿名写入风险高 |
-| Project Auth | 微信、OIDC 和项目 session 主链已开始落地 | GraphQL、Realtime、Storage 尚未统一消费同一身份 |
+| Project Auth | 微信、OIDC、项目 session、GraphQL 与 Realtime actor 主链已落地 | Storage、RPC、Functions 仍需统一审计和 cutover |
 | Storage | Local、R2、内部 helper、trusted ticket 已有实现 | 终端用户权限和对象策略仍需统一验证 |
-| Realtime | 可配置表级开关并建立订阅 | SDK 建连身份传播不完整 |
+| Realtime | 已有短期 token exchange、actor roles、SDK 续期重连和真实连接测试 | compatibility 全局角色迁移、已建立恶意 socket 撤销仍未闭合 |
 | Functions | Deno Worker、invoke auth mode、内部 GraphQL/Storage helper 已有实现 | 历史函数和匿名调用策略仍需收敛 |
 | SDK | auth/database/storage/realtime/rpc/functions 已有基础能力 | 兼容结论应继续由真实迁移验证 |
 | MCP | Server 和工具入口已经存在 | API key 请求头与 API 路由身份契约存在不一致 |
-| 发布 | GitHub Release、GHCR、自建 Registry 双推送已实现 | 缺少稳定质量门禁和发布前验证矩阵 |
+| 发布 | GitHub Release、双 Registry 及 Realtime 发布前门禁已实现 | 全仓 lint/build、容器 smoke 和 OTA 升级矩阵仍未闭合 |
 | OTA | 检查、下载、apply、健康检查、回滚、updater finalizer 已实现 | 生产路径配置、迁移边界和数据库恢复尚未完整演练 |
 
 ## 4. 应用与权限评估
@@ -72,14 +74,20 @@ Druvia 已经跨过原型阶段，具备管理后台、管理 API、Hasura 数�
 - `apps/api/src/modules/realtime/realtime.service.ts`
 - `hasura/metadata`
 
-### 4.3 项目身份尚未全链路统一
+### 4.3 项目身份已完成 GraphQL/Realtime 切换，其他路径仍需统一
 
-项目 session 已用于部分 Functions 和 RPC，但以下路径仍需统一：
+Project Data Access Batch 3A/3B 已完成两条公开数据路径：
 
-- GraphQL：确认 project-user claim、Hasura role 和行级过滤完整传播。
-- Realtime：SDK 当前建连初始化信息不足，不能仅凭连接成功认定用户级授权完成。
+- GraphQL：只接受同项目 Project Session/API key，由 API 生成 Hasura actor；平台 session 不再作为应用数据凭证。
+- Realtime：SDK 先向 API 交换短期 Hasura token，并按 compatibility/scoped 模式恢复订阅；Admin 使用内存应用凭证执行真实连接测试。
+
+以下路径仍需统一：
+
 - Storage：平台用户、project-user、trusted ticket 和内部函数调用应有明确且互斥的授权规则。
 - Functions：历史匿名函数需要逐个收敛为 `jwt_required` 或经审查的 `anon_allowed`。
+- RPC/Functions：仍保留 project token 到 platform token 的历史回退，后续 cutover 不能由 SDK Database 的规则直接类推。
+
+Realtime 当前仍有两个明确边界：compatibility 的全局 `user` / `anonymous` permissions 要等 Batch 4 迁移才获得 scoped-role 级隔离；短期 JWT 可保护新连接并驱动 SDK 续期，但不承诺 Hasura 在到期瞬间强制关闭恶意客户端已建立的 socket。
 
 建议建立统一的 `actor` 契约，至少包含 actor type、project id、project user id、role 和可信来源，并在 HTTP、WebSocket、Worker 和审计日志间保持一致。
 
@@ -90,7 +98,7 @@ SDK 已补齐一批 Supabase 风格能力，包括查询修饰符、session 刷�
 1. 登录前匿名调用。
 2. 登录后 project session 恢复与刷新。
 3. GraphQL/RPC/Functions 的 token 选择顺序。
-4. Realtime 断线重连后的身份恢复。
+4. Realtime token exchange、状态回调、断线重连后的身份恢复与快照补偿。
 5. Storage 上传、替换、删除和审计。
 
 兼容声明应分为“接口兼容”“行为兼容”“迁移验证通过”，避免使用笼统的“兼容 Supabase”。
@@ -133,7 +141,7 @@ GitHub Actions 会构建 `api/admin/worker/updater` 四类镜像，同时推送�
 
 ### 7.2 当前发布风险
 
-- release workflow 在镜像构建前缺少稳定的 lint、typecheck、unit/integration test 门禁。
+- release workflow 已在镜像构建前执行 Realtime 聚焦测试、SDK build 和五种 Compose 渲染校验，但全仓 lint/typecheck/integration 与容器 smoke 尚未形成统一绿灯。
 - 当前构建没有明确 multi-architecture matrix；Apple Silicon 本地测试会出现 amd64 模拟警告。
 - migration 范围依赖手工输入，容易与仓库真实迁移不一致。
 - 双 Registry 当前在同一 job 中强耦合，自建 Registry 慢或不可用会影响整个发布。
@@ -212,7 +220,7 @@ Codex 官方只自动发现 `AGENTS.md` 层级，不会自动读取任意命名�
 ### Phase A：0.4.0 生产安全基线
 
 - 收紧 Hasura permissions 和匿名写入。
-- 定义统一 project actor 契约并打通 GraphQL/Realtime/Storage/Functions。
+- 在已完成 GraphQL/Realtime actor 切换的基础上，继续打通 Storage/Functions/RPC。
 - 修正 MCP 认证/路由契约，或暂时明确标记实验性。
 - 清理 lint 和核心单测失败，建立 release 必过门禁。
 - 修正文档、版本轴、README、LICENSE 和公开仓库敏感信息治理。

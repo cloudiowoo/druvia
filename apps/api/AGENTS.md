@@ -27,6 +27,12 @@
   - 客户端 `x-hasura-*` 头和角色声明不能进入执行上下文
   - Hasura role/session variables 必须由服务端根据项目 `data_access_mode` 和已认证 actor 生成
   - `compatibility` 仅保留旧 `user` role 行为；`explicit` 才使用项目 scoped role
+- Realtime token 路由 `/api/v1/projects/:projectId/realtime/token` 采用相同项目 actor 边界：
+  - 只接受同项目 `project_user` / `apikey`，拒绝 `platform_user` 和跨项目凭证
+  - `compatibility` 将 Project User/API key 分别映射为 `user` / `anonymous`；`explicit` 使用项目 scoped role
+  - Hasura session variables 只能由服务端 actor 生成，令牌必须使用短期 TTL、固定 issuer `druvia` 和 audience `druvia-hasura`
+  - API 与 Hasura 必须使用同一个有效 `HASURA_JWT_SECRET`；`JWT_SECRET` 仅是迁移期回退
+  - 当前只保证新连接的令牌有效性；不能宣称已建立的恶意 socket 会在 JWT 到期瞬间被强制断开
 - 涉及 Functions invoke 时，优先检查：
   - `functions.controller.ts`
   - `functions.service.ts`

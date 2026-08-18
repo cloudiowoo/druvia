@@ -165,6 +165,89 @@ function resolveRateLimitIdentifier(requestUser: RequestUser | undefined, reques
   return `anon-ip:${requestIp}`;
 }
 
+function resolveRealtimeTokenRateLimitIdentifier(
+  requestUser: RequestUser | undefined,
+  requestIp: string
+): string {
+  if (requestUser?.kind === 'project_user') {
+    return `project:${requestUser.sub}`;
+  }
+
+  return `anon-ip:${requestIp}`;
+}
+
+function setRateLimitHeaders(
+  reply: FastifyReply,
+  limit: number,
+  current: number,
+  ttl: number,
+  rejected = false
+) {
+  const safeTtl = Math.max(0, ttl);
+  reply.header('X-RateLimit-Limit', limit);
+  reply.header('X-RateLimit-Remaining', Math.max(0, limit - current));
+  reply.header('X-RateLimit-Reset', Math.ceil(Date.now() / 1000) + safeTtl);
+  if (rejected) {
+    reply.header('Retry-After', safeTtl);
+  }
+}
+
+export async function checkRealtimeTokenRateLimit(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  projectId: string
+): Promise<void> {
+  const windowSeconds = 60;
+  const actorLimit = 30;
+  const projectLimit = 300;
+  const actorId = resolveRealtimeTokenRateLimitIdentifier(request.user, request.ip);
+  const actorKey = getRateLimitKey('ratelimit:realtime-token', `${projectId}:${actorId}`);
+
+  try {
+    const actorCurrent = await redis.incr(actorKey);
+    if (actorCurrent === 1) {
+      await redis.expire(actorKey, windowSeconds);
+    }
+
+    const actorTtl = await redis.ttl(actorKey);
+    setRateLimitHeaders(reply, actorLimit, actorCurrent, actorTtl, actorCurrent > actorLimit);
+
+    if (actorCurrent > actorLimit) {
+      reply.status(429).send({
+        success: false,
+        error: {
+          code: 'REALTIME_TOKEN_RATE_LIMIT_EXCEEDED',
+          message: 'Realtime token rate limit exceeded',
+        },
+      });
+      return;
+    }
+
+    const projectKey = getRateLimitKey('ratelimit:realtime-token:project', projectId);
+    const projectCurrent = await redis.incr(projectKey);
+    if (projectCurrent === 1) {
+      await redis.expire(projectKey, windowSeconds);
+    }
+
+    const projectTtl = await redis.ttl(projectKey);
+    if (projectCurrent > projectLimit) {
+      setRateLimitHeaders(reply, projectLimit, projectCurrent, projectTtl, true);
+      reply.status(429).send({
+        success: false,
+        error: {
+          code: 'REALTIME_TOKEN_RATE_LIMIT_EXCEEDED',
+          message: 'Realtime token rate limit exceeded',
+        },
+      });
+    }
+  } catch (error) {
+    logger.error('Realtime token rate limiter error', {
+      requestId: request.id,
+      projectId,
+    }, error);
+  }
+}
+
 function normalizeGraphqlRateLimitConfig(
   config?: Partial<GraphqlRateLimitConfig>
 ): GraphqlRateLimitConfig {

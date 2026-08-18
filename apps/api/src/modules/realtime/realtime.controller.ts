@@ -1,8 +1,22 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { ProjectDataAccessMode } from '@druvia/shared';
 import type { JwtPayload } from '../../middleware/auth.js';
 import * as realtimeService from './realtime.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import { queryOne } from '../../db/index.js';
+import { checkRealtimeTokenRateLimit } from '../../middleware/ratelimit.js';
+import * as projectService from '../project/project.service.js';
+import { createApiLogger } from '../../lib/logger.js';
+import {
+  isRealtimeActor,
+  resolveRealtimeExecutionContext,
+} from './realtime-actor.js';
+import {
+  issueRealtimeAccessToken,
+  RealtimeTokenUnavailableError,
+} from './realtime-token.service.js';
+
+const logger = createApiLogger({ module: 'realtime' });
 
 // ============================================
 // Types
@@ -50,34 +64,156 @@ async function verifyProjectAccess(
 }
 
 // ============================================
-// Helper: Get Schema Name
+// Helper: Resolve the schema and immutable role scope together.
 // ============================================
 
-async function getProjectSchema(projectId: string, envName?: string): Promise<string | null> {
-  // 如果指定了环境且不是 prod，从环境表获取 schema
+interface RealtimeRuntimeTarget {
+  schemaName: string;
+  runtimeScope: realtimeService.RealtimeRuntimeScope;
+  runtimeAvailability: 'available' | 'environment_identity_required';
+}
+
+function normalizeRuntimeMode(value: string | null | undefined): ProjectDataAccessMode {
+  return value === 'explicit' ? 'explicit' : 'compatibility';
+}
+
+async function getRealtimeRuntimeTarget(
+  projectId: string,
+  envName?: string
+): Promise<RealtimeRuntimeTarget | null> {
   if (envName && envName !== 'prod') {
-    const env = await queryOne<{ schema_name: string }>(
-      'SELECT schema_name FROM druvia_project_environments WHERE project_id = $1 AND env_name = $2',
+    const env = await queryOne<{
+      id: number;
+      schema_name: string;
+      data_access_mode?: string | null;
+    }>(
+      `SELECT e.id, e.schema_name, p.data_access_mode
+       FROM druvia_project_environments e
+       JOIN druvia_projects p ON p.project_id = e.project_id
+       WHERE e.project_id = $1 AND e.env_name = $2`,
       [projectId, envName]
     );
-    if (env) {
-      return env.schema_name;
-    }
-    // 环境不存在，返回 null
-    return null;
+    if (!env) return null;
+
+    return {
+      schemaName: env.schema_name,
+      runtimeScope: {
+        projectId,
+        runtimeMode: normalizeRuntimeMode(env.data_access_mode),
+        environmentId: env.id,
+      },
+      runtimeAvailability: 'environment_identity_required',
+    };
   }
 
-  // 默认返回项目基础 schema (prod)
-  const project = await queryOne<{ schema_name: string }>(
-    'SELECT schema_name FROM druvia_projects WHERE project_id = $1',
+  const project = await queryOne<{
+    schema_name: string | null;
+    data_access_mode?: string | null;
+  }>(
+    'SELECT schema_name, data_access_mode FROM druvia_projects WHERE project_id = $1',
     [projectId]
   );
-  return project?.schema_name || null;
+  if (!project?.schema_name) return null;
+
+  return {
+    schemaName: project.schema_name,
+    runtimeScope: {
+      projectId,
+      runtimeMode: normalizeRuntimeMode(project.data_access_mode),
+    },
+    runtimeAvailability: 'available',
+  };
 }
 
 // ============================================
 // Controllers
 // ============================================
+
+export async function issueToken(
+  request: FastifyRequest<{ Params: ProjectParams }>,
+  reply: FastifyReply
+) {
+  const actor = request.user;
+  const { projectId } = request.params;
+
+  if (!isRealtimeActor(actor)) {
+    return reply.status(403).send({
+      success: false,
+      error: {
+        code: 'PROJECT_ACTOR_REQUIRED',
+        message: 'Project actor credential required',
+      },
+    });
+  }
+
+  if (actor.projectId !== projectId) {
+    return reply.status(403).send({
+      success: false,
+      error: {
+        code: 'PROJECT_SCOPE_MISMATCH',
+        message: 'Project actor does not match the requested project',
+      },
+    });
+  }
+
+  const project = await projectService.getProjectById(projectId);
+  if (!project?.schemaName) {
+    return reply.status(404).send({
+      success: false,
+      error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' },
+    });
+  }
+
+  await checkRealtimeTokenRateLimit(request, reply, projectId);
+  if (reply.sent) return;
+
+  try {
+    const context = resolveRealtimeExecutionContext({
+      projectId,
+      runtimeMode: project.dataAccessMode,
+      actor,
+    });
+    const result = issueRealtimeAccessToken({ projectId, context });
+
+    logger.info('Realtime access token issued', {
+      requestId: request.id,
+      operationId: result.operationId,
+      projectId,
+      actorType: context.actorType,
+      ...(context.actorType === 'project_user'
+        ? { projectUserId: context.subject }
+        : {}),
+      runtimeMode: project.dataAccessMode,
+      expiresAt: result.expiresAt,
+    });
+
+    return reply.send({
+      success: true,
+      data: {
+        token: result.token,
+        expiresIn: result.expiresIn,
+        expiresAt: result.expiresAt,
+        websocketUrl: result.websocketUrl,
+      },
+    });
+  } catch (error) {
+    if (error instanceof RealtimeTokenUnavailableError) {
+      logger.error('Realtime token service unavailable', {
+        requestId: request.id,
+        projectId,
+      }, error);
+      return reply.status(503).send({
+        success: false,
+        error: {
+          code: 'REALTIME_TOKEN_UNAVAILABLE',
+          message: 'Realtime token service is unavailable',
+        },
+      });
+    }
+
+    throw error;
+  }
+}
 
 /**
  * 获取项目的所有表订阅配置
@@ -91,9 +227,8 @@ export async function listSubscriptions(
   const { projectId } = request.params;
   const envName = request.query.env;
 
-  // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId, envName);
-  if (!schemaName) {
+  const target = await getRealtimeRuntimeTarget(projectId, envName);
+  if (!target) {
     return reply.status(404).send({
       success: false,
       error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
@@ -101,7 +236,10 @@ export async function listSubscriptions(
   }
 
   try {
-    const subscriptions = await realtimeService.getTableSubscriptions(schemaName);
+    const subscriptions = await realtimeService.getTableSubscriptions(
+      target.schemaName,
+      target.runtimeScope
+    );
     const stats = realtimeService.summarizeSubscriptions(subscriptions);
 
     return reply.send({
@@ -137,9 +275,8 @@ export async function configureSubscription(
   const { enabled } = request.body;
   const envName = request.query.env;
 
-  // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId, envName);
-  if (!schemaName) {
+  const target = await getRealtimeRuntimeTarget(projectId, envName);
+  if (!target) {
     return reply.status(404).send({
       success: false,
       error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
@@ -148,9 +285,10 @@ export async function configureSubscription(
 
   try {
     const subscription = await realtimeService.configureTableSubscription(
-      schemaName,
+      target.schemaName,
       tableName,
       enabled,
+      target.runtimeScope,
     );
 
     return reply.send({
@@ -178,9 +316,8 @@ export async function getConfig(
   const { projectId } = request.params;
   const envName = request.query.env;
 
-  // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId, envName);
-  if (!schemaName) {
+  const target = await getRealtimeRuntimeTarget(projectId, envName);
+  if (!target) {
     return reply.status(404).send({
       success: false,
       error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
@@ -188,17 +325,27 @@ export async function getConfig(
   }
 
   try {
-    const config = realtimeService.getRealtimeConfig(schemaName);
+    const config = realtimeService.getRealtimeConfig(target.schemaName);
     const hasuraOk = await realtimeService.checkHasuraConnection();
 
     return reply.send({
       success: true,
       data: {
         ...config,
+        runtimeAvailability: target.runtimeAvailability,
         hasuraConnected: hasuraOk,
       },
     });
   } catch (error) {
+    if (error instanceof RealtimeTokenUnavailableError) {
+      return reply.status(503).send({
+        success: false,
+        error: {
+          code: 'REALTIME_TOKEN_UNAVAILABLE',
+          message: 'Realtime token service is unavailable',
+        },
+      });
+    }
     const message = error instanceof Error ? error.message : 'Unknown error';
     return reply.status(500).send({
       success: false,
@@ -227,9 +374,8 @@ export async function getSubscriptionExample(
     | 'ALL';
   const envName = request.query.env;
 
-  // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId, envName);
-  if (!schemaName) {
+  const target = await getRealtimeRuntimeTarget(projectId, envName);
+  if (!target) {
     return reply.status(404).send({
       success: false,
       error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
@@ -238,7 +384,7 @@ export async function getSubscriptionExample(
 
   try {
     const examples = realtimeService.generateSubscriptionExample(
-      schemaName,
+      target.schemaName,
       tableName,
       operation
     );
@@ -268,9 +414,8 @@ export async function listTables(
   const { projectId } = request.params;
   const envName = request.query.env;
 
-  // 获取项目 schema
-  const schemaName = await getProjectSchema(projectId, envName);
-  if (!schemaName) {
+  const target = await getRealtimeRuntimeTarget(projectId, envName);
+  if (!target) {
     return reply.status(404).send({
       success: false,
       error: { code: 'NOT_FOUND', message: envName ? 'Environment not found' : 'Project not found' },
@@ -278,7 +423,7 @@ export async function listTables(
   }
 
   try {
-    const tables = await realtimeService.getTablesInSchema(schemaName);
+    const tables = await realtimeService.getTablesInSchema(target.schemaName);
 
     return reply.send({
       success: true,

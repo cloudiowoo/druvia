@@ -267,7 +267,7 @@ Run the command from Step 2. Expected: all selected tests pass.
 - Modify: `apps/admin/AGENTS.md`
 - Modify: `docs/agent/design-decisions.md`
 - Modify: `docs/progress.md`
-- Modify: `docs/superpowers/specs/2026-08-17-project-data-access-design.md`
+- Modify: `docs/plans/2026-08-17-project-data-access-design.md`
 - Modify: `docs/migration/supabase-compat.md`
 - Modify: `docs/003-version-release-guide.md`
 

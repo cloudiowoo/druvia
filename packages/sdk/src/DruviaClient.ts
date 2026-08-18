@@ -10,6 +10,7 @@ import { DruviaRealtime, RealtimeChannel } from './modules/realtime.js'
 import { DruviaRpc } from './modules/rpc.js'
 import { DruviaFunctions } from './modules/functions.js'
 import { QueryBuilder } from './modules/query-builder.js'
+import { createRealtimeTokenProvider } from './modules/realtime-token.js'
 
 export class DruviaClient {
   readonly auth: DruviaAuth
@@ -47,6 +48,7 @@ export class DruviaClient {
     )
     this.projectAuth.onAuthStateChange((_event, session) => {
       cachedProjectToken = session?.accessToken ?? null
+      this.realtime?.handleIdentityChange()
     })
     const initialRaw = storageAdapter.getItem('druvia.session')
     if (typeof initialRaw === 'string') {
@@ -65,6 +67,12 @@ export class DruviaClient {
     this.platformFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedPlatformToken)
     this.projectFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedProjectToken ?? cachedPlatformToken)
     const databaseFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedProjectToken)
+    const realtimeFetch = createFetchWrapper(
+      apiBase,
+      apiKey,
+      rawFetch,
+      () => this.projectAuth.getToken()
+    )
     const graphqlUrl = `${apiBase}/projects/${options.projectId}/graphql`
     this.database = new DruviaDatabase(graphqlUrl, databaseFetch, schema)
     this.storage = new DruviaStorage(apiBase, options.projectId, this.platformFetch)
@@ -73,10 +81,12 @@ export class DruviaClient {
 
     const wsFactory = options.websocket ?? getDefaultWebSocketFactory()
     if (wsFactory) {
-      const wsUrl = options.realtimeUrl
-        ? options.realtimeUrl.replace(/\/+$/, '') + '/v1/graphql'
-        : baseUrl.replace(/^http/, 'ws') + '/v1/graphql'
-      this.realtime = new DruviaRealtime(wsUrl, wsFactory)
+      const tokenProvider = createRealtimeTokenProvider({
+        apiBase,
+        projectId: options.projectId,
+        fetchFn: realtimeFetch,
+      })
+      this.realtime = new DruviaRealtime(tokenProvider, wsFactory, options.realtimeUrl)
     } else {
       this.realtime = null
     }

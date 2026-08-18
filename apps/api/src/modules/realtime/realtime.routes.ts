@@ -7,6 +7,11 @@ export async function realtimeRoutes(app: FastifyInstance) {
   app.register(async (protectedApp) => {
     protectedApp.addHook('preHandler', authenticate);
 
+    protectedApp.post(
+      '/projects/:projectId/realtime/token',
+      controller.issueToken as never
+    );
+
     // ============================================
     // Subscriptions
     // ============================================

@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Fastify 5, Hasura metadata API, Next.js 16, React 19, Vitest
 
-**Spec:** `docs/superpowers/specs/2026-08-17-project-data-access-design.md`
+**Spec:** `docs/plans/2026-08-17-project-data-access-design.md`
 
 ---
 

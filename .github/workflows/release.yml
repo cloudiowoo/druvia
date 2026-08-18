@@ -63,6 +63,51 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Realtime behavior
+        run: >-
+          pnpm vitest run
+          tests/unit/realtime-actor.test.ts
+          tests/unit/project-data-actor.test.ts
+          tests/unit/realtime-token-service.test.ts
+          tests/unit/ratelimit-realtime-token.test.ts
+          tests/unit/ratelimit-graphql.test.ts
+          tests/unit/realtime-controller.test.ts
+          tests/unit/realtime-service.test.ts
+          tests/unit/api-app.test.ts
+          tests/unit/auth.test.ts
+          tests/sdk/realtime-token.test.ts
+          tests/sdk/realtime.test.ts
+          tests/sdk/client.test.ts
+          tests/sdk/project-auth.test.ts
+          tests/sdk/database.test.ts
+          tests/unit/admin/realtime-connection-test.test.ts
+          tests/unit/admin/realtime-page.test.tsx
+          tests/unit/admin/data-interface-status.test.tsx
+          tests/unit/realtime-compose-config.test.ts
+          tests/unit/release-compose-files.test.ts
+          tests/unit/release-pipeline.test.ts
+
+      - name: Build SDK
+        run: pnpm --filter @druvia/sdk build
+
+      - name: Verify Realtime Compose contracts
+        run: node scripts/release/verify-realtime-compose.mjs
+
       - name: Prepare release metadata
         shell: bash
         run: |

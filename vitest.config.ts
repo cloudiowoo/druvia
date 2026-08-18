@@ -12,6 +12,7 @@ export default defineConfig({
       react: resolve(__dirname, 'apps/admin/node_modules/react'),
       'react/jsx-runtime': resolve(__dirname, 'apps/admin/node_modules/react/jsx-runtime.js'),
       'react/jsx-dev-runtime': resolve(__dirname, 'apps/admin/node_modules/react/jsx-dev-runtime.js'),
+      'next/navigation': resolve(__dirname, 'apps/admin/node_modules/next/navigation.js'),
     },
   },
   test: {

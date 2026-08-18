@@ -13,13 +13,16 @@ export function createFetchWrapper(
   baseUrl: string,
   apiKey: string,
   fetchFn: FetchFn,
-  getToken: () => string | null,
+  getToken: () => string | null | Promise<string | null>,
 ): FetchFn {
   return async (input: string, init?: RequestInit) => {
     const url = input.startsWith('http') ? input : `${baseUrl}${input}`
     const headers = new Headers(init?.headers)
     headers.set('apikey', apiKey)
-    const token = getToken()
+    const tokenValue = getToken()
+    const token = tokenValue && typeof (tokenValue as Promise<string | null>).then === 'function'
+      ? await tokenValue
+      : tokenValue
     if (token) {
       headers.set('Authorization', `Bearer ${token}`)
     }

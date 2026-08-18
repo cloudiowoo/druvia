@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -27,13 +28,6 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -47,6 +41,11 @@ import {
   type RealtimeAccessStatus,
 } from '@/lib/data-interface-status';
 import {
+  startRealtimeConnectionTest,
+  type RealtimeConnectionTestState,
+} from '@/lib/realtime-connection-test';
+import type { RealtimeTestCredential } from '@/lib/api';
+import {
   Radio,
   Wifi,
   WifiOff,
@@ -57,6 +56,7 @@ import {
   Play,
   Square,
   RefreshCw,
+  LoaderCircle,
 } from 'lucide-react';
 
 interface TableSubscription {
@@ -81,6 +81,7 @@ interface RealtimeConfig {
   schemaName: string;
   websocketEndpoint: string;
   graphqlEndpoint: string;
+  runtimeAvailability: 'available' | 'environment_identity_required';
   hasuraConnected: boolean;
 }
 
@@ -112,10 +113,12 @@ export default function RealtimePage() {
   const [codeExamples, setCodeExamples] = useState<CodeExample[]>([]);
   const [exampleLoading, setExampleLoading] = useState(false);
 
-  // Test connection state
-  const [testTable, setTestTable] = useState<string>('');
-  const [isConnected, setIsConnected] = useState(false);
-  const [messages, setMessages] = useState<string[]>([]);
+  const [credentialKind, setCredentialKind] = useState<RealtimeTestCredential['kind']>('apikey');
+  const [credential, setCredential] = useState('');
+  const [connectionState, setConnectionState] = useState<RealtimeConnectionTestState>('disconnected');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const probeRef = useRef<{ dispose: () => void } | null>(null);
+  const connectionAttemptRef = useRef(0);
 
   // Fetch subscriptions
   const fetchSubscriptions = useCallback(async () => {
@@ -140,6 +143,12 @@ export default function RealtimePage() {
     fetchSubscriptions();
     fetchConfig();
   }, [fetchSubscriptions, fetchConfig]);
+
+  useEffect(() => () => {
+    connectionAttemptRef.current += 1;
+    probeRef.current?.dispose();
+    probeRef.current = null;
+  }, []);
 
   // Toggle subscription
   const handleToggleSubscription = async (tableName: string, enabled: boolean) => {
@@ -183,24 +192,56 @@ export default function RealtimePage() {
     toast({ title: '代码已复制到剪贴板' });
   };
 
-  // Simulate test connection (actual WebSocket would require more setup)
-  const handleTestConnect = () => {
-    if (!testTable) {
-      toast({ title: '请选择一个表', variant: 'destructive' });
+  const handleTestConnect = async () => {
+    if (!credential.trim() || config?.runtimeAvailability !== 'available') {
       return;
     }
-    setIsConnected(true);
-    setMessages((prev) => [...prev, `[${new Date().toLocaleTimeString()}] 连接到 ${testTable} 订阅...`]);
-    setMessages((prev) => [...prev, `[${new Date().toLocaleTimeString()}] 等待数据变更...`]);
+    const attempt = ++connectionAttemptRef.current;
+    probeRef.current?.dispose();
+    probeRef.current = null;
+    setConnectionError(null);
+    setConnectionState('connecting');
+
+    const result = await api.issueRealtimeToken(projectId, {
+      kind: credentialKind,
+      value: credential.trim(),
+    });
+    if (attempt !== connectionAttemptRef.current) return;
+    if (!result.success || !result.data) {
+      setConnectionState('failed');
+      setConnectionError(result.error?.message || '无法建立实时连接');
+      return;
+    }
+
+    probeRef.current = startRealtimeConnectionTest({
+      websocketUrl: result.data.websocketUrl,
+      token: result.data.token,
+      onState: (state, error) => {
+        if (attempt !== connectionAttemptRef.current) return;
+        setConnectionState(state);
+        setConnectionError(error?.message ?? null);
+      },
+    });
   };
 
   const handleTestDisconnect = () => {
-    setIsConnected(false);
-    setMessages((prev) => [...prev, `[${new Date().toLocaleTimeString()}] 已断开连接`]);
+    connectionAttemptRef.current += 1;
+    probeRef.current?.dispose();
+    probeRef.current = null;
+    setCredential('');
+    setConnectionError(null);
+    setConnectionState('disconnected');
   };
 
-  const clearMessages = () => {
-    setMessages([]);
+  const connectionUnavailable = envName !== undefined
+    ? envName !== 'prod'
+    : config?.runtimeAvailability === 'environment_identity_required';
+  const connectionActive = connectionState === 'connecting' || connectionState === 'connected';
+  const connectionLabels: Record<RealtimeConnectionTestState, string> = {
+    connecting: '连接中',
+    connected: '已连接',
+    failed: '连接失败',
+    disconnected: '未连接',
   };
 
   return (
@@ -305,7 +346,8 @@ export default function RealtimePage() {
                     <TableRow>
                       <TableHead>表名</TableHead>
                       <TableHead>操作类型</TableHead>
-                      <TableHead>状态</TableHead>
+                      <TableHead>实时状态</TableHead>
+                      <TableHead>读取权限</TableHead>
                       <TableHead className="text-right">操作</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -346,6 +388,16 @@ export default function RealtimePage() {
                             )}
                           </div>
                         </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-2">
+                            <Badge variant={sub.hasAuthenticatedRead ? 'default' : 'outline'}>
+                              {sub.hasAuthenticatedRead ? '认证用户可读' : '认证用户不可读'}
+                            </Badge>
+                            <Badge variant={sub.hasAnonymousRead ? 'default' : 'outline'}>
+                              {sub.hasAnonymousRead ? '匿名用户可读' : '匿名用户不可读'}
+                            </Badge>
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right">
                           <Button
                             variant="ghost"
@@ -381,7 +433,14 @@ export default function RealtimePage() {
                 ) : config ? (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2">
-                      {config.hasuraConnected ? (
+                      {connectionUnavailable ? (
+                        <>
+                          <WifiOff className="h-5 w-5 text-amber-500" />
+                          <span className="text-amber-700">
+                            当前环境暂不提供应用 Realtime 连接
+                          </span>
+                        </>
+                      ) : config.hasuraConnected ? (
                         <>
                           <CheckCircle className="h-5 w-5 text-green-500" />
                           <span className="text-green-600">实时服务已连接</span>
@@ -414,6 +473,10 @@ export default function RealtimePage() {
               <CardContent>
                 {configLoading ? (
                   <Skeleton className="h-20 w-full" />
+                ) : config && connectionUnavailable ? (
+                  <p className="text-sm text-muted-foreground">
+                    当前环境没有可用的应用连接端点
+                  </p>
                 ) : config ? (
                   <div className="space-y-4">
                     <div>
@@ -457,64 +520,85 @@ export default function RealtimePage() {
         <TabsContent value="test">
           <Card>
             <CardHeader>
-              <CardTitle>订阅测试</CardTitle>
-              <CardDescription>
-                测试订阅连接（注意：这是模拟测试，实际订阅需要在客户端应用中实现）
-              </CardDescription>
+              <CardTitle>连接测试</CardTitle>
+              <CardDescription>使用应用凭证验证短期 Realtime 连接</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center gap-4">
-                  <Select value={testTable} onValueChange={setTestTable}>
-                    <SelectTrigger className="w-[200px]">
-                      <SelectValue placeholder="选择表" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {subscriptions
-                        .filter((s) => s.enabled)
-                        .map((s) => (
-                          <SelectItem key={s.tableName} value={s.tableName}>
-                            {s.tableName}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
+              <div className="space-y-5">
+                {connectionUnavailable && (
+                  <div className="border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    当前环境暂不支持应用身份连接测试
+                  </div>
+                )}
 
-                  {isConnected ? (
+                <div className="inline-flex h-9 items-center border bg-muted p-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={credentialKind === 'apikey' ? 'default' : 'ghost'}
+                    onClick={() => setCredentialKind('apikey')}
+                    disabled={connectionActive}
+                  >
+                    API Key
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={credentialKind === 'project_token' ? 'default' : 'ghost'}
+                    onClick={() => setCredentialKind('project_token')}
+                    disabled={connectionActive}
+                  >
+                    Project Token
+                  </Button>
+                </div>
+
+                <div className="max-w-xl space-y-2">
+                  <label htmlFor="realtime-credential" className="text-sm font-medium">
+                    应用凭证
+                  </label>
+                  <Input
+                    id="realtime-credential"
+                    type="password"
+                    value={credential}
+                    onChange={(event) => setCredential(event.target.value)}
+                    disabled={connectionActive || connectionUnavailable}
+                    autoComplete="off"
+                  />
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {connectionActive ? (
                     <Button variant="destructive" onClick={handleTestDisconnect}>
                       <Square className="h-4 w-4 mr-2" />
                       断开连接
                     </Button>
                   ) : (
-                    <Button onClick={handleTestConnect} disabled={!testTable}>
+                    <Button
+                      onClick={handleTestConnect}
+                      disabled={!credential.trim() || connectionUnavailable || configLoading}
+                    >
                       <Play className="h-4 w-4 mr-2" />
                       连接
                     </Button>
                   )}
-
-                  <Button variant="outline" onClick={clearMessages}>
-                    清除日志
-                  </Button>
                 </div>
 
-                <div className="bg-gray-900 text-green-400 font-mono text-sm p-4 rounded-lg h-[300px] overflow-y-auto">
-                  {messages.length === 0 ? (
-                    <p className="text-gray-500">选择一个已启用订阅的表，然后点击连接...</p>
-                  ) : (
-                    messages.map((msg, i) => (
-                      <div key={i}>{msg}</div>
-                    ))
+                <div className="border px-4 py-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    {connectionState === 'connecting' ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin text-blue-600" />
+                    ) : connectionState === 'connected' ? (
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                    ) : connectionState === 'failed' ? (
+                      <XCircle className="h-4 w-4 text-red-600" />
+                    ) : (
+                      <WifiOff className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    {connectionLabels[connectionState]}
+                  </div>
+                  {connectionError && (
+                    <p className="mt-2 text-sm text-red-600">{connectionError}</p>
                   )}
-                </div>
-
-                <div className="bg-muted/50 p-4 rounded-lg">
-                  <h4 className="font-medium mb-2">使用说明</h4>
-                  <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1">
-                    <li>确保目标表已启用订阅</li>
-                    <li>在客户端应用中使用 graphql-ws 库连接到 WebSocket 端点</li>
-                    <li>发送 GraphQL subscription 查询</li>
-                    <li>当表数据变更时，会实时收到更新</li>
-                  </ol>
                 </div>
               </div>
             </CardContent>
