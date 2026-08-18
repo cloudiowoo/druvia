@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../apps/api/src/modules/functions/functions.service.js', () => ({
+  FunctionActorScopeError: class FunctionActorScopeError extends Error {},
+  FunctionDisabledError: class FunctionDisabledError extends Error {},
+  FunctionInvokeForbiddenError: class FunctionInvokeForbiddenError extends Error {},
+  FunctionNotFoundError: class FunctionNotFoundError extends Error {},
   getFunction: vi.fn(),
   invokeFunction: vi.fn(),
   listFunctions: vi.fn(),
@@ -45,6 +49,13 @@ function createReply(): ReplyStub {
   return reply
 }
 
+const successfulResult = {
+  success: true,
+  data: { ok: true },
+  duration: 12,
+  executionId: 'exec_123',
+}
+
 describe('Functions Controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -52,78 +63,45 @@ describe('Functions Controller', () => {
       projectId: 'proj_123',
       schemaName: 'dru_proj_123',
     } as Awaited<ReturnType<typeof projectService.getProjectById>>)
-    vi.mocked(functionsService.getFunction).mockResolvedValue({
-      id: 'fn_123',
-      projectId: 'proj_123',
-      name: 'wx-login-register',
-      code: 'return {}',
-      runtime: 'deno',
-      status: 'active',
-      invokeAuthMode: 'anon_allowed',
-      description: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })
+    vi.mocked(functionsService.invokeFunction).mockResolvedValue(successfulResult)
   })
 
-  it('allows same-project apikey users to invoke anon-allowed functions', async () => {
-    vi.mocked(functionsService.invokeFunction).mockResolvedValue({
-      success: true,
-      data: { ok: true },
-      duration: 12,
-      executionId: 'exec_123',
-    })
-
+  it('passes a canonical same-project API key actor to the service', async () => {
     const reply = createReply()
     const request = {
       params: { projectId: 'proj_123', name: 'wx-login-register' },
       body: { payload: { code: 'wx_code' } },
-      user: { kind: 'apikey' as const, projectId: 'proj_123', role: 'anon' as const },
+      user: {
+        kind: 'apikey' as const,
+        projectId: 'proj_123',
+        role: 'anon' as const,
+        apiKeyId: 17,
+        apiKeyPrefix: 'drv_test',
+      },
     }
 
     await functionsController.invokeFunction(request as never, reply as never)
 
+    expect(functionsService.getFunction).not.toHaveBeenCalled()
     expect(functionsService.invokeFunction).toHaveBeenCalledWith(
       'proj_123',
       'wx-login-register',
       { code: 'wx_code' },
       {
-        authType: 'apikey',
+        version: 1,
+        actorType: 'apikey',
+        source: 'project_api_key',
         projectId: 'proj_123',
+        subject: 'apikey:17',
         role: 'anon',
+        apiKeyId: 17,
+        apiKeyPrefix: 'drv_test',
       }
     )
-    expect(reply.send).toHaveBeenCalledWith({
-      success: true,
-      data: {
-        success: true,
-        data: { ok: true },
-        duration: 12,
-        executionId: 'exec_123',
-      },
-    })
+    expect(reply.send).toHaveBeenCalledWith({ success: true, data: successfulResult })
   })
 
-  it('allows same-project project users to invoke jwt-required functions', async () => {
-    vi.mocked(functionsService.getFunction).mockResolvedValue({
-      id: 'fn_456',
-      projectId: 'proj_123',
-      name: 'upload-avatar',
-      code: 'return {}',
-      runtime: 'deno',
-      status: 'active',
-      invokeAuthMode: 'jwt_required',
-      description: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })
-    vi.mocked(functionsService.invokeFunction).mockResolvedValue({
-      success: true,
-      data: { ok: true },
-      duration: 10,
-      executionId: 'exec_456',
-    })
-
+  it('passes a canonical same-project Project User actor to the service', async () => {
     const reply = createReply()
     const request = {
       params: { projectId: 'proj_123', name: 'upload-avatar' },
@@ -145,35 +123,71 @@ describe('Functions Controller', () => {
       'upload-avatar',
       { fileName: 'avatar.png' },
       {
-        authType: 'project_user',
+        version: 1,
+        actorType: 'project_user',
+        source: 'project_session',
         projectId: 'proj_123',
+        subject: 'project_user:usr_proj_123',
         role: 'authenticated',
         projectUserId: 'usr_proj_123',
         provider: 'trusted_backend',
       }
     )
     expect(access.checkProjectAccess).not.toHaveBeenCalled()
+    expect(functionsService.getFunction).not.toHaveBeenCalled()
   })
 
-  it('rejects apikey invoke requests for jwt-required functions', async () => {
-    vi.mocked(functionsService.getFunction).mockResolvedValue({
-      id: 'fn_456',
-      projectId: 'proj_123',
-      name: 'upload-avatar',
-      code: 'return {}',
-      runtime: 'deno',
-      status: 'active',
-      invokeAuthMode: 'jwt_required',
-      description: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })
+  it('passes an explicitly authorized Platform User actor to the service', async () => {
+    vi.mocked(access.checkProjectAccess).mockResolvedValue(true)
+    const reply = createReply()
+    const request = {
+      params: { projectId: 'proj_123', name: 'upload-avatar' },
+      body: {},
+      user: {
+        kind: 'platform_user' as const,
+        userId: 'user_123',
+        uid: 42,
+        tenantId: 'tenant_123',
+        role: 'user',
+      },
+    }
 
+    await functionsController.invokeFunction(request as never, reply as never)
+
+    expect(access.checkProjectAccess).toHaveBeenCalledWith('user_123', 'proj_123')
+    expect(functionsService.invokeFunction).toHaveBeenCalledWith(
+      'proj_123',
+      'upload-avatar',
+      undefined,
+      {
+        version: 1,
+        actorType: 'platform_user',
+        source: 'platform_session',
+        projectId: 'proj_123',
+        subject: 'platform_user:user_123',
+        role: 'user',
+        platformUserId: 'user_123',
+        platformUid: 42,
+        tenantId: 'tenant_123',
+      }
+    )
+  })
+
+  it('maps service-level API key mode rejection to a sanitized 403', async () => {
+    vi.mocked(functionsService.invokeFunction).mockRejectedValue(
+      new functionsService.FunctionInvokeForbiddenError()
+    )
     const reply = createReply()
     const request = {
       params: { projectId: 'proj_123', name: 'upload-avatar' },
       body: { payload: { fileName: 'avatar.png' } },
-      user: { kind: 'apikey' as const, projectId: 'proj_123', role: 'anon' as const },
+      user: {
+        kind: 'apikey' as const,
+        projectId: 'proj_123',
+        role: 'anon' as const,
+        apiKeyId: 17,
+        apiKeyPrefix: 'drv_test',
+      },
     }
 
     await functionsController.invokeFunction(request as never, reply as never)
@@ -183,15 +197,46 @@ describe('Functions Controller', () => {
       success: false,
       error: { code: 'FORBIDDEN', message: 'Function requires an authenticated user' },
     })
-    expect(functionsService.invokeFunction).not.toHaveBeenCalled()
   })
 
-  it('rejects apikey invoke requests for a different project', async () => {
+  it('maps a missing function from the service to a sanitized 404', async () => {
+    vi.mocked(functionsService.invokeFunction).mockRejectedValue(
+      new functionsService.FunctionNotFoundError()
+    )
+    const reply = createReply()
+    const request = {
+      params: { projectId: 'proj_123', name: 'missing' },
+      body: {},
+      user: {
+        kind: 'apikey' as const,
+        projectId: 'proj_123',
+        role: 'anon' as const,
+        apiKeyId: 17,
+        apiKeyPrefix: 'drv_test',
+      },
+    }
+
+    await functionsController.invokeFunction(request as never, reply as never)
+
+    expect(reply.status).toHaveBeenCalledWith(404)
+    expect(reply.payload).toEqual({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'Function not found' },
+    })
+  })
+
+  it('rejects invoke requests from a different project before service execution', async () => {
     const reply = createReply()
     const request = {
       params: { projectId: 'proj_123', name: 'wx-login-register' },
       body: { payload: { code: 'wx_code' } },
-      user: { kind: 'apikey' as const, projectId: 'proj_other', role: 'anon' as const },
+      user: {
+        kind: 'apikey' as const,
+        projectId: 'proj_other',
+        role: 'anon' as const,
+        apiKeyId: 17,
+        apiKeyPrefix: 'drv_test',
+      },
     }
 
     await functionsController.invokeFunction(request as never, reply as never)
@@ -204,11 +249,17 @@ describe('Functions Controller', () => {
     expect(functionsService.invokeFunction).not.toHaveBeenCalled()
   })
 
-  it('keeps function management routes unavailable to apikey users', async () => {
+  it('keeps function management routes unavailable to API key users', async () => {
     const reply = createReply()
     const request = {
       params: { projectId: 'proj_123' },
-      user: { kind: 'apikey' as const, projectId: 'proj_123', role: 'anon' as const },
+      user: {
+        kind: 'apikey' as const,
+        projectId: 'proj_123',
+        role: 'anon' as const,
+        apiKeyId: 17,
+        apiKeyPrefix: 'drv_test',
+      },
     }
 
     await functionsController.listFunctions(request as never, reply as never)

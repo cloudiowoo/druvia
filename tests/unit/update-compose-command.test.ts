@@ -51,6 +51,24 @@ describe('updater Docker command builders', () => {
     })).toContain('--profile');
   });
 
+  it('builds a dedicated Worker-first rollback command without dependency replacement', () => {
+    expect(buildComposeArgs('rollbackWorker', options)).toEqual([
+      'compose',
+      '--project-directory',
+      '/deploy',
+      '--env-file',
+      '/deploy/.env.prod',
+      '--env-file',
+      '/deploy/.env.release',
+      '-f',
+      '/deploy/docker-compose.release.yml',
+      'up',
+      '-d',
+      '--no-deps',
+      'deno',
+    ]);
+  });
+
   it('builds image pull argv without shell interpolation', () => {
     expect(buildDockerImagePullArgs('ghcr.io/druvia/druvia-api@sha256:abc')).toEqual([
       'image',

@@ -136,6 +136,39 @@ jobs:
           tests/unit/admin/project-data-access-overview-panel.test.tsx
           tests/unit/api-app.test.ts
 
+      - name: Verify Project Actor RPC and Functions cutover
+        run: >-
+          pnpm vitest run
+          tests/unit/project-actor.test.ts
+          tests/unit/api-keys-service.test.ts
+          tests/unit/auth.test.ts
+          tests/unit/realtime-actor.test.ts
+          tests/unit/rpc-controller.test.ts
+          tests/unit/rpc.test.ts
+          tests/unit/functions-controller.test.ts
+          tests/unit/functions-service.test.ts
+          tests/unit/functions-internal-token.test.ts
+          tests/unit/functions-internal-graphql.test.ts
+          tests/unit/functions-internal-storage.test.ts
+          tests/unit/functions-worker-config.test.ts
+          tests/unit/deno-worker-auth.test.ts
+          tests/unit/deno-worker-runtime.test.ts
+          tests/unit/deno-worker-logging.test.ts
+          tests/unit/worker-compose-config.test.ts
+          tests/unit/update-compose-command.test.ts
+          tests/unit/updater-service.test.ts
+          tests/sdk/client.test.ts
+          tests/sdk/functions.test.ts
+          tests/sdk/project-auth.test.ts
+
+      - name: Verify Deno Worker types
+        run: >-
+          docker run --rm
+          -v "$PWD/docker/deno-worker:/app:ro"
+          -w /app
+          denoland/deno:alpine-2.0.6
+          deno check main.ts executor.ts
+
       - name: Build SDK
         run: pnpm --filter @druvia/sdk build
 

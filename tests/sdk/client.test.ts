@@ -128,7 +128,7 @@ describe('createClient', () => {
     expect(headers.get('apikey')).toBe('test-key')
   })
 
-  it('rpc() keeps the platform fallback when no project session exists', async () => {
+  it('rpc() does not fall back to the platform session when no project session exists', async () => {
     const store = new Map<string, string>([
       ['druvia.session', JSON.stringify({ accessToken: 'platform-token', user: { id: 1 } })],
     ])
@@ -151,10 +151,11 @@ describe('createClient', () => {
     await client.rpc('test_fn')
 
     const headers = new Headers((fetch as any).mock.calls[0][1].headers)
-    expect(headers.get('Authorization')).toBe('Bearer platform-token')
+    expect(headers.get('Authorization')).toBeNull()
+    expect(headers.get('apikey')).toBe('test-key')
   })
 
-  it('functions() falls back to the platform token when no project session exists', async () => {
+  it('functions() does not fall back to the platform token when no project session exists', async () => {
     const store = new Map<string, string>([
       ['druvia.session', JSON.stringify({ accessToken: 'platform-token', user: { id: 1 } })],
     ])
@@ -177,7 +178,44 @@ describe('createClient', () => {
     await client.functions.invoke('upload-avatar', { body: { fileName: 'avatar.png' } })
 
     const headers = new Headers((fetch as any).mock.calls[0][1].headers)
-    expect(headers.get('Authorization')).toBe('Bearer platform-token')
+    expect(headers.get('Authorization')).toBeNull()
+    expect(headers.get('apikey')).toBe('test-key')
+  })
+
+  it('functions() prefers the Project Session and does not retry a rejected token as API-key-only', async () => {
+    const store = new Map<string, string>([
+      ['druvia.session', JSON.stringify({ accessToken: 'platform-token', user: { id: 1 } })],
+      ['druvia.project_session:proj_123', JSON.stringify({
+        accessToken: 'invalid-project-token',
+        user: { id: 'pusr_1' },
+      })],
+    ])
+    const fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'invalid token' },
+      }),
+    })
+    const storage = {
+      getItem: vi.fn((key: string) => store.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => { store.set(key, value) }),
+      removeItem: vi.fn((key: string) => { store.delete(key) }),
+    }
+    const client = createClient('http://localhost:3001/api/v1', 'test-key', {
+      projectId: 'proj_123',
+      fetch: fetch as never,
+      storage,
+    })
+
+    const result = await client.functions.invoke('upload-avatar')
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const headers = new Headers(fetch.mock.calls[0][1].headers)
+    expect(headers.get('Authorization')).toBe('Bearer invalid-project-token')
+    expect(headers.get('apikey')).toBe('test-key')
+    expect(result.error?.code).toBe('UNAUTHORIZED')
   })
 
   it('channel() returns a RealtimeChannel when websocket provided', () => {

@@ -18,6 +18,8 @@ const apiKey = {
   kind: 'apikey' as const,
   projectId: 'proj_123',
   role: 'anon' as const,
+  apiKeyId: 42,
+  apiKeyPrefix: 'dru_fixture1',
 }
 
 describe('project data actor resolver', () => {

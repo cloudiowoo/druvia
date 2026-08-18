@@ -22,7 +22,7 @@ export class DruviaClient {
   private rpcModule: DruviaRpc
   private realtime: DruviaRealtime | null
   private platformFetch: FetchFn
-  private projectFetch: FetchFn
+  private applicationFetch: FetchFn
 
   constructor(baseUrl: string, apiKey: string, options: DruviaClientOptions) {
     const rawFetch = options.fetch ?? getDefaultFetch()
@@ -65,7 +65,7 @@ export class DruviaClient {
     }
 
     this.platformFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedPlatformToken)
-    this.projectFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedProjectToken ?? cachedPlatformToken)
+    this.applicationFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedProjectToken)
     const databaseFetch = createFetchWrapper(apiBase, apiKey, rawFetch, () => cachedProjectToken)
     const realtimeFetch = createFetchWrapper(
       apiBase,
@@ -76,8 +76,8 @@ export class DruviaClient {
     const graphqlUrl = `${apiBase}/projects/${options.projectId}/graphql`
     this.database = new DruviaDatabase(graphqlUrl, databaseFetch, schema)
     this.storage = new DruviaStorage(apiBase, options.projectId, this.platformFetch)
-    this.rpcModule = new DruviaRpc(apiBase, options.projectId, this.projectFetch)
-    this.functions = new DruviaFunctions(apiBase, options.projectId, this.projectFetch)
+    this.rpcModule = new DruviaRpc(apiBase, options.projectId, this.applicationFetch)
+    this.functions = new DruviaFunctions(apiBase, options.projectId, this.applicationFetch)
 
     const wsFactory = options.websocket ?? getDefaultWebSocketFactory()
     if (wsFactory) {

@@ -59,7 +59,7 @@ export function resolveRealtimeExecutionContext(
       ? resolveDataScopeRole({ projectId: input.projectId, actor: 'anonymous' })
       : 'anonymous',
     actorType: 'apikey',
-    subject: `apikey:${input.projectId}`,
+    subject: `apikey:${input.actor.apiKeyId}`,
     sessionVariables: {
       'x-hasura-project-id': input.projectId,
       'x-hasura-actor-type': 'apikey',

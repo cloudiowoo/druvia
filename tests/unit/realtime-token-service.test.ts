@@ -161,6 +161,7 @@ describe('Realtime access token issuer', () => {
       algorithms: ['HS256'],
       issuer: 'druvia',
       audience: 'druvia-hasura',
+      clockTimestamp: Math.floor(now.getTime() / 1000),
     }) as jwt.JwtPayload
 
     expect(payload).toMatchObject({

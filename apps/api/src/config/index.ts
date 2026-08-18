@@ -34,6 +34,20 @@ export function resolveRealtimeConfig(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
+export function resolveFunctionsConfig(env: NodeJS.ProcessEnv = process.env) {
+  const internalTokenSecret = env.FUNCTIONS_INTERNAL_TOKEN_SECRET || env.JWT_SECRET || '';
+  const workerSecret = env.DENO_WORKER_SECRET || internalTokenSecret;
+  if (new TextEncoder().encode(workerSecret).byteLength < 32) {
+    throw new Error('DENO_WORKER_SECRET must contain at least 32 UTF-8 bytes');
+  }
+
+  return {
+    internalTokenSecret,
+    internalTokenTtlSeconds: parseInt(env.FUNCTIONS_INTERNAL_TOKEN_TTL_SECONDS || '300', 10),
+    workerSecret,
+  };
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   host: process.env.HOST || '0.0.0.0',
@@ -58,10 +72,7 @@ export const config = {
     endpoint: process.env.HASURA_ENDPOINT || 'http://localhost:8080',
   },
   realtime: resolveRealtimeConfig(),
-  functions: {
-    internalTokenSecret: process.env.FUNCTIONS_INTERNAL_TOKEN_SECRET || process.env.JWT_SECRET || '',
-    internalTokenTtlSeconds: parseInt(process.env.FUNCTIONS_INTERNAL_TOKEN_TTL_SECONDS || '300', 10),
-  },
+  functions: resolveFunctionsConfig(),
   projectAuth: {
     tokenSecret: process.env.PROJECT_AUTH_JWT_SECRET || process.env.JWT_SECRET || '',
     defaultAccessTokenTtlSeconds: parseInt(process.env.PROJECT_AUTH_ACCESS_TOKEN_TTL_SECONDS || '3600', 10),

@@ -11,6 +11,49 @@ vi.mock('../../apps/api/src/modules/storage/storage.service.js', () => ({
 import * as storageService from '../../apps/api/src/modules/storage/storage.service.js'
 import { internalFunctionsStorageRoutes } from '../../apps/api/src/modules/functions/internal-storage.routes.js'
 import { signInternalFunctionToken } from '../../apps/api/src/modules/functions/internal-token.js'
+import type { ProjectActorContext } from '../../apps/api/src/lib/project-actor.js'
+
+const projectUserActor: ProjectActorContext = {
+  version: 1,
+  actorType: 'project_user',
+  source: 'project_session',
+  projectId: 'proj_123',
+  subject: 'project_user:pu_real',
+  role: 'authenticated',
+  projectUserId: 'pu_real',
+  provider: 'wechat',
+}
+
+const apiKeyActor: ProjectActorContext = {
+  version: 1,
+  actorType: 'apikey',
+  source: 'project_api_key',
+  projectId: 'proj_123',
+  subject: 'apikey:17',
+  role: 'anon',
+  apiKeyId: 17,
+  apiKeyPrefix: 'drv_test',
+}
+
+const platformActor: ProjectActorContext = {
+  version: 1,
+  actorType: 'platform_user',
+  source: 'platform_session',
+  projectId: 'proj_123',
+  subject: 'platform_user:user_123',
+  role: 'user',
+  platformUserId: 'user_123',
+  platformUid: 42,
+}
+
+function tokenFor(actor: ProjectActorContext): string {
+  return signInternalFunctionToken({
+    projectId: actor.projectId,
+    functionName: 'upload-avatar',
+    actor,
+    expiresIn: 120,
+  })
+}
 
 describe('Functions Internal Storage Route', () => {
   beforeEach(() => {
@@ -57,15 +100,7 @@ describe('Functions Internal Storage Route', () => {
       expiresIn: null,
     })
 
-    const token = signInternalFunctionToken({
-      projectId: 'proj_123',
-      functionName: 'upload-avatar',
-      authType: 'project_user',
-      role: 'authenticated',
-      projectUserId: 'pu_real',
-      provider: 'wechat',
-      expiresIn: 120,
-    })
+    const token = tokenFor(projectUserActor)
 
     try {
       const response = await app.inject({
@@ -123,6 +158,72 @@ describe('Functions Internal Storage Route', () => {
     }
   })
 
+  it.each([
+    [apiKeyActor, { createdByType: 'apikey', sourceFunction: 'upload-avatar' }],
+    [platformActor, {
+      createdByType: 'platform_user',
+      platformUserId: 'user_123',
+      sourceFunction: 'upload-avatar',
+    }],
+  ])('preserves $actorType upload audit attribution from the signed actor', async (actor, expectedAudit) => {
+    const app = Fastify()
+    await app.register(internalFunctionsStorageRoutes, { prefix: '/api' })
+
+    vi.mocked(storageService.getBucketByName).mockResolvedValue({
+      id: 1,
+      bucketId: 'bucket_123',
+      projectId: 'proj_123',
+      name: 'team-assets',
+      public: false,
+      fileSizeLimit: null,
+      allowedMimeTypes: null,
+      corsConfig: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    vi.mocked(storageService.uploadObject).mockResolvedValue({
+      id: 1,
+      objectId: 'obj_123',
+      bucketId: 'bucket_123',
+      name: 'avatars/a.png',
+      size: 4,
+      mimeType: 'image/png',
+      etag: 'etag-1',
+      storageProvider: 'local',
+      storagePath: 'proj_123/team-assets/avatars/a.png',
+      metadata: {},
+      createdBy: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/internal/functions/storage/upload',
+        headers: { 'x-druvia-internal-token': tokenFor(actor) },
+        payload: {
+          bucket: 'team-assets',
+          path: 'avatars/a.png',
+          contentType: 'image/png',
+          dataBase64: Buffer.from('file').toString('base64'),
+          actor: projectUserActor,
+        },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(storageService.uploadObject).toHaveBeenCalledWith(
+        expect.anything(),
+        'avatars/a.png',
+        expect.any(Buffer),
+        'image/png',
+        expectedAudit
+      )
+    } finally {
+      await app.close()
+    }
+  })
+
   it('rejects requests with an invalid internal token', async () => {
     const app = Fastify()
     await app.register(internalFunctionsStorageRoutes, { prefix: '/api' })
@@ -154,12 +255,7 @@ describe('Functions Internal Storage Route', () => {
     const app = Fastify()
     await app.register(internalFunctionsStorageRoutes, { prefix: '/api' })
 
-    const token = signInternalFunctionToken({
-      projectId: 'proj_123',
-      functionName: 'upload-avatar',
-      authType: 'project_user',
-      expiresIn: 120,
-    })
+    const token = tokenFor(projectUserActor)
 
     try {
       const response = await app.inject({
@@ -188,15 +284,7 @@ describe('Functions Internal Storage Route', () => {
     const app = Fastify()
     await app.register(internalFunctionsStorageRoutes, { prefix: '/api' })
 
-    const token = signInternalFunctionToken({
-      projectId: 'proj_123',
-      functionName: 'upload-avatar',
-      authType: 'project_user',
-      role: 'authenticated',
-      projectUserId: 'pu_123',
-      provider: 'wechat',
-      expiresIn: 120,
-    })
+    const token = tokenFor(projectUserActor)
 
     try {
       const response = await app.inject({
@@ -227,13 +315,7 @@ describe('Functions Internal Storage Route', () => {
 
     vi.mocked(storageService.getBucketByName).mockResolvedValue(null)
 
-    const token = signInternalFunctionToken({
-      projectId: 'proj_123',
-      functionName: 'upload-avatar',
-      authType: 'apikey',
-      role: 'anon',
-      expiresIn: 120,
-    })
+    const token = tokenFor(apiKeyActor)
 
     try {
       const response = await app.inject({
@@ -276,15 +358,7 @@ describe('Functions Internal Storage Route', () => {
     })
     vi.mocked(storageService.deleteObject).mockResolvedValue(true)
 
-    const token = signInternalFunctionToken({
-      projectId: 'proj_123',
-      functionName: 'upload-avatar',
-      authType: 'project_user',
-      role: 'authenticated',
-      projectUserId: 'pu_123',
-      provider: 'wechat',
-      expiresIn: 120,
-    })
+    const token = tokenFor(projectUserActor)
 
     try {
       const response = await app.inject({
@@ -333,15 +407,7 @@ describe('Functions Internal Storage Route', () => {
     })
     vi.mocked(storageService.deleteObject).mockResolvedValue(false)
 
-    const token = signInternalFunctionToken({
-      projectId: 'proj_123',
-      functionName: 'upload-avatar',
-      authType: 'project_user',
-      role: 'authenticated',
-      projectUserId: 'pu_123',
-      provider: 'wechat',
-      expiresIn: 120,
-    })
+    const token = tokenFor(platformActor)
 
     try {
       const response = await app.inject({

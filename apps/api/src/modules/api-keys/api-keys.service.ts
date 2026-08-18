@@ -77,7 +77,17 @@ export async function deleteApiKey(id: number, projectId: string): Promise<boole
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function validateApiKey(key: string): Promise<{ valid: boolean; projectId?: string; schemaName?: string }> {
+export type ValidateApiKeyResult =
+  | { valid: false }
+  | {
+      valid: true;
+      projectId: string;
+      schemaName: string;
+      apiKeyId: number;
+      apiKeyPrefix: string;
+    };
+
+export async function validateApiKey(key: string): Promise<ValidateApiKeyResult> {
   const keyHash = hashApiKey(key);
 
   const result = await pool.query(
@@ -85,7 +95,7 @@ export async function validateApiKey(key: string): Promise<{ valid: boolean; pro
      SET last_used_at = NOW()
      FROM druvia_projects p
      WHERE ak.key_hash = $1 AND p.project_id = ak.project_id
-     RETURNING ak.project_id, p.schema_name`,
+     RETURNING ak.id, ak.project_id, ak.key_prefix, p.schema_name`,
     [keyHash]
   );
 
@@ -93,5 +103,11 @@ export async function validateApiKey(key: string): Promise<{ valid: boolean; pro
     return { valid: false };
   }
 
-  return { valid: true, projectId: result.rows[0].project_id, schemaName: result.rows[0].schema_name };
+  return {
+    valid: true,
+    projectId: result.rows[0].project_id,
+    schemaName: result.rows[0].schema_name,
+    apiKeyId: result.rows[0].id,
+    apiKeyPrefix: result.rows[0].key_prefix,
+  };
 }

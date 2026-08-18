@@ -20,6 +20,8 @@ const apiKey = {
   kind: 'apikey' as const,
   projectId: 'proj_123',
   role: 'anon' as const,
+  apiKeyId: 42,
+  apiKeyPrefix: 'dru_fixture1',
 }
 
 describe('realtime actor resolver', () => {
@@ -57,7 +59,7 @@ describe('realtime actor resolver', () => {
     expect(context).toEqual({
       role: 'anonymous',
       actorType: 'apikey',
-      subject: 'apikey:proj_123',
+      subject: 'apikey:42',
       sessionVariables: {
         'x-hasura-project-id': 'proj_123',
         'x-hasura-actor-type': 'apikey',
@@ -91,7 +93,7 @@ describe('realtime actor resolver', () => {
     })).toEqual({
       role: resolveDataScopeRole({ projectId: 'proj_123', actor: 'anonymous' }),
       actorType: 'apikey',
-      subject: 'apikey:proj_123',
+      subject: 'apikey:42',
       sessionVariables: {
         'x-hasura-project-id': 'proj_123',
         'x-hasura-actor-type': 'apikey',

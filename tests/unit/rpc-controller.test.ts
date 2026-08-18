@@ -76,7 +76,21 @@ describe('RPC Controller', () => {
 
     await rpcController.invokeRpc(request as never, reply as never)
 
-    expect(callFunction).toHaveBeenCalledWith('dru_default_taroapp', 'get_profile', { id: 1 })
+    expect(callFunction).toHaveBeenCalledWith(
+      'dru_default_taroapp',
+      'get_profile',
+      { id: 1 },
+      {
+        version: 1,
+        actorType: 'project_user',
+        source: 'project_session',
+        projectId: 'proj_123',
+        subject: 'project_user:usr_proj_1',
+        role: 'authenticated',
+        projectUserId: 'usr_proj_1',
+        provider: 'trusted_backend',
+      }
+    )
     expect(checkProjectAccess).not.toHaveBeenCalled()
     expect(reply.payload).toEqual({
       data: { ok: true },
@@ -93,6 +107,8 @@ describe('RPC Controller', () => {
         kind: 'apikey' as const,
         projectId: 'proj_123',
         role: 'anon' as const,
+        apiKeyId: 42,
+        apiKeyPrefix: 'dru_fixture1',
       },
     }
 
@@ -103,5 +119,54 @@ describe('RPC Controller', () => {
       success: false,
       error: { code: 'UNAUTHORIZED', message: 'Not authenticated' },
     })
+  })
+
+  it('passes an authorized Platform User as an explicit management actor', async () => {
+    vi.mocked(checkProjectAccess).mockResolvedValue(true)
+    vi.mocked(callFunction).mockResolvedValue({ ok: true })
+    const reply = createReply()
+
+    await rpcController.invokeRpc({
+      params: { projectId: 'proj_123', functionName: 'get_profile' },
+      body: {},
+      user: {
+        kind: 'platform_user',
+        userId: 'user_123',
+        uid: 7,
+        role: 'admin',
+      },
+    } as never, reply as never)
+
+    expect(checkProjectAccess).toHaveBeenCalledWith('user_123', 'proj_123')
+    expect(callFunction).toHaveBeenCalledWith(
+      'dru_default_taroapp',
+      'get_profile',
+      undefined,
+      expect.objectContaining({
+        actorType: 'platform_user',
+        subject: 'platform_user:user_123',
+        platformUid: 7,
+      })
+    )
+  })
+
+  it('rejects a cross-project Project User before invoking the service', async () => {
+    const reply = createReply()
+
+    await rpcController.invokeRpc({
+      params: { projectId: 'proj_123', functionName: 'get_profile' },
+      body: {},
+      user: {
+        kind: 'project_user',
+        sub: 'pusr_other',
+        projectId: 'proj_other',
+        authType: 'project_user',
+        role: 'authenticated',
+        provider: 'wechat',
+      },
+    } as never, reply as never)
+
+    expect(reply.status).toHaveBeenCalledWith(403)
+    expect(callFunction).not.toHaveBeenCalled()
   })
 })

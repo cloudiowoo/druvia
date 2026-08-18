@@ -1,5 +1,10 @@
-import { query } from '../../db/index.js';
+import { getClient, query } from '../../db/index.js';
 import format from 'pg-format';
+import {
+  toProjectActorClaims,
+  toProjectActorHeaders,
+  type ProjectActorContext,
+} from '../../lib/project-actor.js';
 
 interface FunctionSignature {
   argNames: string[];
@@ -107,6 +112,7 @@ function buildInputSignature(row: {
 async function discoverFunction(
   schemaName: string,
   functionName: string,
+  queryImpl: typeof query = query,
 ): Promise<FunctionSignature | null> {
   const cacheKey = `${schemaName}.${functionName}`;
   const cached = signatureCache.get(cacheKey);
@@ -114,7 +120,7 @@ async function discoverFunction(
     return cached;
   }
 
-  const rows = await query<{
+  const rows = await queryImpl<{
     proargnames: string[] | null;
     proargtypes: string | null;
     proallargtypes: string | null;
@@ -147,32 +153,34 @@ async function discoverFunction(
  * Call a PG function in the given schema with named args.
  * Uses parameterized queries to prevent SQL injection.
  */
-export async function callFunction(
+interface RpcClient {
+  query(text: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  release(error?: Error): void;
+}
+
+export interface RpcServiceDependencies {
+  query: typeof query;
+  getClient(): Promise<RpcClient>;
+}
+
+function buildFunctionCall(
   schemaName: string,
   functionName: string,
+  signature: FunctionSignature,
   args?: Record<string, unknown>,
-): Promise<unknown> {
-  const signature = await discoverFunction(schemaName, functionName);
-  if (signature === null) {
-    throw new RpcError('FUNCTION_NOT_FOUND', `Function "${functionName}" not found in schema "${schemaName}"`);
-  }
-
-  // Build parameterized call
-  // Use pg-format %I for identifiers (schema + function name)
+): { sql: string; values: unknown[] } {
   if (!args || Object.keys(args).length === 0 || signature.argTypeOids.length === 0) {
-    // No arguments
-    const sql = format('SELECT * FROM %I.%I()', schemaName, functionName);
-    const rows = await query<Record<string, unknown>>(sql);
-    return normalizeResult(rows);
+    return {
+      sql: format('SELECT * FROM %I.%I()', schemaName, functionName),
+      values: [],
+    };
   }
 
-  // Map named args to positional params in pg_proc order
   const values: unknown[] = [];
   const placeholders: string[] = [];
   const { argNames, argTypeOids } = signature;
 
   if (argNames.length > 0) {
-    // Ordered by function signature
     for (let i = 0; i < argNames.length; i++) {
       const name = argNames[i];
       const typeOid = argTypeOids[i];
@@ -181,7 +189,6 @@ export async function callFunction(
       placeholders.push(buildPlaceholder(i + 1, typeOid));
     }
   } else {
-    // No named args in pg_proc — pass all args in order received
     let idx = 1;
     for (const [index, value] of Object.values(args).entries()) {
       const typeOid = argTypeOids[index];
@@ -190,33 +197,85 @@ export async function callFunction(
     }
   }
 
-  const sql = format(
-    'SELECT * FROM %I.%I(%s)',
-    schemaName,
-    functionName,
-    placeholders.join(', '),
-  );
-
-  const rows = await query<Record<string, unknown>>(sql, values);
-  return normalizeResult(rows);
+  return {
+    sql: format(
+      'SELECT * FROM %I.%I(%s)',
+      schemaName,
+      functionName,
+      placeholders.join(', '),
+    ),
+    values,
+  };
 }
 
-/**
- * Normalize PG result to match design spec:
- * - SETOF/TABLE → array
- * - single row with single column → scalar
- * - single row → object
- * - no rows → null
+export function createRpcService(dependencies: RpcServiceDependencies) {
+  return {
+    async callFunction(
+      schemaName: string,
+      functionName: string,
+      args: Record<string, unknown> | undefined,
+      actor: ProjectActorContext,
+    ): Promise<unknown> {
+      const signature = await discoverFunction(schemaName, functionName, dependencies.query);
+      if (signature === null) {
+        throw new RpcError('FUNCTION_NOT_FOUND', `Function "${functionName}" not found in schema "${schemaName}"`);
+      }
+
+      const invocation = buildFunctionCall(schemaName, functionName, signature, args);
+      const client = await dependencies.getClient();
+      let transactionStarted = false;
+      let releaseError: Error | undefined;
+
+      try {
+        await client.query('BEGIN');
+        transactionStarted = true;
+        const claims = JSON.stringify(toProjectActorClaims(actor));
+        await client.query("SELECT set_config('request.jwt.claims', $1, true)", [claims]);
+        await client.query("SELECT set_config('request.headers', $1, true)", [
+          JSON.stringify(toProjectActorHeaders(actor)),
+        ]);
+        await client.query("SELECT set_config('druvia.actor', $1, true)", [claims]);
+        const result = await client.query(invocation.sql, invocation.values);
+        await client.query('COMMIT');
+        return normalizeResult(result.rows);
+      } catch (error) {
+        if (transactionStarted) {
+          try {
+            await client.query('ROLLBACK');
+          } catch (rollbackError) {
+            releaseError = rollbackError instanceof Error
+              ? rollbackError
+              : new Error(String(rollbackError));
+          }
+        }
+        throw error;
+      } finally {
+        client.release(releaseError);
+      }
+    },
+  };
+}
+
+const defaultRpcService = createRpcService({ query, getClient });
+
+export async function callFunction(
+  schemaName: string,
+  functionName: string,
+  args: Record<string, unknown> | undefined,
+  actor: ProjectActorContext,
+): Promise<unknown> {
+  return defaultRpcService.callFunction(schemaName, functionName, args, actor);
+}
+
+/*
+ * Normalize PG result to match the SDK contract.
  */
 function normalizeResult(rows: Record<string, unknown>[]): unknown {
   if (rows.length === 0) return null;
   if (rows.length === 1) {
     const keys = Object.keys(rows[0]);
-    // Single column scalar result (e.g. RETURNS int)
     if (keys.length === 1) {
-      const val = rows[0][keys[0]];
-      // If the single column is the function name itself, unwrap
-      return val;
+      return rows[0][keys[0]];
     }
     return rows[0];
   }

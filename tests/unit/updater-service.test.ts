@@ -317,6 +317,7 @@ describe('updater service', () => {
     expect(commands.map((item) => item.args.join(' '))).toEqual([
       'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' run --rm api node apps/api/dist/cli/migrate.js up',
       'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --remove-orphans api admin deno hasura',
+      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --no-deps deno',
       'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --remove-orphans api admin deno hasura',
     ]);
     const status = await service.getStatus();
@@ -452,6 +453,7 @@ describe('updater service', () => {
 
     await expect(readFile(releaseEnvPath, 'utf8')).resolves.toBe('DRUVIA_VERSION=0.1.0\n');
     expect(commands.map((item) => item.args.join(' '))).toEqual([
+      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --no-deps deno',
       'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --remove-orphans api admin deno hasura',
     ]);
     const status = await service.getStatus();

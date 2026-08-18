@@ -1,6 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
+
+const { validateApiKeyMock } = vi.hoisted(() => ({ validateApiKeyMock: vi.fn() }));
+
+vi.mock('../../apps/api/src/modules/api-keys/api-keys.service.js', () => ({
+  validateApiKey: validateApiKeyMock,
+}));
+
 import {
   authenticate,
+  optionalAuth,
   signToken,
   signProjectUserToken,
   isPlatformUser,
@@ -106,6 +114,37 @@ describe('Auth Middleware', () => {
   });
 
   describe('authenticate', () => {
+    it.each([
+      ['authenticate', authenticate],
+      ['optionalAuth', optionalAuth],
+    ])('populates stable API Key identity through %s', async (_name, middleware) => {
+      validateApiKeyMock.mockResolvedValueOnce({
+        valid: true,
+        projectId: 'proj_123',
+        schemaName: 'dru_123',
+        apiKeyId: 42,
+        apiKeyPrefix: 'dru_fixture1',
+      });
+      const request = {
+        headers: { apikey: 'dru_full_secret' },
+      } as Parameters<typeof authenticate>[0];
+      const reply = {
+        status: vi.fn().mockReturnThis(),
+        send: vi.fn().mockReturnThis(),
+      } as unknown as Parameters<typeof authenticate>[1];
+
+      await middleware(request, reply);
+
+      expect(request.user).toEqual({
+        kind: 'apikey',
+        projectId: 'proj_123',
+        role: 'anon',
+        apiKeyId: 42,
+        apiKeyPrefix: 'dru_fixture1',
+      });
+      expect(JSON.stringify(request.user)).not.toContain('dru_full_secret');
+    });
+
     it('does not downgrade to an API key when a supplied bearer token is invalid', async () => {
       const request = {
         headers: {

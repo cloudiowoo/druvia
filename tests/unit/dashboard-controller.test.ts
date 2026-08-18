@@ -49,7 +49,13 @@ describe('Tenant dashboard controller', () => {
     const reply = createReply()
     const request = {
       params: { tenantId: 'default' },
-      user: { kind: 'apikey' as const, projectId: 'proj_123', role: 'anon' as const },
+      user: {
+        kind: 'apikey' as const,
+        projectId: 'proj_123',
+        role: 'anon' as const,
+        apiKeyId: 42,
+        apiKeyPrefix: 'dru_fixture1',
+      },
     }
 
     await dashboardController.getTenantOverview(request as never, reply as never)

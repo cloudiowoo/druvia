@@ -1,4 +1,10 @@
-export type ComposeAction = 'migrate' | 'up' | 'restart' | 'rollbackUp' | 'selfUpdate';
+export type ComposeAction =
+  | 'migrate'
+  | 'up'
+  | 'restart'
+  | 'rollbackWorker'
+  | 'rollbackUp'
+  | 'selfUpdate';
 
 export interface ComposeOptions {
   projectDirectory: string;
@@ -48,6 +54,9 @@ export function buildComposeArgs(action: ComposeAction, options: ComposeOptions)
   }
   if (action === 'up') {
     return [...base, 'up', '-d', '--remove-orphans', ...services];
+  }
+  if (action === 'rollbackWorker') {
+    return [...base, 'up', '-d', '--no-deps', 'deno'];
   }
   if (action === 'rollbackUp') {
     return [...base, 'up', '-d', '--remove-orphans', ...services];

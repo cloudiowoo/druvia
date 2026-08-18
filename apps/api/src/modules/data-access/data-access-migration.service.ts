@@ -3,7 +3,6 @@ import type { Project, ProjectDataAccessMode } from '@druvia/shared'
 import { createApiLogger } from '../../lib/logger.js'
 import * as projectService from '../project/project.service.js'
 import { hasuraMetadataRequest } from '../realtime/realtime.service.js'
-import { resolveRealtimeExecutionContext } from '../realtime/realtime-actor.js'
 import type { ProjectDataExecutionContext } from './project-data-actor.js'
 import { getDataAccessInventory } from './data-access-inventory.js'
 import { resolveDataScopeRole } from './data-scope-role.js'
@@ -17,6 +16,7 @@ import {
 } from './data-access-migration-plan.js'
 import {
   buildActiveRuntimeHttpContexts,
+  buildMigrationRealtimeContexts,
   verifyMigrationHttpVisibility,
   verifyMigrationMetadata,
   verifyMigrationRealtimeActors,
@@ -647,12 +647,7 @@ export const defaultDataAccessMigrationDependencies: DataAccessMigrationServiceD
     await verifyMigrationRealtimeActors({
       projectId: current.projectId,
       runtimeMode: 'compatibility',
-      resolveContext: (actor) => {
-        const base = resolveRealtimeExecutionContext({
-          projectId: current.projectId, runtimeMode: 'explicit', actor,
-        })
-        return base
-      },
+      contexts: buildMigrationRealtimeContexts(current.projectId, 'explicit'),
     })
   },
   async verifyRuntime(current, plan, mode) {

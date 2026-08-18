@@ -77,7 +77,11 @@ describe('data access migration controller', () => {
   it('rejects non-platform actors before service calls', async () => {
     const response = reply()
     await controller.getDataAccessMigration({
-      params: { projectId: 'proj_1' }, user: { kind: 'apikey', projectId: 'proj_1', role: 'anon' },
+      params: { projectId: 'proj_1' },
+      user: {
+        kind: 'apikey', projectId: 'proj_1', role: 'anon',
+        apiKeyId: 42, apiKeyPrefix: 'dru_fixture1',
+      },
     } as never, response as never)
     expect(response.statusCode).toBe(401)
     expect(migrationService.getDataAccessMigration).not.toHaveBeenCalled()

@@ -30,11 +30,12 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - 平台用户、项目终端用户、匿名项目 API key、trusted backend key 是不同身份边界，不得在新代码中合并语义。
 - Project Data Access Batch 3A/3B 后，公开项目 GraphQL 和 Realtime token exchange 只接受同项目 `project_user` / `apikey`；平台 session 不能作为应用数据凭证，SDK 也不得把长期项目凭证直传 Hasura。
 - Project Data Access Batch 4 后，已有 compatibility 项目只能通过迁移 `019` 支撑的预检/apply/recovery/rollback 状态机激活；不得直接修改 `data_access_mode`，不得绕过相关管理写锁。
+- RPC 与 Functions 共用版本化 `ProjectActorContext`；SDK 的 RPC/Functions 只选择 Project Session 或项目 API Key，不得隐式回退 Platform Session。Functions 内部 GraphQL 必须使用服务端派生的 Hasura role/session variables，Platform User 不具备该应用数据能力。
 - 改权限、GraphQL 代理、Realtime、Storage、Functions 或 SDK Auth 返回结构时，必须检查 Supabase 迁移和 taro-app 兼容路径。
 
 ## Current Priorities
 
-1. 收紧 Hasura 默认权限，并统一 GraphQL、Realtime、Storage、Functions 的项目用户身份传播。
+1. 收紧 Hasura 默认权限，并完成直接 Storage 路径的项目用户身份与对象授权设计；GraphQL、Realtime、RPC 和 Functions 的 actor 基线已完成。
 2. 将 CI、release manifest、双 Registry 发布、迁移和 OTA 回滚固化为可重复验证的发布门禁。
 3. 修正 MCP 与 API 的认证及路由契约后，再宣称 MCP 可用于生产。
 4. 继续补齐真实迁移所需 SDK 能力，避免以抽象完整性替代迁移验证。

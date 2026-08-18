@@ -15,6 +15,12 @@ export interface DenoLogContext {
   projectId?: string;
   userId?: string;
   projectUserId?: string;
+  platformUserId?: string;
+  apiKeyId?: number;
+  apiKeyPrefix?: string;
+  actorType?: string;
+  actorSource?: string;
+  actorSubject?: string;
   functionName?: string;
   executionId?: string;
   durationMs?: number;

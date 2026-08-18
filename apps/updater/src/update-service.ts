@@ -260,6 +260,7 @@ export class UpdateService implements UpdateRouteService {
         if (!releaseFilesSwitched) throw error;
 
         await this.restoreBackup(backupDir);
+        await this.runCommandImpl('docker', buildComposeArgs('rollbackWorker', this.config.compose));
         await this.runCommandImpl('docker', buildComposeArgs('rollbackUp', this.config.compose));
         await this.writeState({ phase: 'verifying', message: 'Verifying services after rollback' });
         await this.pollHealthChecks();
@@ -318,6 +319,7 @@ export class UpdateService implements UpdateRouteService {
       try {
         const backupDir = await this.resolveBackupDir(backupOperationId);
         await this.restoreBackup(backupDir);
+        await this.runCommandImpl('docker', buildComposeArgs('rollbackWorker', this.config.compose));
         await this.runCommandImpl('docker', buildComposeArgs('rollbackUp', this.config.compose));
         await this.writeState({ phase: 'verifying', message: 'Verifying services after rollback' });
         await this.pollHealthChecks();

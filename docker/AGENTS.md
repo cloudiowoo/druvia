@@ -18,6 +18,10 @@
 - 生产证书续期继续由 certbot 流程管理。release-mode 下续期脚本必须加载 release compose/env，续期后 reload/recreate nginx 使新证书生效。
 - 本地 OTA 使用 `with-local-nginx` 和 HTTP；生产内置 nginx 使用 `with-nginx` 和证书。不要把本地 profile 写入生产 `.env.release`。
 - Registry 部署与 Druvia 主服务 compose 保持独立，不增加主项目默认依赖。
+- API 与 Deno Worker 必须共享同一个至少 32 UTF-8 字节的 `DENO_WORKER_SECRET`；生产推荐与 `FUNCTIONS_INTERNAL_TOKEN_SECRET`、`JWT_SECRET` 分离。Worker 不能接收 Function token 签名密钥。
+- `local/prod/release` 不发布 Worker 的宿主端口；仅宿主机运行 API 的基础/dev compose 可绑定 `127.0.0.1:${DENO_PORT:-7133}:7133`。所有模式必须保留 Worker `/health` healthcheck。
+- Function 子 Worker 必须保持 `env: false`；项目 Function secrets 只能通过每次调用独立的 `Deno.env` shim 提供，不能暴露容器环境。
+- Worker 请求鉴权协议升级时，新 API 必须先健康再替换 Worker；自动与手动回滚都先恢复旧 Worker，再恢复完整服务集。
 
 ## Release Verification
 
@@ -30,4 +34,3 @@
 - `docs/agent/design-decisions.md`
 - `docs/plans/2026-07-28-compose-ota-update-implementation.md`
 - `docs/plans/2026-08-14-project-update-direction-analysis.md`
-

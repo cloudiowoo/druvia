@@ -29,18 +29,18 @@ function toAuditContext(
   functionName: string,
   tokenPayload: InternalFunctionTokenPayload
 ): storageService.StorageUploadAuditContext {
-  if (tokenPayload.authType === 'platform_user') {
+  if (tokenPayload.actor.actorType === 'platform_user') {
     return {
       createdByType: 'platform_user',
-      platformUserId: tokenPayload.userId,
+      platformUserId: tokenPayload.actor.platformUserId,
       sourceFunction: functionName,
     };
   }
 
-  if (tokenPayload.authType === 'project_user') {
+  if (tokenPayload.actor.actorType === 'project_user') {
     return {
       createdByType: 'project_user',
-      projectUserId: tokenPayload.projectUserId,
+      projectUserId: tokenPayload.actor.projectUserId,
       sourceFunction: functionName,
     };
   }
@@ -93,13 +93,10 @@ export async function internalFunctionsStorageRoutes(app: FastifyInstance) {
       let tokenPayload;
       try {
         tokenPayload = verifyInternalFunctionToken(token);
-      } catch (error) {
+      } catch {
         return reply.status(401).send({
           success: false,
-          error: {
-            code: 'UNAUTHORIZED',
-            message: error instanceof Error ? error.message : 'Invalid internal token',
-          },
+          error: { code: 'UNAUTHORIZED', message: 'Invalid internal token' },
         });
       }
 
@@ -196,13 +193,10 @@ export async function internalFunctionsStorageRoutes(app: FastifyInstance) {
     let tokenPayload;
     try {
       tokenPayload = verifyInternalFunctionToken(token);
-    } catch (error) {
+    } catch {
       return reply.status(401).send({
         success: false,
-        error: {
-          code: 'UNAUTHORIZED',
-          message: error instanceof Error ? error.message : 'Invalid internal token',
-        },
+        error: { code: 'UNAUTHORIZED', message: 'Invalid internal token' },
       });
     }
 

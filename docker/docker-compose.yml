@@ -81,10 +81,17 @@ services:
     environment:
       DENO_DIR: /deno-dir
       DRUVIA_API_URL: ${DRUVIA_API_URL:-http://host.docker.internal:3001}
+      DENO_WORKER_SECRET: ${DENO_WORKER_SECRET:-${FUNCTIONS_INTERNAL_TOKEN_SECRET:-${JWT_SECRET}}}
     working_dir: /app
     command: ["run", "--allow-net", "--allow-env", "--allow-read=/tmp,/app", "--allow-write=/tmp", "--unstable-worker-options", "main.ts"]
     ports:
-      - "${DENO_PORT:-7133}:7133"
+      - "127.0.0.1:${DENO_PORT:-7133}:7133"
+    healthcheck:
+      test: ["CMD", "deno", "eval", "--allow-net=127.0.0.1:7133", "const r = await fetch('http://127.0.0.1:7133/health'); if (!r.ok) Deno.exit(1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:

@@ -171,6 +171,21 @@ OTA 仍使用既有 updater 流程，但 release manifest 对应的 API 镜像�
 
 迁移操作、恢复与回滚流程见 `docs/004-project-data-access-migration-guide.md`。`019` 保存恢复依据，镜像或 OTA 回滚时必须保留，不能自动执行 down migration。
 
+#### Project Actor RPC / Functions 部署门禁
+
+该切片没有 SQL migration，但同时改变 API、Deno Worker、SDK 和 OTA 回滚协议。发布前必须满足：
+
+1. 在目标主机 `.env.prod` 配置至少 32 UTF-8 字节的 `DENO_WORKER_SECRET`，并确保 API 与 Worker 解析为完全相同的值。生产推荐另配独立 `FUNCTIONS_INTERNAL_TOKEN_SECRET`，两者都不要复用 `JWT_SECRET`。
+2. 盘点使用 `druvia.graphql()` 的 Functions，为涉及表配置 Project Data Access 权限；未配置权限应按预期失败，禁止用宽泛 Hasura 权限作为发布补丁。
+3. 盘点仍依赖 Platform Session 调用 SDK RPC/Functions 的应用，并在发布前建立 Project Session。匿名 Function 必须显式设为 `anon_allowed`；RPC 不支持 API Key 匿名调用。
+4. 使用目标 `.env.prod/.env.release` 渲染 Compose，确认 local/prod/release 不发布 `7133`，Worker healthcheck 存在，API 与 Worker 使用同一 Worker secret，只有 API 接收 Function token 签名 secret。
+5. API 和 Worker 必须来自同一 release manifest。升级时先使新 API 健康，再替换要求请求鉴权的新 Worker；不得无序并行切换两者。
+6. 验证 Project User/API Key Function 调用及 `druvia.graphql()` 权限，确认 Platform Function 调用 GraphQL 返回 `PROJECT_ACTOR_REQUIRED`，并检查 Worker 日志不含 credential 或 payload。
+
+OTA 自动和手动回滚都必须先基于已恢复的旧 Compose/env 执行 `docker compose up -d --no-deps deno`，再恢复完整服务集。原因是旧 API 不能调用要求新请求头的新 Worker；先恢复旧 Worker 可同时兼容新旧 API。该切片不需要数据库 down migration。
+
+直接终端用户 Storage 路由仍保持原 Platform Session 行为；本次发布不能被描述为 Storage actor cutover。
+
 ### 场景 E：生产环境回滚
 
 ```bash

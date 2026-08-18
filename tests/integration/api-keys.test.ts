@@ -76,8 +76,15 @@ describe('ApiKeysService Integration', () => {
 
       const result = await apiKeysService.validateApiKey(created.key);
 
-      expect(result.valid).toBe(true);
-      expect(result.projectId).toBe(testProjectId);
+      expect(result).toEqual({
+        valid: true,
+        projectId: testProjectId,
+        schemaName: expect.any(String),
+        apiKeyId: created.apiKey.id,
+        apiKeyPrefix: created.apiKey.keyPrefix,
+      });
+      expect(JSON.stringify(result)).not.toContain(created.key);
+      expect(result).not.toHaveProperty('keyHash');
     });
 
     it('should reject invalid API key', async () => {

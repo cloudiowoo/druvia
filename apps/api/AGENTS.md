@@ -42,11 +42,16 @@
   - `functions.controller.ts`
   - `functions.service.ts`
   - `docker/deno-worker/*`
+- RPC 与 Functions 必须从 `project-actor.ts` 取得版本化 actor，禁止模块自行拼装或把 Platform User 静默转换为 Project User。
+- RPC 只接受同项目 Project User 或已通过项目访问校验的 Platform User；API Key 不获得匿名 RPC。写入 PostgreSQL 的 claims 必须使用同一连接、事务级 `set_config(..., true)`，业务函数仍需自行鉴权。
+- Functions 的 `invoke_auth_mode` 必须在 service 对实际执行的同一函数记录上校验；`anon_allowed` 只允许同项目 API Key，所有 service 调用都必须显式传 actor。
+- `/api/internal/functions/graphql` 只允许签名 token 中的同项目 Project User/API Key，并根据项目 `data_access_mode` 派生 Hasura role/session variables；Platform User 必须返回 `PROJECT_ACTOR_REQUIRED`。
+- API 调用 Worker 必须发送 `x-druvia-worker-secret`。`DENO_WORKER_SECRET` 至少 32 UTF-8 字节，不能进入 Function token、caller、日志或用户函数环境。
 - 如新增需要匿名开放的函数能力，先确认 Worker 本身是否具备调用者身份校验。
 - 涉及 GraphQL 代理限流时：
   - Redis key 必须包含 `projectId`
   - `perUser` 实际是“项目内 actor”限额，不是跨项目全局用户限额
-  - 当前匿名 `apikey` 流量按 `request.ip` 归并，除非认证上下文先扩展出 API key identity
+  - 当前匿名 `apikey` 流量仍按 `request.ip` 归并；认证上下文虽已有稳定 API Key ID，但更改限流维度仍需独立兼容性设计
   - 若 API 部署在 nginx / ingress 后，必须开启 `TRUST_PROXY`；否则 `request.ip` 会退化为代理地址，匿名 GraphQL 限流会把多用户错误合并
 
 ## 近期风险
@@ -55,7 +60,7 @@
 - `invoke_auth_mode` 依赖数据库迁移；代码先行、数据库未升级时，管理端会报保存失败。
 - 上传类函数若未做调用者鉴权，不应依赖平台层匿名放行。
 - `druvia_projects.settings` 更新虽已改为 JSONB 顶层 merge，但 `rateLimits` 等嵌套对象仍不是深合并；路由和前端都不能误判。
-- `/api/internal/functions/graphql` 仍以 Hasura admin secret 执行并依赖查询文本检查，不能视为项目隔离边界；其 actor cutover 完成前，不应宣称所有 GraphQL 路径都已 scoped。
+- 直接终端用户 Storage 路由尚未完成统一 actor/object policy；不能因为 Function internal Storage helper 已适配嵌套 actor token 就宣称 Storage cutover 完成。
 
 ## 参考入口
 

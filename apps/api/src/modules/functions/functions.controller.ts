@@ -2,8 +2,14 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as functionsService from './functions.service.js';
 import * as projectService from '../project/project.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
-import { isApiKeyUser, isPlatformUser, isProjectUser } from '../../middleware/auth.js';
-import type { FunctionCallerContext } from './functions.service.js';
+import { isPlatformUser } from '../../middleware/auth.js';
+import {
+  ProjectActorRequiredError,
+  ProjectActorScopeError,
+  resolvePlatformProjectActor,
+  resolveScopedProjectActor,
+  type ProjectActorContext,
+} from '../../lib/project-actor.js';
 
 interface ProjectParams {
   projectId: string;
@@ -70,8 +76,8 @@ async function verifyProjectAccess(
 async function verifyInvokeAccess(
   request: FastifyRequest<{ Params: FunctionParams }>,
   reply: FastifyReply
-): Promise<{ projectId: string; caller: FunctionCallerContext } | null> {
-  const { projectId, name } = request.params;
+): Promise<{ projectId: string; actor: ProjectActorContext } | null> {
+  const { projectId } = request.params;
   const user = request.user;
 
   if (!user) {
@@ -86,16 +92,7 @@ async function verifyInvokeAccess(
     return null;
   }
 
-  const func = await functionsService.getFunction(projectId, name);
-  if (!func) {
-    reply.status(404).send({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Function not found' },
-    });
-    return null;
-  }
-
-  if (isApiKeyUser(user)) {
+  if (!isPlatformUser(user)) {
     if (user.projectId !== projectId) {
       reply.status(403).send({
         success: false,
@@ -104,43 +101,19 @@ async function verifyInvokeAccess(
       return null;
     }
 
-    if (func.invokeAuthMode !== 'anon_allowed') {
-      reply.status(403).send({
+    try {
+      return { projectId, actor: resolveScopedProjectActor(user, projectId) };
+    } catch (error) {
+      const status = error instanceof ProjectActorScopeError ? 403 : 401;
+      reply.status(status).send({
         success: false,
-        error: { code: 'FORBIDDEN', message: 'Function requires an authenticated user' },
+        error: {
+          code: status === 403 ? 'FORBIDDEN' : 'UNAUTHORIZED',
+          message: status === 403 ? 'No access to this project' : 'Not authenticated',
+        },
       });
       return null;
     }
-
-    return {
-      projectId,
-      caller: {
-        authType: 'apikey',
-        projectId,
-        role: user.role,
-      },
-    };
-  }
-
-  if (isProjectUser(user)) {
-    if (user.projectId !== projectId) {
-      reply.status(403).send({
-        success: false,
-        error: { code: 'FORBIDDEN', message: 'No access to this project' },
-      });
-      return null;
-    }
-
-    return {
-      projectId,
-      caller: {
-        authType: 'project_user',
-        projectId,
-        role: user.role,
-        projectUserId: user.sub,
-        provider: user.provider,
-      },
-    };
   }
 
   const hasAccess = await checkProjectAccess(user.userId, projectId);
@@ -154,14 +127,7 @@ async function verifyInvokeAccess(
 
   return {
     projectId,
-    caller: {
-      authType: 'platform_user',
-      projectId,
-      role: user.role ?? 'authenticated',
-      userId: user.userId,
-      uid: user.uid,
-      tenantId: user.tenantId,
-    },
+    actor: resolvePlatformProjectActor(user, projectId),
   };
 }
 
@@ -319,13 +285,42 @@ export async function invokeFunction(
   const { payload } = request.body || {};
 
   try {
-    const result = await functionsService.invokeFunction(verified.projectId, name, payload, verified.caller);
+    const result = await functionsService.invokeFunction(verified.projectId, name, payload, verified.actor);
     return reply.send({ success: true, data: result });
   } catch (error) {
-    const err = error as Error;
+    if (error instanceof functionsService.FunctionInvokeForbiddenError) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Function requires an authenticated user' },
+      });
+    }
+    if (error instanceof functionsService.FunctionActorScopeError || error instanceof ProjectActorScopeError) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'No access to this project' },
+      });
+    }
+    if (error instanceof functionsService.FunctionNotFoundError) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Function not found' },
+      });
+    }
+    if (error instanceof functionsService.FunctionDisabledError) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVOKE_FAILED', message: 'Function is disabled' },
+      });
+    }
+    if (error instanceof ProjectActorRequiredError) {
+      return reply.status(401).send({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Not authenticated' },
+      });
+    }
     return reply.status(500).send({
       success: false,
-      error: { code: 'INVOKE_FAILED', message: err.message },
+      error: { code: 'INVOKE_FAILED', message: 'Function invocation failed' },
     });
   }
 }

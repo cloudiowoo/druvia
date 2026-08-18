@@ -3,6 +3,15 @@ import { callFunction, RpcError } from './rpc.service.js';
 import * as projectService from '../project/project.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import { isPlatformUser, isProjectUser } from '../../middleware/auth.js';
+import {
+  resolvePlatformProjectActor,
+  resolveScopedProjectActor,
+  toProjectActorAuditContext,
+  type ProjectActorContext,
+} from '../../lib/project-actor.js';
+import { createApiLogger } from '../../lib/logger.js';
+
+const logger = createApiLogger({ module: 'rpc' });
 
 interface RpcParams {
   projectId: string;
@@ -16,7 +25,7 @@ interface RpcBody {
 async function verifyProjectAccess(
   request: FastifyRequest<{ Params: RpcParams }>,
   reply: FastifyReply,
-): Promise<{ projectId: string; schemaName: string } | null> {
+): Promise<{ projectId: string; schemaName: string; actor: ProjectActorContext } | null> {
   const { projectId } = request.params;
   const user = request.user;
 
@@ -37,6 +46,7 @@ async function verifyProjectAccess(
     return null;
   }
 
+  let actor: ProjectActorContext;
   if (isPlatformUser(user)) {
     const hasAccess = await checkProjectAccess(user.userId, projectId);
     if (!hasAccess) {
@@ -46,12 +56,15 @@ async function verifyProjectAccess(
       });
       return null;
     }
+    actor = resolvePlatformProjectActor(user, projectId);
   } else if (user.projectId !== projectId) {
     reply.status(403).send({
       success: false,
       error: { code: 'FORBIDDEN', message: 'No access to this project' },
     });
     return null;
+  } else {
+    actor = resolveScopedProjectActor(user, projectId);
   }
 
   if (!project.schemaName) {
@@ -62,7 +75,7 @@ async function verifyProjectAccess(
     return null;
   }
 
-  return { projectId, schemaName: project.schemaName };
+  return { projectId, schemaName: project.schemaName, actor };
 }
 
 export async function invokeRpc(
@@ -76,20 +89,32 @@ export async function invokeRpc(
   const { args } = request.body || {};
 
   try {
-    const data = await callFunction(verified.schemaName, functionName, args);
+    const data = await callFunction(verified.schemaName, functionName, args, verified.actor);
+    logger.info('rpc invocation succeeded', {
+      ...toProjectActorAuditContext(verified.actor),
+      functionName,
+    });
     return reply.send({ data, error: null });
   } catch (error) {
+    logger.error('rpc invocation failed', {
+      ...toProjectActorAuditContext(verified.actor),
+      functionName,
+    }, error);
     if (error instanceof RpcError) {
       const status = error.code === 'FUNCTION_NOT_FOUND' ? 404 : 400;
       return reply.status(status).send({
         data: null,
-        error: { code: error.code, message: error.message },
+        error: {
+          code: error.code,
+          message: error.code === 'FUNCTION_NOT_FOUND'
+            ? 'Function not found'
+            : 'RPC request failed',
+        },
       });
     }
-    const err = error as Error;
     return reply.status(500).send({
       data: null,
-      error: { code: 'RPC_ERROR', message: err.message },
+      error: { code: 'RPC_ERROR', message: 'RPC execution failed' },
     });
   }
 }

@@ -15,7 +15,7 @@
 | supabase.from().insert() | GraphQL mutation | ✅ | v0.1.0 | |
 | supabase.from().update() | GraphQL mutation | ✅ | v0.1.0 | |
 | supabase.from().delete() | GraphQL mutation | ✅ | v0.1.0 | |
-| supabase.rpc() | Hasura Actions | 🚧 | - | |
+| supabase.rpc() | Druvia PostgreSQL RPC | ⚠️ | 待发布 | 形状可迁移，函数需自行鉴权 |
 | Row Level Security | - | ❌ | - | |
 | **Realtime** | | | | |
 | supabase.channel().on().subscribe() | Hasura Subscriptions + Druvia token exchange | ✅ | 待发布 | PostgreSQL changes 子集 |
@@ -28,7 +28,7 @@
 | supabase.storage.from().createSignedUrl() | POST /api/v1/projects/:id/storage/buckets/:name/signed-url | ✅ | v0.1.0 | |
 | Image transformations | - | ❌ | - | |
 | **Edge Functions** | | | | |
-| supabase.functions.invoke() | - | 🚧 | - | |
+| supabase.functions.invoke() | Druvia Edge Functions | ⚠️ | 待发布 | 调用形状可迁移，权限模型不同 |
 
 ## 状态说明
 
@@ -59,3 +59,12 @@
 - 重连会重新取得当前订阅快照，但不会重放断线期间的事件；依赖无丢失事件流的应用仍需业务游标或补偿查询。
 - 尚未执行 Batch 4 的 compatibility 项目继续使用全局 `user` / `anonymous` permissions，不应据此声明跨项目 scoped 隔离；完成迁移、验证并激活后才获得该保证。
 - 已签发 token 的到期会阻止新连接并驱动 SDK 合作式续期，但当前不承诺恶意客户端的已建立 socket 在到期瞬间被强制关闭。
+
+### Project Actor RPC / Functions cutover
+
+- SDK 的 Database、RPC 和 Functions 都不再把 Platform Session 当作应用凭证。Project Session 存在时使用 project token；否则 RPC 无匿名能力，Functions 仅能通过项目 API Key 调用显式配置为 `anon_allowed` 的函数。
+- 无效或过期 Project Session 不会自动降级为 API Key，应用必须刷新或重新建立 Project Session。
+- Druvia RPC 会在调用事务中提供 `request.jwt.claims`、`request.headers` 和 `druvia.actor`。这只是可信调用者上下文，不等同于 Supabase PostgreSQL RLS；迁移的数据库函数仍必须读取 claims 并实现自身业务授权。
+- `druvia.graphql()` 按项目 `data_access_mode` 和 Function actor 使用 Hasura permissions。Project User/API Key 只能看到其角色允许的数据，Platform User 的管理测试调用不能借此获得 admin 数据访问。
+- 从 Supabase Edge Functions 迁移时，先为函数使用的表配置 Druvia Data Access 权限。依赖 service role 绕过 RLS 的函数不能原样迁移，应拆分为受控 trusted backend 能力或显式服务身份设计。
+- 直接 SDK Storage 仍沿用 Platform Session，尚未纳入本次 actor cutover；不要把 Functions internal Storage helper 的兼容适配误认为终端用户 Storage 授权已完成。

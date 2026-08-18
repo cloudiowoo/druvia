@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
 import {
   DataAccessMigrationVerificationError,
+  buildActiveRuntimeHttpContexts,
+  buildMigrationRealtimeContexts,
   createInternalHasuraWebSocketUrl,
   verifyMigrationHttpVisibility,
   verifyMigrationMetadata,
@@ -55,6 +57,26 @@ const scopedSnapshot: ProjectDataAccessMigrationSnapshot = {
 }
 
 describe('data access migration verifier', () => {
+  it('builds execution probes without fabricating authenticated request identities', () => {
+    const httpContexts = buildActiveRuntimeHttpContexts(projectId, 'explicit')
+    const realtimeContexts = buildMigrationRealtimeContexts(projectId, 'explicit')
+
+    expect(httpContexts.map((item) => item.actor)).toEqual(['authenticated', 'anonymous'])
+    expect(httpContexts.every((item) => item.context.kind === 'project_actor')).toBe(true)
+    expect(JSON.stringify(httpContexts)).not.toContain('apiKeyId')
+    expect(realtimeContexts).toHaveLength(2)
+    expect(realtimeContexts[0]).toMatchObject({
+      actorType: 'project_user',
+      subject: `migration_probe:authenticated:${projectId}`,
+    })
+    expect(realtimeContexts[1]).toMatchObject({
+      actorType: 'apikey',
+      subject: `migration_probe:anonymous:${projectId}`,
+    })
+    expect(JSON.stringify(realtimeContexts)).not.toContain('apiKeyId')
+    expect(JSON.stringify(realtimeContexts)).not.toContain('apiKeyPrefix')
+  })
+
   it('verifies exact scoped metadata before cutover and legacy absence after cutover', () => {
     const prepared: ProjectDataAccessMigrationSnapshot = {
       ...sourceSnapshot,

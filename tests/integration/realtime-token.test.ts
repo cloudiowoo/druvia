@@ -159,7 +159,10 @@ function projectUser(projectId: string): ProjectJwtUser {
 }
 
 function apiKey(projectId: string): ApiKeyIdentity {
-  return { kind: 'apikey', projectId, role: 'anon' }
+  return {
+    kind: 'apikey', projectId, role: 'anon',
+    apiKeyId: 42, apiKeyPrefix: 'dru_fixture1',
+  }
 }
 
 function issueToken(

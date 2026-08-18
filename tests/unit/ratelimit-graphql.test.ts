@@ -109,6 +109,8 @@ describe('GraphQL project rate limiter', () => {
           kind: 'apikey',
           projectId: 'proj_123',
           role: 'anon',
+          apiKeyId: 42,
+          apiKeyPrefix: 'dru_fixture1',
         },
       } as never,
       createReply() as never,

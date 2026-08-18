@@ -1,35 +1,98 @@
 import { query, queryOne } from '../../db/index.js';
+import { config } from '../../config/index.js';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { signInternalFunctionToken } from './internal-token.js';
 import { createApiLogger } from '../../lib/logger.js';
 import { resolveWorkerApiBaseUrl } from './invoke-config.js';
+import {
+  parseProjectActorContext,
+  toProjectActorAuditContext,
+  type ProjectActorContext,
+} from '../../lib/project-actor.js';
 
 const logger = createApiLogger({ module: 'functions' });
 
 // Types
 export type FunctionInvokeAuthMode = 'jwt_required' | 'anon_allowed';
 
-export type FunctionCallerContext =
-  | {
+interface FunctionWorkerCallerBase {
+  actorContractVersion: 1;
+  actorSubject: string;
+  projectId: string;
+  role: string;
+}
+
+export type FunctionWorkerCaller =
+  | FunctionWorkerCallerBase & {
+      actorType: 'platform_user';
+      actorSource: 'platform_session';
       authType: 'platform_user';
-      projectId: string;
-      role: string;
+      platformUserId: string;
+      platformUid: number;
       userId: string;
       uid: number;
       tenantId?: string;
+      projectUserId?: never;
+      provider?: never;
+      apiKeyId?: never;
+      apiKeyPrefix?: never;
     }
-  | {
+  | FunctionWorkerCallerBase & {
+      actorType: 'project_user';
+      actorSource: 'project_session';
       authType: 'project_user';
-      projectId: string;
-      role: string;
+      platformUserId?: never;
+      platformUid?: never;
+      userId?: never;
+      uid?: never;
+      tenantId?: never;
       projectUserId: string;
       provider: string;
+      apiKeyId?: never;
+      apiKeyPrefix?: never;
     }
-  | {
+  | FunctionWorkerCallerBase & {
+      actorType: 'apikey';
+      actorSource: 'project_api_key';
       authType: 'apikey';
-      projectId: string;
-      role: string;
+      platformUserId?: never;
+      platformUid?: never;
+      userId?: never;
+      uid?: never;
+      tenantId?: never;
+      projectUserId?: never;
+      provider?: never;
+      apiKeyId: number;
+      apiKeyPrefix: string;
     };
+
+export class FunctionActorScopeError extends Error {
+  constructor() {
+    super('Function actor does not match the requested project');
+    this.name = 'FunctionActorScopeError';
+  }
+}
+
+export class FunctionNotFoundError extends Error {
+  constructor() {
+    super('Function not found');
+    this.name = 'FunctionNotFoundError';
+  }
+}
+
+export class FunctionDisabledError extends Error {
+  constructor() {
+    super('Function is disabled');
+    this.name = 'FunctionDisabledError';
+  }
+}
+
+export class FunctionInvokeForbiddenError extends Error {
+  constructor() {
+    super('Function requires an authenticated user');
+    this.name = 'FunctionInvokeForbiddenError';
+  }
+}
 
 export interface EdgeFunction {
   id: string;
@@ -229,37 +292,74 @@ export async function deleteFunction(projectId: string, name: string): Promise<b
 const DENO_WORKER_URL = process.env.DENO_WORKER_URL || 'http://localhost:7133';
 const WORKER_API_BASE_URL = resolveWorkerApiBaseUrl();
 
+function serializeWorkerCaller(actor: ProjectActorContext): FunctionWorkerCaller {
+  const base = {
+    actorContractVersion: actor.version,
+    actorSubject: actor.subject,
+    projectId: actor.projectId,
+    role: actor.role,
+  } as const;
+
+  if (actor.actorType === 'platform_user') {
+    return {
+      ...base,
+      actorType: 'platform_user',
+      actorSource: 'platform_session',
+      authType: 'platform_user',
+      platformUserId: actor.platformUserId,
+      platformUid: actor.platformUid,
+      userId: actor.platformUserId,
+      uid: actor.platformUid,
+      ...(actor.tenantId ? { tenantId: actor.tenantId } : {}),
+    };
+  }
+  if (actor.actorType === 'project_user') {
+    return {
+      ...base,
+      actorType: 'project_user',
+      actorSource: 'project_session',
+      authType: 'project_user',
+      projectUserId: actor.projectUserId,
+      provider: actor.provider,
+    };
+  }
+  return {
+    ...base,
+    actorType: 'apikey',
+    actorSource: 'project_api_key',
+    authType: 'apikey',
+    apiKeyId: actor.apiKeyId,
+    apiKeyPrefix: actor.apiKeyPrefix,
+  };
+}
+
 export async function invokeFunction(
   projectId: string,
   name: string,
-  payload?: unknown,
-  caller?: FunctionCallerContext
+  payload: unknown | undefined,
+  actorInput: ProjectActorContext
 ): Promise<InvokeResult> {
+  const actor = parseProjectActorContext(actorInput);
+  if (actor.projectId !== projectId) {
+    throw new FunctionActorScopeError();
+  }
+
   const func = await getFunction(projectId, name);
-  if (!func) throw new Error('Function not found');
-  if (func.status !== 'active') throw new Error('Function is disabled');
+  if (!func) throw new FunctionNotFoundError();
+  if (func.status !== 'active') throw new FunctionDisabledError();
+  if (actor.actorType === 'apikey' && func.invokeAuthMode !== 'anon_allowed') {
+    throw new FunctionInvokeForbiddenError();
+  }
 
   // 获取 secrets
   const secrets = await getSecretsDecrypted(projectId);
   const internalToken = signInternalFunctionToken({
     projectId,
     functionName: func.name,
-    authType: caller?.authType ?? 'apikey',
-    role: caller?.role,
-    ...(caller?.authType === 'platform_user'
-      ? {
-          userId: caller.userId,
-          uid: caller.uid,
-          tenantId: caller.tenantId,
-        }
-      : {}),
-    ...(caller?.authType === 'project_user'
-      ? {
-          projectUserId: caller.projectUserId,
-          provider: caller.provider,
-        }
-      : {}),
+    actor,
   });
+  const caller = serializeWorkerCaller(actor);
+  const auditActor = toProjectActorAuditContext(actor);
   const executionId = randomBytes(16).toString('hex');
   const startTime = Date.now();
 
@@ -267,7 +367,10 @@ export async function invokeFunction(
     // 调用 Deno Worker
     const response = await fetch(`${DENO_WORKER_URL}/execute`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-druvia-worker-secret': config.functions.workerSecret,
+      },
       body: JSON.stringify({
         code: func.code,
         functionName: func.name,
@@ -287,15 +390,28 @@ export async function invokeFunction(
     // 记录日志
     await createLog(func.id, executionId, result.success ? 'info' : 'error',
       result.success ? 'Function executed successfully' : result.error?.message || 'Unknown error',
-      duration, { payload, caller }
+      duration, { actor: auditActor }
     );
+
+    logger.info('function invocation completed', {
+      ...auditActor,
+      functionName: func.name,
+      executionId,
+      durationMs: duration,
+    });
 
     return { ...result, duration, executionId };
   } catch (error) {
     const duration = Date.now() - startTime;
     const message = error instanceof Error ? error.message : 'Unknown error';
 
-    await createLog(func.id, executionId, 'error', message, duration, { payload, caller });
+    await createLog(func.id, executionId, 'error', message, duration, { actor: auditActor });
+    logger.error('function invocation failed', {
+      ...auditActor,
+      functionName: func.name,
+      executionId,
+      durationMs: duration,
+    }, error);
 
     return {
       success: false,

@@ -33,7 +33,7 @@
   - 迁移 `018` 持久化项目 `compatibility | explicit` 运行模式；已有项目保持兼容，新项目显式启用 scoped 模式
   - 项目 GraphQL 代理只接受同项目 `project_user` / `apikey`，拒绝平台 JWT 和客户端 Hasura 头注入
   - explicit 请求由服务端生成 scoped role 与项目用户 session variables，compatibility 继续使用旧 `user` role
-  - SDK Database 不再回退平台 session；RPC/Functions 保持原行为等待独立 cutover
+  - SDK Database 不再回退平台 session；RPC/Functions 后续已由 Project Actor cutover 同步收紧
   - Admin Playground 改用内存中的 API Key 或 Project access token，并统一展示 Druvia GraphQL 代理地址
   - 已有项目迁移激活仍属于 Batch 4
 - Project Data Access Batch 3B 已完成 Realtime actor 切换：
@@ -50,6 +50,13 @@
   - 相关 DDL、权限、Realtime、raw SQL、clean restore 和删除路径接入 ordered advisory locks 与持久状态 gate
   - Admin 数据访问页提供预检、逐表保持关闭、阶段进度、失败恢复和回滚预检，不暴露 Hasura 实现细节
   - release workflow 已在镜像构建前加入 Batch 4 回归，tag 默认 manifest 要求 `018 -> 019`、备份和不可自动逆转；本地真实 PostgreSQL/Hasura apply/rollback/故障恢复已通过，真实发布和 OTA 演练按当前安排继续延期
+- Project Actor RPC / Functions cutover 已完成：
+  - API 以版本化 `ProjectActorContext` 统一 Platform User、Project User 和 API Key 的安全审计身份，API Key 使用稳定非秘密 ID/prefix
+  - RPC 在单连接事务内写入可信 claims 并证明连接复用后无残留；API Key RPC 仍拒绝
+  - Functions 在 service 同一函数记录上执行 invoke-mode 校验，内部 token、Worker caller 和日志使用严格 actor envelope，执行日志不再保存原始 payload
+  - `druvia.graphql()` 已按 Project Data Access role/session variables 执行，Project User/API Key 权限由 Hasura 强制，Platform actor 被拒绝
+  - API-to-Worker 请求增加强 secret 鉴权，Function 子 Worker 禁止继承容器环境，Compose 与 updater 已固化升级/回滚顺序
+  - SDK RPC/Functions 不再回退 Platform Session；直接 Storage 身份与对象授权仍是后续独立切片
 
 - API 已支持 `apikey` fallback 认证
 - Realtime 权限开始与表管理权限解耦
@@ -114,7 +121,7 @@
 ## Current Next Steps
 
 - 在后续实际 release/OTA 窗口验证迁移 `019` 的备份、部署顺序和生产恢复手册；当前不触发发布
-- 统一 project-user 在 GraphQL、Realtime、Storage、RPC 和 Functions 中的身份传播与审计
+- 设计并实施直接 Storage 路径的 project-user 身份、bucket/object policy 与 SDK token cutover；GraphQL、Realtime、RPC 和 Functions 的统一 actor 基线已完成
 - 修正 MCP Server 与 API 的认证头、路由身份和 scope 契约，并增加真实 API 契约测试
 - 继续完善 build、lint、核心测试和 manifest/digest 的自动化门禁；实际 `workflow_dispatch`、本地/生产 OTA、双 Registry、回滚和恢复演练暂不作为下一开发任务，待形成后续发布版本时统一安排
 - 继续用 taro-app 迁移验证 project auth、Storage helper、Realtime 重连和 SDK token 选择顺序

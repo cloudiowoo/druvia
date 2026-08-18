@@ -33,6 +33,8 @@ export interface ApiKeyIdentity {
   kind: 'apikey';
   projectId: string;
   role: 'anon';
+  apiKeyId: number;
+  apiKeyPrefix: string;
 }
 
 export type RequestUser = PlatformJwtUser | ProjectJwtUser | ApiKeyIdentity;
@@ -51,7 +53,13 @@ function mergeUserLogContext(user: RequestUser): void {
           projectUserId: user.sub,
         }
       : {}),
-    ...(user.kind === 'apikey' ? { projectId: user.projectId } : {}),
+    ...(user.kind === 'apikey'
+      ? {
+          projectId: user.projectId,
+          apiKeyId: user.apiKeyId,
+          apiKeyPrefix: user.apiKeyPrefix,
+        }
+      : {}),
   });
 }
 
@@ -176,8 +184,14 @@ export async function authenticate(
   const apiKey = request.headers.apikey as string | undefined;
   if (apiKey) {
     const result = await validateApiKey(apiKey);
-    if (result.valid && result.projectId) {
-      request.user = { kind: 'apikey', projectId: result.projectId, role: 'anon' };
+    if (result.valid) {
+      request.user = {
+        kind: 'apikey',
+        projectId: result.projectId,
+        role: 'anon',
+        apiKeyId: result.apiKeyId,
+        apiKeyPrefix: result.apiKeyPrefix,
+      };
       mergeUserLogContext(request.user);
       return;
     }
@@ -212,8 +226,14 @@ export async function optionalAuth(
   const apiKey = request.headers.apikey as string | undefined;
   if (apiKey) {
     const result = await validateApiKey(apiKey);
-    if (result.valid && result.projectId) {
-      request.user = { kind: 'apikey', projectId: result.projectId, role: 'anon' };
+    if (result.valid) {
+      request.user = {
+        kind: 'apikey',
+        projectId: result.projectId,
+        role: 'anon',
+        apiKeyId: result.apiKeyId,
+        apiKeyPrefix: result.apiKeyPrefix,
+      };
       mergeUserLogContext(request.user);
     }
   }

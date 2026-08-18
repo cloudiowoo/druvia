@@ -3,11 +3,26 @@ import { pool } from '../../apps/api/src/db/index.js';
 import * as functionsService from '../../apps/api/src/modules/functions/functions.service.js';
 import * as projectService from '../../apps/api/src/modules/project/project.service.js';
 import * as tenantService from '../../apps/api/src/modules/tenant/tenant.service.js';
+import type { ProjectActorContext } from '../../apps/api/src/lib/project-actor.js';
 
 describe('FunctionsService Integration', () => {
   let testUserId: number;
   let testTenantId: string;
   let testProjectId: string;
+
+  function invocationActor(): ProjectActorContext {
+    return {
+      version: 1,
+      actorType: 'platform_user',
+      source: 'platform_session',
+      projectId: testProjectId,
+      subject: 'platform_user:user_test_functions',
+      role: 'user',
+      platformUserId: 'user_test_functions',
+      platformUid: testUserId,
+      tenantId: testTenantId,
+    };
+  }
 
   beforeAll(async () => {
     // 创建测试用户
@@ -340,7 +355,12 @@ describe('FunctionsService Integration', () => {
       });
 
       try {
-        const result = await functionsService.invokeFunction(testProjectId, 'invoke-test', { input: 'test' });
+        const result = await functionsService.invokeFunction(
+          testProjectId,
+          'invoke-test',
+          { input: 'test' },
+          invocationActor()
+        );
 
         expect(result.success).toBe(true);
         expect(result.executionId).toBeDefined();
@@ -363,7 +383,12 @@ describe('FunctionsService Integration', () => {
       });
 
       try {
-        const result = await functionsService.invokeFunction(testProjectId, 'error-test');
+        const result = await functionsService.invokeFunction(
+          testProjectId,
+          'error-test',
+          undefined,
+          invocationActor()
+        );
 
         expect(result.success).toBe(false);
         expect(result.error).toBeDefined();
@@ -385,13 +410,13 @@ describe('FunctionsService Integration', () => {
       await functionsService.updateFunction(testProjectId, 'disabled-test', { status: 'disabled' });
 
       await expect(
-        functionsService.invokeFunction(testProjectId, 'disabled-test')
+        functionsService.invokeFunction(testProjectId, 'disabled-test', undefined, invocationActor())
       ).rejects.toThrow('Function is disabled');
     });
 
     it('should throw for non-existent function', async () => {
       await expect(
-        functionsService.invokeFunction(testProjectId, 'does-not-exist')
+        functionsService.invokeFunction(testProjectId, 'does-not-exist', undefined, invocationActor())
       ).rejects.toThrow('Function not found');
     });
 
@@ -402,7 +427,7 @@ describe('FunctionsService Integration', () => {
       });
 
       try {
-        await functionsService.invokeFunction(testProjectId, 'log-test');
+        await functionsService.invokeFunction(testProjectId, 'log-test', undefined, invocationActor());
 
         const logs = await functionsService.getLogs(func.id);
         expect(logs.length).toBeGreaterThan(0);
@@ -424,7 +449,12 @@ describe('FunctionsService Integration', () => {
       await functionsService.createSecret(testProjectId, 'TEST_SECRET', 'my-secret-value');
 
       try {
-        const result = await functionsService.invokeFunction(testProjectId, 'secret-test');
+        const result = await functionsService.invokeFunction(
+          testProjectId,
+          'secret-test',
+          undefined,
+          invocationActor()
+        );
 
         expect(result.success).toBe(true);
         expect(result.data).toEqual({ hasSecret: true, length: 15 });

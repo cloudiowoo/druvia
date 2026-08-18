@@ -163,7 +163,10 @@ describe('data access controller', () => {
 
   it.each([
     { kind: 'project_user', sub: 'pusr_1', projectId: 'proj_123' },
-    { kind: 'apikey', projectId: 'proj_123' },
+    {
+      kind: 'apikey', projectId: 'proj_123', role: 'anon',
+      apiKeyId: 42, apiKeyPrefix: 'dru_fixture1',
+    },
   ])('rejects non-platform management identity $kind', async (user) => {
     const reply = createReply()
     await controller.getTableDataAccess({

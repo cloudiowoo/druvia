@@ -106,6 +106,39 @@ describe('release workflow', () => {
     expect(workflow).toContain('tests/unit/data-access-migration-inspection.test.ts');
   });
 
+  it('gates image publication on the Project Actor, Functions Worker, rollback, and SDK cutover', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+    const actorGate = workflow.indexOf('name: Verify Project Actor RPC and Functions cutover');
+    const denoGate = workflow.indexOf('name: Verify Deno Worker types');
+    const firstImageBuild = workflow.indexOf('uses: docker/build-push-action');
+
+    expect(actorGate).toBeGreaterThan(0);
+    expect(denoGate).toBeGreaterThan(actorGate);
+    expect(firstImageBuild).toBeGreaterThan(denoGate);
+    for (const requiredTest of [
+      'tests/unit/project-actor.test.ts',
+      'tests/unit/api-keys-service.test.ts',
+      'tests/unit/rpc-controller.test.ts',
+      'tests/unit/rpc.test.ts',
+      'tests/unit/functions-controller.test.ts',
+      'tests/unit/functions-service.test.ts',
+      'tests/unit/functions-internal-token.test.ts',
+      'tests/unit/functions-internal-graphql.test.ts',
+      'tests/unit/functions-internal-storage.test.ts',
+      'tests/unit/deno-worker-auth.test.ts',
+      'tests/unit/deno-worker-runtime.test.ts',
+      'tests/unit/worker-compose-config.test.ts',
+      'tests/unit/update-compose-command.test.ts',
+      'tests/unit/updater-service.test.ts',
+      'tests/sdk/client.test.ts',
+      'tests/sdk/functions.test.ts',
+    ]) {
+      expect(workflow).toContain(requiredTest);
+    }
+    expect(workflow).toContain('denoland/deno:alpine-2.0.6');
+    expect(workflow).toContain('deno check main.ts executor.ts');
+  });
+
   it('builds release images for GHCR and the self-hosted registry with separate OTA manifests', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 

@@ -55,6 +55,20 @@
   - `project_user`
   - `apikey`
 
+## Project Actor、RPC 与 Worker 边界
+
+- 应用执行路径统一使用 API 拥有的版本化 `ProjectActorContext`，稳定区分 `platform_user / project_user / apikey`；各模块不得自行拼装替代 actor。
+- API Key actor 只携带数据库 ID 和非秘密 prefix。完整 key、hash、原始凭证、Function payload 不得进入 actor、内部 token、Worker caller 或持久执行日志。
+- Platform User 是管理身份，不会被隐式转换成 Project User：
+  - RPC 仅在 controller 已完成项目访问校验后允许显式管理调用
+  - Function 可用于显式管理测试，但 `druvia.graphql()` 必须拒绝 Platform actor
+- RPC 将可信 actor claims 写入同一数据库连接的事务级设置；这些 claims 供业务函数鉴权和审计，不代表 Druvia 已为项目 schema 启用 PostgreSQL RLS。
+- Functions 的 `invoke_auth_mode` 在 service 使用即将执行的同一函数记录校验；不能只依赖 controller 预检或二次读取。
+- Function internal GraphQL 继续使用 Hasura admin secret 做服务间认证，但始终附加服务端派生的项目 role/session variables；Project User/API Key 数据能力由现有 Hasura permissions 决定。
+- API-to-Worker 使用独立 `DENO_WORKER_SECRET`，要求至少 32 UTF-8 字节并在读取执行 body 前验证。Function 子 Worker 没有真实 env 权限，只能读取 invocation-local Function secret shim。
+- 该不对称协议的部署顺序固定为新 API 先于新 Worker；回滚顺序固定为旧 Worker 先于旧 API。升级器的自动和手动回滚必须遵循同一顺序。
+- SDK Database/RPC/Functions 不得隐式使用 Platform Session。直接 Storage 仍等待独立 actor/object authorization 设计，不随本决策自动切换。
+
 ## Edge Function 数据访问策略
 
 - 平台级 Hasura secret 只留在平台服务端。
@@ -157,7 +171,7 @@
   - apply 失败恢复 source snapshot/compatibility，rollback 失败恢复 applied snapshot/explicit；无法验证时持久化 recovery target，禁止继续受影响的管理写入和删除
   - Admin 只展示业务化摘要、确认、进度和恢复入口，不暴露物理 role、原始 metadata 或 Hasura secret
   - `019` 为增量恢复依据，镜像/OTA 回滚不得自动 down；人工回滚旧权限可能重新引入匿名写入和兼容模式隔离风险
-- Batch 3A 只收敛公开 HTTP GraphQL。Functions internal GraphQL 的 admin-secret 执行和平台 SQL/管理接口的跨 schema 能力仍需独立安全审计。
+- Functions internal GraphQL 已完成 Project Actor cutover：Project User/API Key 使用与公开数据路径一致的服务端 role/session-variable 映射，Platform actor 被拒绝。平台 SQL/管理接口的跨 schema 能力仍需独立安全审计。
 - Admin 默认使用“数据接口、数据访问、实时更新”等应用概念；Hasura role、metadata 和 secret 只属于高级诊断或服务端实现。
 - Druvia 管理端对列级 DDL 的正式策略是：
   - Admin Tables 页面内的 `add/drop/rename column` 自动触发 `reload metadata`

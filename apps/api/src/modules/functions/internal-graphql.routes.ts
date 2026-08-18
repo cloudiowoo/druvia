@@ -2,6 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { pool } from '../../db/index.js';
 import { config } from '../../config/index.js';
 import { verifyInternalFunctionToken } from './internal-token.js';
+import {
+  resolveProjectDataExecutionContext,
+} from '../data-access/project-data-actor.js';
+import type { ApiKeyIdentity, ProjectJwtUser } from '../../middleware/auth.js';
+import type { ProjectActorContext } from '../../lib/project-actor.js';
 
 const INTERNAL_TOKEN_HEADER = 'x-druvia-internal-token';
 
@@ -25,6 +30,31 @@ function queryReferencesSchema(query: string, schemaName: string): boolean {
   return buildSchemaPrefixMatchers(schemaName).some((pattern) => pattern.test(query));
 }
 
+function toProjectDataActor(
+  actor: ProjectActorContext
+): ProjectJwtUser | ApiKeyIdentity | null {
+  if (actor.actorType === 'project_user') {
+    return {
+      kind: 'project_user',
+      sub: actor.projectUserId,
+      projectId: actor.projectId,
+      authType: 'project_user',
+      role: 'authenticated',
+      provider: actor.provider,
+    };
+  }
+  if (actor.actorType === 'apikey') {
+    return {
+      kind: 'apikey',
+      projectId: actor.projectId,
+      role: 'anon',
+      apiKeyId: actor.apiKeyId,
+      apiKeyPrefix: actor.apiKeyPrefix,
+    };
+  }
+  return null;
+}
+
 export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
   app.post<{
     Body: InternalGraphqlBody;
@@ -41,12 +71,20 @@ export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
     let tokenPayload;
     try {
       tokenPayload = verifyInternalFunctionToken(token);
-    } catch (error) {
+    } catch {
       return reply.status(401).send({
         success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Invalid internal token' },
+      });
+    }
+
+    const projectActor = toProjectDataActor(tokenPayload.actor);
+    if (!projectActor) {
+      return reply.status(403).send({
+        success: false,
         error: {
-          code: 'UNAUTHORIZED',
-          message: error instanceof Error ? error.message : 'Invalid internal token',
+          code: 'PROJECT_ACTOR_REQUIRED',
+          message: 'Function GraphQL requires a project application actor',
         },
       });
     }
@@ -60,7 +98,7 @@ export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
     }
 
     const projectResult = await pool.query(
-      'SELECT schema_name FROM druvia_projects WHERE project_id = $1',
+      'SELECT schema_name, data_access_mode FROM druvia_projects WHERE project_id = $1',
       [tokenPayload.projectId]
     );
 
@@ -72,6 +110,11 @@ export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
     }
 
     const schemaName = projectResult.rows[0].schema_name as string;
+    const executionContext = resolveProjectDataExecutionContext({
+      projectId: tokenPayload.projectId,
+      runtimeMode: projectResult.rows[0].data_access_mode as string | null,
+      actor: projectActor,
+    });
     const forbiddenProjectSchemaResult = await pool.query(
       'SELECT schema_name FROM druvia_projects WHERE project_id <> $1',
       [tokenPayload.projectId]
@@ -109,26 +152,27 @@ export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
           'Content-Type': 'application/json',
           'x-hasura-admin-secret': config.hasura.adminSecret,
           'x-hasura-default-schema': schemaName,
+          'x-hasura-role': executionContext.role,
+          ...executionContext.sessionVariables,
         },
         body: JSON.stringify({ query, variables, operationName }),
       });
 
       if (!response.ok) {
-        const message = response.statusText || 'GraphQL service error';
-        return reply.status(response.status >= 500 ? 502 : response.status).send({
+        return reply.status(502).send({
           success: false,
-          error: { code: 'GRAPHQL_PROXY_FAILED', message },
+          error: { code: 'GRAPHQL_PROXY_FAILED', message: 'GraphQL request failed' },
         });
       }
 
       const data = await response.json();
       return reply.send(data);
-    } catch (error) {
+    } catch {
       return reply.status(503).send({
         success: false,
         error: {
           code: 'GRAPHQL_SERVICE_UNAVAILABLE',
-          message: error instanceof Error ? error.message : 'Unable to connect to GraphQL endpoint',
+          message: 'GraphQL service unavailable',
         },
       });
     }

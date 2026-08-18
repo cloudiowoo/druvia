@@ -1,13 +1,13 @@
 import { createClient, type Client } from 'graphql-ws'
 import WebSocket from 'ws'
 import type { ProjectDataAccessMode } from '@druvia/shared'
-import type { ApiKeyIdentity, ProjectJwtUser } from '../../middleware/auth.js'
 import { config } from '../../config/index.js'
 import { materializeTableDataAccessPolicy } from './data-access-policy.js'
 import { canonicalizeMigrationValue, digestMigrationValue } from './data-access-migration-plan.js'
-import { resolveProjectDataExecutionContext, type ProjectDataExecutionContext } from './project-data-actor.js'
-import { resolveRealtimeExecutionContext, type RealtimeExecutionContext } from '../realtime/realtime-actor.js'
+import type { ProjectDataExecutionContext } from './project-data-actor.js'
+import type { RealtimeExecutionContext } from '../realtime/realtime-actor.js'
 import { issueInternalRealtimeAccessToken } from '../realtime/realtime-token.service.js'
+import { resolveDataScopeRole } from './data-scope-role.js'
 import type { DataAccessRoleNames } from './data-access.types.js'
 import type {
   DataAccessMigrationOperation,
@@ -273,16 +273,14 @@ export async function verifyMigrationRealtimeActors(input: {
   runtimeMode: ProjectDataAccessMode
   issueToken?: (input: { projectId: string; context: RealtimeExecutionContext }) => { token: string }
   openConnection?: (url: string, token: string, timeoutMs: number) => Promise<DisposableRealtimeConnection>
-  resolveContext?: (actor: ProjectJwtUser | ApiKeyIdentity) => RealtimeExecutionContext
+  contexts?: RealtimeExecutionContext[]
   timeoutMs?: number
 }): Promise<void> {
-  const actors = syntheticActors(input.projectId)
+  const contexts = input.contexts
+    ?? buildMigrationRealtimeContexts(input.projectId, input.runtimeMode)
   const openConnections: DisposableRealtimeConnection[] = []
   try {
-    for (const actor of actors) {
-      const context = input.resolveContext?.(actor) ?? resolveRealtimeExecutionContext({
-        projectId: input.projectId, runtimeMode: input.runtimeMode, actor,
-      })
+    for (const context of contexts) {
       const token = (input.issueToken ?? issueInternalRealtimeAccessToken)({
         projectId: input.projectId,
         context,
@@ -312,15 +310,70 @@ export function buildActiveRuntimeHttpContexts(
   projectId: string,
   runtimeMode: ProjectDataAccessMode
 ): Array<{ actor: 'authenticated' | 'anonymous'; context: ProjectDataExecutionContext }> {
-  const [projectUser, apiKey] = syntheticActors(projectId)
+  const explicit = runtimeMode === 'explicit'
   return [
     {
       actor: 'authenticated',
-      context: resolveProjectDataExecutionContext({ projectId, runtimeMode, actor: projectUser }),
+      context: {
+        kind: 'project_actor',
+        role: explicit
+          ? resolveDataScopeRole({ projectId, actor: 'authenticated' })
+          : 'user',
+        sessionVariables: explicit
+          ? {
+              'x-hasura-user-id': `migration_probe:authenticated:${projectId}`,
+              'x-hasura-project-id': projectId,
+              'x-hasura-actor-type': 'project_user',
+            }
+          : {},
+      },
     },
     {
       actor: 'anonymous',
-      context: resolveProjectDataExecutionContext({ projectId, runtimeMode, actor: apiKey }),
+      context: {
+        kind: 'project_actor',
+        role: explicit
+          ? resolveDataScopeRole({ projectId, actor: 'anonymous' })
+          : 'user',
+        sessionVariables: explicit
+          ? {
+              'x-hasura-project-id': projectId,
+              'x-hasura-actor-type': 'apikey',
+            }
+          : {},
+      },
+    },
+  ]
+}
+
+export function buildMigrationRealtimeContexts(
+  projectId: string,
+  runtimeMode: ProjectDataAccessMode
+): RealtimeExecutionContext[] {
+  const explicit = runtimeMode === 'explicit'
+  return [
+    {
+      role: explicit
+        ? resolveDataScopeRole({ projectId, actor: 'authenticated' })
+        : 'user',
+      actorType: 'project_user',
+      subject: `migration_probe:authenticated:${projectId}`,
+      sessionVariables: {
+        'x-hasura-user-id': `migration_probe:authenticated:${projectId}`,
+        'x-hasura-project-id': projectId,
+        'x-hasura-actor-type': 'project_user',
+      },
+    },
+    {
+      role: explicit
+        ? resolveDataScopeRole({ projectId, actor: 'anonymous' })
+        : 'anonymous',
+      actorType: 'apikey',
+      subject: `migration_probe:anonymous:${projectId}`,
+      sessionVariables: {
+        'x-hasura-project-id': projectId,
+        'x-hasura-actor-type': 'apikey',
+      },
     },
   ]
 }
@@ -367,16 +420,6 @@ async function openInternalRealtimeConnection(
       error instanceof Error ? `Realtime verification failed: ${error.message}` : 'Realtime verification failed'
     )
   }
-}
-
-function syntheticActors(projectId: string): [ProjectJwtUser, ApiKeyIdentity] {
-  return [
-    {
-      kind: 'project_user', sub: `migration-probe:${projectId}`, projectId,
-      authType: 'project_user', role: 'authenticated', provider: 'internal_verifier',
-    },
-    { kind: 'apikey', projectId, role: 'anon' },
-  ]
 }
 
 function equalMigrationValue(left: unknown, right: unknown): boolean {
