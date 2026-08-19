@@ -7,7 +7,29 @@ export interface StorageObject {
   size: number
   mimeType: string | null
   createdAt: string
+  updatedAt: string
 }
+
+function encodePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/')
+}
+
+function isStorageObject(value: unknown): value is StorageObject {
+  if (!value || typeof value !== 'object') return false
+  const object = value as Record<string, unknown>
+  return typeof object.objectId === 'string'
+    && typeof object.bucketId === 'string'
+    && typeof object.name === 'string'
+    && typeof object.size === 'number'
+    && (typeof object.mimeType === 'string' || object.mimeType === null)
+    && typeof object.createdAt === 'string'
+    && typeof object.updatedAt === 'string'
+}
+
+const invalidStorageResponse = () => ({
+  code: 'INVALID_STORAGE_RESPONSE',
+  message: 'Storage API returned an invalid response',
+})
 
 export class BucketClient {
   private baseUrl: string
@@ -23,11 +45,11 @@ export class BucketClient {
   }
 
   private objectUrl(path: string): string {
-    return `${this.baseUrl}/projects/${this.projectId}/storage/buckets/${this.bucketName}/objects/${path}`
+    return `${this.baseUrl}/projects/${encodeURIComponent(this.projectId)}/storage/buckets/${encodeURIComponent(this.bucketName)}/objects/${encodePath(path)}`
   }
 
   private uploadUrl(path: string): string {
-    return `${this.baseUrl}/projects/${this.projectId}/storage/buckets/${this.bucketName}/objects?path=${encodeURIComponent(path)}`
+    return `${this.baseUrl}/projects/${encodeURIComponent(this.projectId)}/storage/buckets/${encodeURIComponent(this.bucketName)}/objects?path=${encodeURIComponent(path)}`
   }
 
   async upload(path: string, file: Blob | File | ArrayBuffer, options?: { contentType?: string }): Promise<DruviaResponse<{ path: string }>> {
@@ -51,7 +73,10 @@ export class BucketClient {
       if (!response.ok) {
         return { data: null, error: json.error ?? { code: 'STORAGE_ERROR', message: 'Upload failed' } }
       }
-      return { data: json.data ?? { path }, error: null }
+      if (!isStorageObject(json.data)) {
+        return { data: null, error: invalidStorageResponse() }
+      }
+      return { data: { path: json.data.name }, error: null }
     } catch (err) {
       return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
     }
@@ -64,13 +89,16 @@ export class BucketClient {
       if (options?.limit) params.set('limit', String(options.limit))
       if (options?.offset) params.set('offset', String(options.offset))
       const query = params.toString()
-      const url = `${this.baseUrl}/projects/${this.projectId}/storage/buckets/${this.bucketName}/objects${query ? `?${query}` : ''}`
+      const url = `${this.baseUrl}/projects/${encodeURIComponent(this.projectId)}/storage/buckets/${encodeURIComponent(this.bucketName)}/objects${query ? `?${query}` : ''}`
       const response = await this.fetchFn(url, { method: 'GET' })
       const json = await response.json()
       if (!response.ok) {
         return { data: null, error: json.error ?? { code: 'STORAGE_ERROR', message: 'List failed' } }
       }
-      return { data: json.data ?? [], error: null }
+      if (!Array.isArray(json.data) || !json.data.every(isStorageObject)) {
+        return { data: null, error: invalidStorageResponse() }
+      }
+      return { data: json.data, error: null }
     } catch (err) {
       return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
     }
@@ -105,24 +133,27 @@ export class BucketClient {
   }
 
   getPublicUrl(path: string): { data: { publicUrl: string } } {
-    const publicUrl = `${this.baseUrl}/storage/public/${this.projectId}/${this.bucketName}/${path}`
+    const publicUrl = `${this.baseUrl}/storage/public/${encodeURIComponent(this.projectId)}/${encodeURIComponent(this.bucketName)}/${encodePath(path)}`
     return { data: { publicUrl } }
   }
 
   async createSignedUrl(path: string, expiresIn: number): Promise<DruviaResponse<{ signedUrl: string }>> {
     try {
       const response = await this.fetchFn(
-        `${this.baseUrl}/projects/${this.projectId}/storage/buckets/${this.bucketName}/signed-url`,
+        `${this.baseUrl}/projects/${encodeURIComponent(this.projectId)}/storage/buckets/${encodeURIComponent(this.bucketName)}/signed-url`,
         {
           method: 'POST',
-          body: JSON.stringify({ path, expiresIn }),
+          body: JSON.stringify({ objectPath: path, expiresIn }),
         }
       )
       const json = await response.json()
       if (!response.ok) {
         return { data: null, error: json.error ?? { code: 'STORAGE_ERROR', message: 'Failed to create signed URL' } }
       }
-      return { data: json.data ?? json, error: null }
+      if (!json.data || typeof json.data.url !== 'string') {
+        return { data: null, error: invalidStorageResponse() }
+      }
+      return { data: { signedUrl: json.data.url }, error: null }
     } catch (err) {
       return { data: null, error: { code: 'NETWORK_ERROR', message: err instanceof Error ? err.message : String(err) } }
     }
@@ -133,11 +164,13 @@ export class DruviaStorage {
   private baseUrl: string
   private projectId: string
   private fetchFn: FetchFn
+  private rawFetchFn: FetchFn
 
-  constructor(baseUrl: string, projectId: string, fetchFn: FetchFn) {
+  constructor(baseUrl: string, projectId: string, fetchFn: FetchFn, rawFetchFn: FetchFn = fetchFn) {
     this.baseUrl = baseUrl
     this.projectId = projectId
     this.fetchFn = fetchFn
+    this.rawFetchFn = rawFetchFn
   }
 
   from(bucketName: string): BucketClient {
@@ -154,7 +187,7 @@ export class DruviaStorage {
     expiresIn?: number
   }): Promise<DruviaResponse<StorageUploadTicket>> {
     try {
-      const response = await this.fetchFn(`${this.baseUrl}/projects/${this.projectId}/storage/trusted/upload-ticket`, {
+      const response = await this.rawFetchFn(`${this.baseUrl}/projects/${encodeURIComponent(this.projectId)}/storage/trusted/upload-ticket`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -187,7 +220,7 @@ export class DruviaStorage {
     expiresIn?: number
   }): Promise<DruviaResponse<StorageRemoveTicket>> {
     try {
-      const response = await this.fetchFn(`${this.baseUrl}/projects/${this.projectId}/storage/trusted/remove-ticket`, {
+      const response = await this.rawFetchFn(`${this.baseUrl}/projects/${encodeURIComponent(this.projectId)}/storage/trusted/remove-ticket`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -227,7 +260,7 @@ export class DruviaStorage {
       }
       formData.append('file', blob, options.path.split('/').pop() || 'file')
 
-      const response = await this.fetchFn(`${this.baseUrl}/storage/upload-with-ticket?path=${encodeURIComponent(options.path)}`, {
+      const response = await this.rawFetchFn(`${this.baseUrl}/storage/upload-with-ticket?path=${encodeURIComponent(options.path)}`, {
         method: 'POST',
         headers: {
           'x-druvia-storage-ticket': ticket,
@@ -246,7 +279,7 @@ export class DruviaStorage {
 
   async removeWithTicket(ticket: string, path: string): Promise<DruviaResponse<{ removed: boolean }>> {
     try {
-      const response = await this.fetchFn(`${this.baseUrl}/storage/remove-with-ticket`, {
+      const response = await this.rawFetchFn(`${this.baseUrl}/storage/remove-with-ticket`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

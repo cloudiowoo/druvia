@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import * as storageService from '../storage/storage.service.js';
 import { verifyInternalFunctionToken, type InternalFunctionTokenPayload } from './internal-token.js';
+import { normalizeStorageObjectPath } from '../storage/storage-path.js';
+import { toStorageObjectResponse } from '../storage/storage-response.js';
 
 const INTERNAL_TOKEN_HEADER = 'x-druvia-internal-token';
 const INTERNAL_STORAGE_BODY_LIMIT = 70 * 1024 * 1024;
@@ -19,10 +21,11 @@ interface InternalStorageRemoveBody {
 }
 
 function sanitizeObjectPath(path: string): string | null {
-  if (!path || path.length > 1024) return null;
-  if (path.includes('..') || path.includes('\0')) return null;
-  const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
-  return normalized || null;
+  try {
+    return normalizeStorageObjectPath(path);
+  } catch {
+    return null;
+  }
 }
 
 function toAuditContext(
@@ -150,7 +153,7 @@ export async function internalFunctionsStorageRoutes(app: FastifyInstance) {
           data: {
             path: sanitizedPath,
             publicUrl,
-            object,
+            object: toStorageObjectResponse(object),
           },
         });
       } catch (error) {
@@ -163,7 +166,7 @@ export async function internalFunctionsStorageRoutes(app: FastifyInstance) {
           });
         }
 
-        if (message.includes('not allowed')) {
+        if (message.includes('not allowed') || message.includes('Invalid MIME')) {
           return reply.status(415).send({
             success: false,
             error: { code: 'INVALID_MIME_TYPE', message },
@@ -172,7 +175,7 @@ export async function internalFunctionsStorageRoutes(app: FastifyInstance) {
 
         return reply.status(500).send({
           success: false,
-          error: { code: 'UPLOAD_FAILED', message },
+          error: { code: 'UPLOAD_FAILED', message: 'Failed to upload object' },
         });
       }
     }

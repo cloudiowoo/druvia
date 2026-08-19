@@ -220,7 +220,7 @@ Codex 官方只自动发现 `AGENTS.md` 层级，不会自动读取任意命名�
 ### Phase A：0.4.0 生产安全基线
 
 - 收紧 Hasura permissions 和匿名写入。
-- 在已完成 GraphQL/Realtime actor 切换的基础上，继续打通 Storage/Functions/RPC。
+- GraphQL、Realtime、Storage、Functions、RPC 的 actor 主链已打通；继续收紧 Hasura 默认权限并用真实应用验证跨模块身份一致性。
 - 修正 MCP 认证/路由契约，或暂时明确标记实验性。
 - 清理 lint 和核心单测失败，建立 release 必过门禁。
 - 修正文档、版本轴、README、LICENSE 和公开仓库敏感信息治理。

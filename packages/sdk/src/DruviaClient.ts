@@ -75,7 +75,7 @@ export class DruviaClient {
     )
     const graphqlUrl = `${apiBase}/projects/${options.projectId}/graphql`
     this.database = new DruviaDatabase(graphqlUrl, databaseFetch, schema)
-    this.storage = new DruviaStorage(apiBase, options.projectId, this.platformFetch)
+    this.storage = new DruviaStorage(apiBase, options.projectId, this.applicationFetch, rawFetch)
     this.rpcModule = new DruviaRpc(apiBase, options.projectId, this.applicationFetch)
     this.functions = new DruviaFunctions(apiBase, options.projectId, this.applicationFetch)
 

@@ -1,8 +1,13 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { JwtPayload } from '../../middleware/auth.js';
 import type { MultipartFile } from '@fastify/multipart';
 import * as storageService from './storage.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
+import {
+  ProjectActorRequiredError,
+  ProjectActorScopeError,
+  resolvePlatformProjectActor,
+  resolveScopedProjectActor,
+} from '../../lib/project-actor.js';
 import { validateTrustedBackendKey } from '../trusted-backend-keys/trusted-backend-keys.service.js';
 import {
   issueRemoveTicket,
@@ -11,6 +16,12 @@ import {
   verifyRemoveTicket,
   verifyUploadTicket,
 } from './storage-trusted-access.service.js';
+import type { StorageActor, StorageProjectUserAccess } from './storage-access.service.js';
+import { decideStorageObjectAccess, StorageAccessError } from './storage-access.service.js';
+import { normalizeStorageObjectPath, normalizeStoragePathPrefix, StoragePathError } from './storage-path.js';
+import { toStorageObjectResponse } from './storage-response.js';
+import { applyStorageDeliveryHeaders } from './storage-delivery.js';
+import { normalizeStorageMimeType, StorageValidationError } from './storage-validation.js';
 
 // ============================================
 // Parameter/Query Types
@@ -31,8 +42,9 @@ interface ObjectParams extends BucketParams {
 interface CreateBucketBody {
   name: string;
   public?: boolean;
-  fileSizeLimit?: number;
-  allowedMimeTypes?: string[];
+  fileSizeLimit?: number | null;
+  allowedMimeTypes?: string[] | null;
+  projectUserAccess?: StorageProjectUserAccess;
 }
 
 interface UpdateBucketBody {
@@ -40,6 +52,7 @@ interface UpdateBucketBody {
   fileSizeLimit?: number | null;
   allowedMimeTypes?: string[] | null;
   corsConfig?: Record<string, unknown> | null;
+  projectUserAccess?: StorageProjectUserAccess;
 }
 
 interface ListObjectsQuery {
@@ -94,12 +107,11 @@ function validateBucketName(name: string): boolean {
 
 // Sanitize object path to prevent path traversal
 function sanitizeObjectPath(path: string): string | null {
-  if (!path || path.length > 1024) return null;
-  // Reject path traversal attempts
-  if (path.includes('..') || path.includes('\0')) return null;
-  // Normalize path separators and remove leading slashes
-  const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
-  return normalized || null;
+  try {
+    return normalizeStorageObjectPath(path);
+  } catch {
+    return null;
+  }
 }
 
 function isPathWithinPrefix(path: string, pathPrefix: string): boolean {
@@ -168,16 +180,15 @@ async function verifyProjectAccess(
   request: FastifyRequest<{ Params: ProjectParams }>,
   reply: FastifyReply
 ): Promise<boolean> {
-  const userId = (request.user as JwtPayload | undefined)?.userId;
-  if (!userId) {
-    reply.status(401).send({
+  if (request.user?.kind !== 'platform_user') {
+    reply.status(403).send({
       success: false,
-      error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+      error: { code: 'PLATFORM_USER_REQUIRED', message: 'A platform administrator is required' },
     });
     return false;
   }
 
-  const hasAccess = await checkProjectAccess(userId, request.params.projectId);
+  const hasAccess = await checkProjectAccess(request.user.userId, request.params.projectId);
   if (!hasAccess) {
     reply.status(403).send({
       success: false,
@@ -187,6 +198,92 @@ async function verifyProjectAccess(
   }
 
   return true;
+}
+
+async function resolveObjectActor(
+  request: FastifyRequest<{ Params: ProjectParams }>,
+  reply: FastifyReply
+): Promise<StorageActor | null> {
+  const user = request.user;
+  if (!user) {
+    reply.status(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+    return null;
+  }
+  if (user.kind === 'platform_user') {
+    if (!(await checkProjectAccess(user.userId, request.params.projectId))) {
+      reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'No access to this project' } });
+      return null;
+    }
+    try {
+      const actor = resolvePlatformProjectActor(user, request.params.projectId);
+      return {
+        actorType: 'platform_user',
+        projectId: actor.projectId,
+        platformUserId: actor.platformUserId,
+      };
+    } catch (error) {
+      if (!(error instanceof ProjectActorRequiredError)) throw error;
+      reply.status(401).send({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+      });
+      return null;
+    }
+  }
+
+  try {
+    const actor = resolveScopedProjectActor(user, request.params.projectId);
+    if (actor.actorType === 'apikey') {
+      reply.status(403).send({
+        success: false,
+        error: { code: 'PROJECT_ACTOR_REQUIRED', message: 'A Project User session is required for protected storage objects' },
+      });
+      return null;
+    }
+    return {
+      actorType: 'project_user',
+      projectId: actor.projectId,
+      projectUserId: actor.projectUserId,
+    };
+  } catch (error) {
+    if (error instanceof ProjectActorScopeError) {
+      reply.status(403).send({
+        success: false,
+        error: { code: 'PROJECT_SCOPE_MISMATCH', message: 'Project credential belongs to another project' },
+      });
+      return null;
+    }
+    if (error instanceof ProjectActorRequiredError) {
+      reply.status(401).send({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+      });
+      return null;
+    }
+    throw error;
+  }
+}
+
+function sendObjectAccessError(reply: FastifyReply, error: unknown) {
+  if (error instanceof StorageAccessError) {
+    return reply.status(error.statusCode).send({
+      success: false,
+      error: { code: error.code, message: error.message },
+    });
+  }
+  if (error instanceof StoragePathError) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_OBJECT_PATH', message: error.message },
+    });
+  }
+  if (error instanceof StorageValidationError) {
+    return reply.status(415).send({
+      success: false,
+      error: { code: 'INVALID_MIME_TYPE', message: error.message },
+    });
+  }
+  throw error;
 }
 
 // ============================================
@@ -310,6 +407,15 @@ export async function createBucket(
     const bucket = await storageService.createBucket(request.params.projectId, request.body);
     return reply.status(201).send({ success: true, data: bucket });
   } catch (error) {
+    if (error instanceof StorageValidationError) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_STORAGE_LIMIT', message: error.message },
+      });
+    }
+    if (error instanceof StorageAccessError) {
+      return sendObjectAccessError(reply, error);
+    }
     const err = error as Error;
     if (err.message.includes('duplicate key') || err.message.includes('unique constraint')) {
       return reply.status(409).send({
@@ -348,11 +454,22 @@ export async function updateBucket(
 ) {
   if (!(await verifyProjectAccess(request, reply))) return;
 
-  const bucket = await storageService.updateBucket(
-    request.params.projectId,
-    request.params.bucketName,
-    request.body
-  );
+  let bucket;
+  try {
+    bucket = await storageService.updateBucket(
+      request.params.projectId,
+      request.params.bucketName,
+      request.body
+    );
+  } catch (error) {
+    if (error instanceof StorageValidationError) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_STORAGE_LIMIT', message: error.message },
+      });
+    }
+    return sendObjectAccessError(reply, error);
+  }
 
   if (!bucket) {
     return reply.status(404).send({
@@ -404,7 +521,8 @@ export async function listObjects(
   request: FastifyRequest<{ Params: BucketParams; Querystring: ListObjectsQuery }>,
   reply: FastifyReply
 ) {
-  if (!(await verifyProjectAccess(request, reply))) return;
+  const actor = await resolveObjectActor(request, reply);
+  if (!actor) return;
 
   const bucket = await storageService.getBucketByName(
     request.params.projectId,
@@ -418,18 +536,34 @@ export async function listObjects(
     });
   }
 
-  const limit = parseInt(request.query.limit || '50', 10);
-  const offset = parseInt(request.query.offset || '0', 10);
+  const limit = Number(request.query.limit ?? 50);
+  const offset = Number(request.query.offset ?? 0);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100
+    || !Number.isInteger(offset) || offset < 0 || offset > 1_000_000) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_STORAGE_REQUEST', message: 'limit must be 1-100 and offset 0-1000000' },
+    });
+  }
+  let prefix: string | undefined;
+  try {
+    prefix = request.query.prefix === undefined
+      ? undefined
+      : normalizeStoragePathPrefix(request.query.prefix);
+  } catch (error) {
+    return sendObjectAccessError(reply, error);
+  }
 
-  const result = await storageService.listObjects(bucket.bucketId, {
-    prefix: request.query.prefix,
-    limit,
-    offset,
-  });
+  let result;
+  try {
+    result = await storageService.listObjectsForActor(bucket, actor, { prefix, limit, offset });
+  } catch (error) {
+    return sendObjectAccessError(reply, error);
+  }
 
   return reply.send({
     success: true,
-    data: result.objects,
+    data: result.objects.map(toStorageObjectResponse),
     pagination: { limit, offset, total: result.total },
   });
 }
@@ -438,7 +572,8 @@ export async function uploadObject(
   request: MultipartRequest,
   reply: FastifyReply
 ) {
-  if (!(await verifyProjectAccess(request as FastifyRequest<{ Params: ProjectParams }>, reply))) return;
+  const actor = await resolveObjectActor(request as FastifyRequest<{ Params: ProjectParams }>, reply);
+  if (!actor) return;
 
   const bucket = await storageService.getBucketByName(
     request.params.projectId,
@@ -450,6 +585,17 @@ export async function uploadObject(
       success: false,
       error: { code: 'NOT_FOUND', message: 'Bucket not found' },
     });
+  }
+
+  try {
+    decideStorageObjectAccess({
+      preset: bucket.projectUserAccess,
+      actor,
+      operation: 'write',
+      objectExists: false,
+    });
+  } catch (error) {
+    return sendObjectAccessError(reply, error);
   }
 
   const data = await request.file();
@@ -466,24 +612,32 @@ export async function uploadObject(
   if (!sanitizedName) {
     return reply.status(400).send({
       success: false,
-      error: { code: 'INVALID_FILENAME', message: 'Invalid filename' },
+      error: { code: 'INVALID_OBJECT_PATH', message: 'Invalid filename' },
     });
   }
 
   try {
     const buffer = await data.toBuffer();
+    if (buffer.length > 50 * 1024 * 1024) {
+      return reply.status(413).send({
+        success: false,
+        error: { code: 'FILE_TOO_LARGE', message: 'File size exceeds the 50 MB service limit' },
+      });
+    }
     const object = await storageService.uploadObject(
       bucket,
       sanitizedName,
       buffer,
       data.mimetype,
       {
-        createdByType: 'platform_user',
-        platformUserId: (request.user as JwtPayload | undefined)?.userId,
-      }
+        createdByType: actor.actorType,
+        ...(actor.actorType === 'platform_user' ? { platformUserId: actor.platformUserId } : {}),
+        ...(actor.actorType === 'project_user' ? { projectUserId: actor.projectUserId } : {}),
+      },
+      actor
     );
 
-    return reply.status(201).send({ success: true, data: object });
+    return reply.status(201).send({ success: true, data: toStorageObjectResponse(object) });
   } catch (error) {
     const err = error as Error;
     if (err.message.includes('exceeds limit')) {
@@ -492,13 +646,13 @@ export async function uploadObject(
         error: { code: 'FILE_TOO_LARGE', message: err.message },
       });
     }
-    if (err.message.includes('not allowed')) {
+    if (err.message.includes('not allowed') || err.message.includes('Invalid MIME')) {
       return reply.status(415).send({
         success: false,
         error: { code: 'INVALID_MIME_TYPE', message: err.message },
       });
     }
-    throw error;
+    return sendObjectAccessError(reply, error);
   }
 }
 
@@ -531,7 +685,7 @@ export async function uploadWithTicket(
   if (!objectPath) {
     return reply.status(400).send({
       success: false,
-      error: { code: 'INVALID_PATH', message: 'Invalid path' },
+      error: { code: 'INVALID_OBJECT_PATH', message: 'Invalid path' },
     });
   }
 
@@ -584,7 +738,14 @@ export async function uploadWithTicket(
     });
   }
 
-  if (ticket.contentTypes?.length && !ticket.contentTypes.includes(data.mimetype)) {
+  let normalizedMimeType: string;
+  try {
+    normalizedMimeType = normalizeStorageMimeType(data.mimetype);
+  } catch (error) {
+    return sendObjectAccessError(reply, error);
+  }
+
+  if (ticket.contentTypes?.length && !ticket.contentTypes.includes(normalizedMimeType)) {
     request.log.warn({
       projectId: ticket.projectId,
       projectUserId: ticket.projectUserId,
@@ -596,7 +757,7 @@ export async function uploadWithTicket(
     }, 'trusted storage upload rejected');
     return reply.status(415).send({
       success: false,
-      error: { code: 'INVALID_MIME_TYPE', message: `MIME type ${data.mimetype} is not allowed` },
+      error: { code: 'INVALID_MIME_TYPE', message: `MIME type ${normalizedMimeType} is not allowed` },
     });
   }
 
@@ -605,7 +766,7 @@ export async function uploadWithTicket(
       bucket,
       objectPath,
       buffer,
-      data.mimetype,
+      normalizedMimeType,
       {
         createdByType: 'trusted_backend_project_user',
         projectUserId: ticket.projectUserId,
@@ -631,7 +792,7 @@ export async function uploadWithTicket(
       data: {
         path: objectPath,
         publicUrl,
-        object,
+        object: toStorageObjectResponse(object),
       },
     });
   } catch (error) {
@@ -642,7 +803,7 @@ export async function uploadWithTicket(
         error: { code: 'FILE_TOO_LARGE', message: err.message },
       });
     }
-    if (err.message.includes('not allowed')) {
+    if (err.message.includes('not allowed') || err.message.includes('Invalid MIME')) {
       return reply.status(415).send({
         success: false,
         error: { code: 'INVALID_MIME_TYPE', message: err.message },
@@ -681,7 +842,7 @@ export async function removeWithTicket(
   if (!objectPath) {
     return reply.status(400).send({
       success: false,
-      error: { code: 'INVALID_PATH', message: 'Invalid path' },
+      error: { code: 'INVALID_OBJECT_PATH', message: 'Invalid path' },
     });
   }
 
@@ -737,7 +898,8 @@ export async function downloadObject(
   request: FastifyRequest<{ Params: ObjectParams }>,
   reply: FastifyReply
 ) {
-  if (!(await verifyProjectAccess(request, reply))) return;
+  const actor = await resolveObjectActor(request, reply);
+  if (!actor) return;
 
   const bucket = await storageService.getBucketByName(
     request.params.projectId,
@@ -755,30 +917,32 @@ export async function downloadObject(
   if (!objectPath) {
     return reply.status(400).send({
       success: false,
-      error: { code: 'INVALID_PATH', message: 'Invalid object path' },
+      error: { code: 'INVALID_OBJECT_PATH', message: 'Invalid object path' },
     });
   }
 
-  const object = await storageService.getObject(bucket.bucketId, objectPath);
-
+  let object;
+  try {
+    object = await storageService.getObjectForActor(bucket, objectPath, actor);
+  } catch (error) {
+    return sendObjectAccessError(reply, error);
+  }
   if (!object) {
     return reply.status(404).send({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Object not found' },
+      error: { code: 'OBJECT_NOT_FOUND', message: 'Object not found' },
     });
   }
 
   try {
     const buffer = await storageService.downloadObject(object);
-    reply.header('Content-Type', object.mimeType || 'application/octet-stream');
+    applyStorageDeliveryHeaders(reply, { mimeType: object.mimeType, logicalName: object.name, public: false });
     reply.header('Content-Length', buffer.length);
-    reply.header('Content-Disposition', `attachment; filename="${encodeURIComponent(objectPath.split('/').pop() || 'file')}"`);
     return reply.send(buffer);
   } catch (error) {
-    const err = error as Error;
     return reply.status(500).send({
       success: false,
-      error: { code: 'DOWNLOAD_FAILED', message: err.message },
+      error: { code: 'DOWNLOAD_FAILED', message: 'Failed to download file' },
     });
   }
 }
@@ -787,7 +951,8 @@ export async function deleteObject(
   request: FastifyRequest<{ Params: ObjectParams }>,
   reply: FastifyReply
 ) {
-  if (!(await verifyProjectAccess(request, reply))) return;
+  const actor = await resolveObjectActor(request, reply);
+  if (!actor) return;
 
   const bucket = await storageService.getBucketByName(
     request.params.projectId,
@@ -805,16 +970,21 @@ export async function deleteObject(
   if (!objectPath) {
     return reply.status(400).send({
       success: false,
-      error: { code: 'INVALID_PATH', message: 'Invalid object path' },
+      error: { code: 'INVALID_OBJECT_PATH', message: 'Invalid object path' },
     });
   }
 
-  const deleted = await storageService.deleteObject(bucket.bucketId, objectPath);
+  let deleted;
+  try {
+    deleted = await storageService.deleteObject(bucket.bucketId, objectPath, actor);
+  } catch (error) {
+    return sendObjectAccessError(reply, error);
+  }
 
   if (!deleted) {
     return reply.status(404).send({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Object not found' },
+      error: { code: 'OBJECT_NOT_FOUND', message: 'Object not found' },
     });
   }
 
@@ -825,7 +995,8 @@ export async function getSignedUrl(
   request: FastifyRequest<{ Params: BucketParams; Body: SignedUrlBody }>,
   reply: FastifyReply
 ) {
-  if (!(await verifyProjectAccess(request, reply))) return;
+  const actor = await resolveObjectActor(request, reply);
+  if (!actor) return;
 
   const bucket = await storageService.getBucketByName(
     request.params.projectId,
@@ -840,20 +1011,30 @@ export async function getSignedUrl(
   }
 
   const { objectPath: rawPath, expiresIn = 3600 } = request.body;
+  if (!Number.isInteger(expiresIn) || expiresIn < 1 || expiresIn > 86400) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_STORAGE_REQUEST', message: 'expiresIn must be an integer from 1 to 86400' },
+    });
+  }
   const objectPath = sanitizeObjectPath(rawPath);
   if (!objectPath) {
     return reply.status(400).send({
       success: false,
-      error: { code: 'INVALID_REQUEST', message: 'Invalid objectPath' },
+      error: { code: 'INVALID_OBJECT_PATH', message: 'Invalid objectPath' },
     });
   }
 
-  const object = await storageService.getObject(bucket.bucketId, objectPath);
-
+  let object;
+  try {
+    object = await storageService.getObjectForActor(bucket, objectPath, actor);
+  } catch (error) {
+    return sendObjectAccessError(reply, error);
+  }
   if (!object) {
     return reply.status(404).send({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Object not found' },
+      error: { code: 'OBJECT_NOT_FOUND', message: 'Object not found' },
     });
   }
 
@@ -874,6 +1055,8 @@ interface SignedDownloadParams {
 interface SignedDownloadQuery {
   expires: string;
   signature: string;
+  filename?: string;
+  contentType?: string;
 }
 
 interface PublicDownloadParams {
@@ -887,7 +1070,7 @@ export async function downloadSignedUrl(
   reply: FastifyReply
 ) {
   const filePath = request.params['*'];
-  const { expires, signature } = request.query;
+  const { expires, signature, filename, contentType } = request.query;
 
   if (!expires || !signature) {
     return reply.status(400).send({
@@ -899,7 +1082,11 @@ export async function downloadSignedUrl(
   // Import LocalAdapter for signature verification
   const { LocalAdapter } = await import('../../adapters/storage/local.adapter.js');
 
-  if (!LocalAdapter.verifySignature(filePath, expires, signature)) {
+  const signedOptions = filename !== undefined && contentType !== undefined
+    ? { logicalName: filename, contentType }
+    : undefined;
+  if ((filename === undefined) !== (contentType === undefined)
+    || !LocalAdapter.verifySignature(filePath, expires, signature, signedOptions)) {
     return reply.status(403).send({
       success: false,
       error: { code: 'FORBIDDEN', message: 'Invalid or expired signature' },
@@ -913,28 +1100,12 @@ export async function downloadSignedUrl(
   try {
     const buffer = await storage.download(filePath);
 
-    // Determine mime type from extension
-    const ext = filePath.split('.').pop()?.toLowerCase();
-    const mimeTypes: Record<string, string> = {
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      png: 'image/png',
-      gif: 'image/gif',
-      webp: 'image/webp',
-      pdf: 'application/pdf',
-      txt: 'text/plain',
-      json: 'application/json',
-      html: 'text/html',
-      css: 'text/css',
-      js: 'application/javascript',
-    };
-    const mimeType = mimeTypes[ext || ''] || 'application/octet-stream';
-    const filename = filePath.split('/').pop() || 'file';
-
-    reply.header('Content-Type', mimeType);
+    applyStorageDeliveryHeaders(reply, {
+      mimeType: signedOptions?.contentType ?? 'application/octet-stream',
+      logicalName: signedOptions?.logicalName ?? 'download',
+      public: false,
+    });
     reply.header('Content-Length', buffer.length);
-    reply.header('Content-Disposition', `inline; filename="${encodeURIComponent(filename)}"`);
-    reply.header('Cache-Control', 'private, max-age=3600');
 
     return reply.send(buffer);
   } catch (error) {
@@ -979,7 +1150,7 @@ export async function downloadPublic(
   if (!objectPath) {
     return reply.status(400).send({
       success: false,
-      error: { code: 'INVALID_PATH', message: 'Invalid object path' },
+      error: { code: 'INVALID_OBJECT_PATH', message: 'Invalid object path' },
     });
   }
 
@@ -997,10 +1168,8 @@ export async function downloadPublic(
   try {
     const buffer = await storageService.downloadObject(object);
 
-    reply.header('Content-Type', object.mimeType || 'application/octet-stream');
+    applyStorageDeliveryHeaders(reply, { mimeType: object.mimeType, logicalName: object.name, public: true });
     reply.header('Content-Length', buffer.length);
-    reply.header('Content-Disposition', `inline; filename="${encodeURIComponent(objectPath.split('/').pop() || 'file')}"`);
-    reply.header('Cache-Control', 'public, max-age=31536000'); // 公开文件可长期缓存
 
     return reply.send(buffer);
   } catch (error) {

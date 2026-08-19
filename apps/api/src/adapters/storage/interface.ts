@@ -14,6 +14,11 @@ export interface UploadResult {
   etag?: string;
 }
 
+export interface SignedDownloadOptions {
+  logicalName: string;
+  contentType: string;
+}
+
 export interface StorageAdapter {
   readonly name: string;
 
@@ -22,7 +27,7 @@ export interface StorageAdapter {
   delete(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   getPublicUrl(path: string): string;
-  getSignedUrl(path: string, expiresIn?: number): Promise<string>;
+  getSignedUrl(path: string, expiresIn?: number, options?: SignedDownloadOptions): Promise<string>;
   list(prefix: string): Promise<string[]>;
 }
 

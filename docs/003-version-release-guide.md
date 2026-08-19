@@ -67,7 +67,7 @@ pnpm migrate bootstrap
 
 # 2. 验证
 pnpm migrate status
-# Expected: 001-012 全部 ✓（包括 010 数据迁移），当前版本 12
+# Expected: 已存在的迁移全部 ✓；旧 001-012 基线数据库的当前版本为 12
 ```
 
 Bootstrap 检测逻辑：
@@ -86,6 +86,14 @@ Bootstrap 检测逻辑：
 | 010 | 数据行查询 | `druvia_tenants WHERE tenant_id = 'default'` |
 | 011 | 表存在 | `druvia_api_keys` |
 | 012 | 表存在 | `druvia_project_environments` |
+| 013 | 表存在 | `druvia_refresh_tokens` |
+| 014 | 列存在 | 任一项目 schema 的 `_meta_tables.realtime_enabled` |
+| 015 | 列存在 | `druvia_functions.invoke_auth_mode` |
+| 016 | 表存在 | `druvia_project_refresh_tokens` |
+| 017 | 表存在 | `druvia_trusted_backend_keys` |
+| 018 | 列存在 | `druvia_projects.data_access_mode` |
+| 019 | 表存在 | `druvia_data_access_migrations` |
+| 020 | 两列同时存在 | `druvia_storage_buckets.project_user_access` 与 `druvia_storage_objects.owner_project_user_id` |
 
 注意事项：
 - Bootstrap 只能执行一次，已有记录时会提示 "Already bootstrapped"
@@ -167,7 +175,7 @@ OTA 仍使用既有 updater 流程，但 release manifest 对应的 API 镜像�
 
 包含已有项目数据访问升级的版本必须先应用 `019_data_access_migrations`，再启动新 API/Admin。发布前先完成数据库和 Hasura metadata 备份；发布后通过 Admin 逐项目生成预检，不批量修改 `data_access_mode`。自定义旧规则会阻断，匿名写权限不会迁移，认证 aggregate 能力会收紧。
 
-当前 release workflow 的安全默认值为 `migration_required=true`、`migration_from=18`、`migration_to=19`、`migration_requires_backup=true`、`migration_reversible=false`。tag push 在没有 `workflow_dispatch` 输入时也使用这些值，GHCR 与自建 Registry manifest 必须保持一致；未来新增迁移时需同步提升该默认范围和对应契约测试。
+当前 release workflow 的安全默认值为 `migration_required=true`、`migration_from=18`、`migration_to=20`、`migration_requires_backup=true`、`migration_reversible=false`。tag push 在没有 `workflow_dispatch` 输入时也使用这些值，GHCR 与自建 Registry manifest 必须保持一致；未来新增迁移时需同步提升该默认范围和对应契约测试。
 
 迁移操作、恢复与回滚流程见 `docs/004-project-data-access-migration-guide.md`。`019` 保存恢复依据，镜像或 OTA 回滚时必须保留，不能自动执行 down migration。
 
@@ -184,7 +192,49 @@ OTA 仍使用既有 updater 流程，但 release manifest 对应的 API 镜像�
 
 OTA 自动和手动回滚都必须先基于已恢复的旧 Compose/env 执行 `docker compose up -d --no-deps deno`，再恢复完整服务集。原因是旧 API 不能调用要求新请求头的新 Worker；先恢复旧 Worker 可同时兼容新旧 API。该切片不需要数据库 down migration。
 
-直接终端用户 Storage 路由仍保持原 Platform Session 行为；本次发布不能被描述为 Storage actor cutover。
+#### Storage Project User / 迁移 020 部署门禁
+
+包含直接 Storage actor cutover 的版本必须在 API/Admin 启动前应用 `020_storage_project_user_access`。升级前完成数据库与 Storage 备份，并执行以下预检：对象逻辑名不得包含前后/重复斜杠、反斜杠、精确 `.`/`..` 段、控制字符或非 NFC 文本；Local 生产文件系统必须区分大小写，并按 `lower(storage_path)` 审计旧物理 key 冲突。
+
+以下查询均为只读查询，正常结果应为零行。先处理所有结果并核对对应 provider 文件，再执行迁移：
+
+```sql
+-- 迁移 020 会拒绝的非规范逻辑名。
+SELECT object_id, bucket_id, name, storage_provider, storage_path
+FROM druvia_storage_objects
+WHERE name = ''
+   OR name LIKE '/%'
+   OR name LIKE '%/'
+   OR name LIKE '%//%'
+   OR POSITION(E'\\' IN name) > 0
+   OR name ~ '(^|/)\.{1,2}(/|$)'
+   OR name ~ '[[:cntrl:]]'
+   OR name <> normalize(name, NFC)
+ORDER BY bucket_id, name;
+
+-- Local 旧对象缺少可读取的物理 key。
+SELECT object_id, bucket_id, name, storage_path
+FROM druvia_storage_objects
+WHERE storage_provider = 'local'
+  AND nullif(btrim(storage_path), '') IS NULL
+ORDER BY bucket_id, name;
+
+-- 大小写不敏感文件系统上会指向同一文件的 Local key。
+SELECT lower(storage_path) AS folded_storage_path,
+       COUNT(*) AS object_count,
+       array_agg(object_id ORDER BY object_id) AS object_ids,
+       array_agg(storage_path ORDER BY storage_path) AS storage_paths
+FROM druvia_storage_objects
+WHERE storage_provider = 'local'
+  AND nullif(btrim(storage_path), '') IS NOT NULL
+GROUP BY lower(storage_path)
+HAVING COUNT(*) > 1
+ORDER BY folded_storage_path;
+```
+
+`020` 将所有旧 bucket 默认设为 `admin_only`，只从 `project_user` / `trusted_backend_project_user` 的非空可信 metadata 回填 owner。部署后由管理员逐 bucket 选择项目用户访问预设；不要批量打开公开访问。旧对象物理 key 不重写，新上传才使用 opaque object ID key。
+
+镜像回滚不得自动执行 `020 down`。先恢复数据库/Storage 备份或确认新 owner/preset 字段可安全舍弃，再人工回滚；现有 private signed URL 在有效期内不受 preset 变化影响，public 开关关闭后下一次未缓存请求应被拒绝，旧公开缓存最多保留 5 分钟。
 
 ### 场景 E：生产环境回滚
 
@@ -253,7 +303,7 @@ pnpm migrate up
 | Git Tag | 迁移范围 | 说明 |
 |---------|---------|------|
 | v0.1.0 | 000-012 | 基线版本，迁移系统就绪 |
-| 待发布 | 000-019 | Project Data Access Batch 4，已有项目受控迁移与恢复 |
+| 待发布 | 000-020 | Project Data Access Batch 4 与 Storage Project User actor cutover |
 
 > 每次打 tag 时更新此表。
 
@@ -271,4 +321,4 @@ pnpm migrate up
 
 ---
 
-*Last Updated: 2026-08-18*
+*Last Updated: 2026-08-19*

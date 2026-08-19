@@ -4,11 +4,13 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { stripMigrationTransactionWrapper } from './migration-sql.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
 const { Pool } = pg;
+type PoolClient = pg.PoolClient;
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
@@ -41,8 +43,8 @@ function scanMigrations(direction: 'up' | 'down'): MigrationFile[] {
 }
 
 // 确保 schema_versions 表存在
-async function ensureVersionTable(): Promise<void> {
-  await pool.query(`
+async function ensureVersionTable(client: PoolClient): Promise<void> {
+  await client.query(`
     CREATE TABLE IF NOT EXISTS druvia_schema_versions (
       version INT PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
@@ -52,31 +54,38 @@ async function ensureVersionTable(): Promise<void> {
 }
 
 // 获取已应用的版本列表
-async function getAppliedVersions(): Promise<Set<number>> {
-  const result = await pool.query('SELECT version FROM druvia_schema_versions ORDER BY version');
+async function getAppliedVersions(client: PoolClient): Promise<Set<number>> {
+  const result = await client.query('SELECT version FROM druvia_schema_versions ORDER BY version');
   return new Set(result.rows.map((r: { version: number }) => r.version));
 }
 
 const MIGRATE_LOCK_ID = 20260313; // advisory lock ID
 
 // 获取迁移锁，防止并发执行
-async function acquireLock(): Promise<void> {
-  const result = await pool.query('SELECT pg_try_advisory_lock($1) as acquired', [MIGRATE_LOCK_ID]);
+async function acquireLock(client: PoolClient): Promise<void> {
+  const result = await client.query('SELECT pg_try_advisory_lock($1) as acquired', [MIGRATE_LOCK_ID]);
   if (!result.rows[0].acquired) {
     throw new Error('Another migration is running. Aborting.');
   }
 }
 
-async function releaseLock(): Promise<void> {
-  await pool.query('SELECT pg_advisory_unlock($1)', [MIGRATE_LOCK_ID]);
+async function releaseLock(client: PoolClient): Promise<void> {
+  await client.query('SELECT pg_advisory_unlock($1)', [MIGRATE_LOCK_ID]);
+}
+
+function readMigrationSql(migration: MigrationFile): string {
+  return stripMigrationTransactionWrapper(
+    fs.readFileSync(path.join(MIGRATIONS_DIR, migration.filename), 'utf-8')
+  );
 }
 
 // migrate up: 执行所有未应用的迁移
 async function migrateUp(): Promise<void> {
-  await acquireLock();
+  const client = await pool.connect();
   try {
-  await ensureVersionTable();
-  const applied = await getAppliedVersions();
+  await acquireLock(client);
+  await ensureVersionTable(client);
+  const applied = await getAppliedVersions(client);
   const migrations = scanMigrations('up').filter(m => !applied.has(m.version));
 
   if (migrations.length === 0) {
@@ -85,8 +94,7 @@ async function migrateUp(): Promise<void> {
   }
 
   for (const m of migrations) {
-    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, m.filename), 'utf-8');
-    const client = await pool.connect();
+    const sql = readMigrationSql(m);
     try {
       await client.query('BEGIN');
       await client.query(sql);
@@ -99,23 +107,26 @@ async function migrateUp(): Promise<void> {
     } catch (err) {
       await client.query('ROLLBACK');
       console.error(`  ✗ ${m.filename}: ${(err as Error).message}`);
-      process.exit(1);
-    } finally {
-      client.release();
+      throw err;
     }
   }
   console.log(`Applied ${migrations.length} migration(s).`);
   } finally {
-    await releaseLock();
+    try {
+      await releaseLock(client);
+    } finally {
+      client.release();
+    }
   }
 }
 
 // migrate down: 回滚迁移
 async function migrateDown(targetVersion?: number): Promise<void> {
-  await acquireLock();
+  const client = await pool.connect();
   try {
-  await ensureVersionTable();
-  const applied = await getAppliedVersions();
+  await acquireLock(client);
+  await ensureVersionTable(client);
+  const applied = await getAppliedVersions(client);
   const migrations = scanMigrations('down').filter(m => applied.has(m.version));
 
   if (migrations.length === 0) {
@@ -128,8 +139,7 @@ async function migrateDown(targetVersion?: number): Promise<void> {
     if (targetVersion !== undefined && m.version <= targetVersion) break;
     if (targetVersion === undefined && count >= 1) break; // 默认只回滚一个
 
-    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, m.filename), 'utf-8');
-    const client = await pool.connect();
+    const sql = readMigrationSql(m);
     try {
       await client.query('BEGIN');
       await client.query(sql);
@@ -140,21 +150,25 @@ async function migrateDown(targetVersion?: number): Promise<void> {
     } catch (err) {
       await client.query('ROLLBACK');
       console.error(`  ✗ ${m.filename}: ${(err as Error).message}`);
-      process.exit(1);
-    } finally {
-      client.release();
+      throw err;
     }
   }
   console.log(`Rolled back ${count} migration(s).`);
   } finally {
-    await releaseLock();
+    try {
+      await releaseLock(client);
+    } finally {
+      client.release();
+    }
   }
 }
 
 // migrate status: 显示迁移状态
 async function migrateStatus(): Promise<void> {
-  await ensureVersionTable();
-  const applied = await getAppliedVersions();
+  const client = await pool.connect();
+  try {
+  await ensureVersionTable(client);
+  const applied = await getAppliedVersions(client);
   const migrations = scanMigrations('up');
 
   console.log('Migration Status:');
@@ -166,13 +180,19 @@ async function migrateStatus(): Promise<void> {
   console.log('─'.repeat(60));
   const current = applied.size > 0 ? Math.max(...applied) : 'none';
   console.log(`Current version: ${current}`);
+  } finally {
+    client.release();
+  }
 }
 
 // 引导已有迁移：首次运行时标记已存在的迁移为已应用
 // 跳过 000（schema_versions 由 ensureVersionTable 内联创建）
 async function bootstrap(): Promise<void> {
-  await ensureVersionTable();
-  const applied = await getAppliedVersions();
+  const client = await pool.connect();
+  try {
+  await acquireLock(client);
+  await ensureVersionTable(client);
+  const applied = await getAppliedVersions(client);
   if (applied.size > 0) {
     console.log('Already bootstrapped.');
     return;
@@ -192,6 +212,9 @@ async function bootstrap(): Promise<void> {
     // 010 通过数据行检查，见下方 dataChecks
     11: 'druvia_api_keys',
     12: 'druvia_project_environments',
+    13: 'druvia_refresh_tokens',
+    16: 'druvia_project_refresh_tokens',
+    17: 'druvia_trusted_backend_keys',
     19: 'druvia_data_access_migrations',
   };
 
@@ -215,9 +238,20 @@ async function bootstrap(): Promise<void> {
         AND column_name = 'data_access_mode'
       LIMIT 1
     ) as exists`,
+    20: `SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'druvia_storage_buckets'
+        AND column_name = 'project_user_access'
+    ) AND EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'druvia_storage_objects'
+        AND column_name = 'owner_project_user_id'
+    ) as exists`,
   };
 
-  const result = await pool.query(`
+  const result = await client.query(`
     SELECT table_name FROM information_schema.tables
     WHERE table_schema = 'public'
   `);
@@ -240,12 +274,12 @@ async function bootstrap(): Promise<void> {
 
     const dataQuery = dataChecks[m.version];
     if (dataQuery) {
-      const r = await pool.query(dataQuery);
+      const r = await client.query(dataQuery);
       applied = r.rows[0].exists;
     }
 
     if (applied) {
-      await pool.query(
+      await client.query(
         'INSERT INTO druvia_schema_versions (version, name) VALUES ($1, $2) ON CONFLICT DO NOTHING',
         [m.version, m.name]
       );
@@ -255,6 +289,13 @@ async function bootstrap(): Promise<void> {
     }
   }
   console.log(`Bootstrapped ${count} existing migration(s).`);
+  } finally {
+    try {
+      await releaseLock(client);
+    } finally {
+      client.release();
+    }
+  }
 }
 
 // CLI 入口
@@ -290,6 +331,9 @@ const [command, ...args] = process.argv.slice(2);
         console.log('  status          Show migration status');
         console.log('  bootstrap       Mark existing migrations as applied');
     }
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exitCode = 1;
   } finally {
     await pool.end();
   }

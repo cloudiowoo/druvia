@@ -20,6 +20,13 @@ async function expectPathMissing(targetPath: string): Promise<void> {
   await expect(fs.access(targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
 }
 
+async function removeTestProjectStorage(tenantId: string, projectId: string): Promise<void> {
+  await Promise.all([
+    fs.rm(path.join(TEST_STORAGE_PATH, projectId), { recursive: true, force: true }),
+    fs.rm(path.join(TEST_STORAGE_PATH, tenantId, projectId), { recursive: true, force: true }),
+  ]);
+}
+
 describe('Project Deletion Integration', () => {
   let testUserId: number;
   let testTenantId: string;
@@ -50,11 +57,19 @@ describe('Project Deletion Integration', () => {
 
   afterAll(async () => {
     // 清理测试数据
+    const projects = await pool.query<{ project_id: string }>(
+      'SELECT project_id FROM druvia_projects WHERE tenant_id = $1',
+      [testTenantId]
+    );
+    await Promise.all(projects.rows.map((project) =>
+      removeTestProjectStorage(testTenantId, project.project_id)
+    ));
+    await fs.rm(path.join(TEST_STORAGE_PATH, 'backups', testTenantId), { recursive: true, force: true });
+    await fs.rm(path.join(TEST_STORAGE_PATH, testTenantId), { recursive: true, force: true });
     await pool.query('DELETE FROM druvia_projects WHERE tenant_id = $1', [testTenantId]);
     await pool.query('DELETE FROM druvia_schema_registry WHERE tenant_id = $1', [testTenantId]);
     await pool.query('DELETE FROM druvia_tenants WHERE tenant_id = $1', [testTenantId]);
     await pool.query('DELETE FROM druvia_users WHERE user_id = $1', ['user_del_test']);
-    await fs.rm(TEST_STORAGE_PATH, { recursive: true, force: true });
   });
 
   beforeEach(async () => {
@@ -82,7 +97,10 @@ describe('Project Deletion Integration', () => {
 
     await pool.query('DELETE FROM druvia_projects WHERE tenant_id = $1', [testTenantId]);
     await pool.query('DELETE FROM druvia_schema_registry WHERE tenant_id = $1', [testTenantId]);
-    await fs.rm(TEST_STORAGE_PATH, { recursive: true, force: true });
+    await Promise.all(existingProjects.rows.map((project) =>
+      removeTestProjectStorage(testTenantId, project.project_id)
+    ));
+    await fs.rm(path.join(TEST_STORAGE_PATH, 'backups', testTenantId), { recursive: true, force: true });
 
     // 创建测试项目
     const project = await projectService.createProject({
@@ -336,14 +354,15 @@ describe('Project Deletion Integration', () => {
         public: true,
       });
 
-      await storageService.uploadObject(
+      const uploadedObject = await storageService.uploadObject(
         bucket,
         'user-avatars/avatar.png',
         Buffer.from('avatar'),
         'image/png'
       );
 
-      const objectPath = path.join(TEST_STORAGE_PATH, testProjectId, 'team-assets', 'user-avatars', 'avatar.png');
+      expect(uploadedObject.storagePath).toBeTruthy();
+      const objectPath = path.join(TEST_STORAGE_PATH, uploadedObject.storagePath!);
       await expectPathExists(objectPath);
 
       const legacyFilePath = path.join(TEST_STORAGE_PATH, testTenantId, testProjectId, 'legacy-assets', 'legacy.txt');

@@ -173,6 +173,12 @@
   - `019` 为增量恢复依据，镜像/OTA 回滚不得自动 down；人工回滚旧权限可能重新引入匿名写入和兼容模式隔离风险
 - Functions internal GraphQL 已完成 Project Actor cutover：Project User/API Key 使用与公开数据路径一致的服务端 role/session-variable 映射，Platform actor 被拒绝。平台 SQL/管理接口的跨 schema 能力仍需独立安全审计。
 - Admin 默认使用“数据接口、数据访问、实时更新”等应用概念；Hasura role、metadata 和 secret 只属于高级诊断或服务端实现。
+- 直接 Storage Project User 授权采用 bucket 三预设与独立公开开关：`admin_only` 禁止 Project User，`owner_only` 仅对象 owner 可见可写，`authenticated_read` 登录用户可读全部但只能写自己的对象；API Key 不获得受保护对象能力。
+- Storage 对象所有权持久化在 `owner_project_user_id`。平台管理覆盖保持 owner，Project User 新对象归本人，trusted ticket/代表 Project User 的 Function 可归属或重新归属；Platform/API Key Function 不自动声明 owner。
+- 新 Storage provider key 固定为 `projectId/bucketId/objects/objectId`，逻辑名称只用于数据库和响应。所有 mutation 使用 bucket row lock 后再取 transaction advisory path lock，并在同一数据库连接内完成权限检查和元数据写入。
+- Storage 对象响应不暴露 provider path、metadata 或审计字段。私有对象强制 attachment/no-store，公开对象仅安全图片 inline 且最多缓存 5 分钟；Local/R2 signed URL 固定 attachment 参数。
+- Storage actor-aware list/read 必须按 `bucket_id` 重读当前 bucket 后判权，避免复用过期或调用方构造的 preset；受保护对象的不存在与不可见统一为 `OBJECT_NOT_FOUND`。历史非法 MIME 只按 `application/octet-stream` 交付。
+- 迁移 CLI 只剥离成对包围整个文件的外层 `BEGIN`/`COMMIT`；单边事务边界必须保留，使残缺迁移失败而不是被静默修复。
 - Druvia 管理端对列级 DDL 的正式策略是：
   - Admin Tables 页面内的 `add/drop/rename column` 自动触发 `reload metadata`
   - 外部 SQL / migration 导致的 schema 漂移，由用户显式触发 `刷新数据结构`（内部执行 reload metadata）

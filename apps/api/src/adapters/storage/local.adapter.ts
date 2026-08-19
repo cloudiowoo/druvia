@@ -1,7 +1,14 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import type { StorageAdapter, UploadOptions, UploadResult, LocalStorageConfig } from './interface.js';
+import type {
+  StorageAdapter,
+  UploadOptions,
+  UploadResult,
+  LocalStorageConfig,
+  SignedDownloadOptions,
+} from './interface.js';
+import { safeStorageResponseMimeType } from '../../modules/storage/storage-validation.js';
 
 // Secret for signing URLs (use JWT_SECRET from env)
 const getSigningSecret = () => process.env.JWT_SECRET || 'local-storage-secret';
@@ -62,10 +69,17 @@ export class LocalAdapter implements StorageAdapter {
     return `${this.publicUrl}/${filePath}`;
   }
 
-  async getSignedUrl(filePath: string, expiresIn = 3600): Promise<string> {
+  async getSignedUrl(
+    filePath: string,
+    expiresIn = 3600,
+    options?: SignedDownloadOptions
+  ): Promise<string> {
     // Generate signed URL with expiration
     const expires = Math.floor(Date.now() / 1000) + expiresIn;
-    const dataToSign = `${filePath}:${expires}`;
+    const signedOptions = options
+      ? { ...options, contentType: safeStorageResponseMimeType(options.contentType) }
+      : undefined;
+    const dataToSign = LocalAdapter.signaturePayload(filePath, String(expires), signedOptions);
     const signature = crypto
       .createHmac('sha256', getSigningSecret())
       .update(dataToSign)
@@ -74,19 +88,32 @@ export class LocalAdapter implements StorageAdapter {
     const params = new URLSearchParams({
       expires: String(expires),
       signature,
+      ...(signedOptions
+        ? { filename: signedOptions.logicalName, contentType: signedOptions.contentType }
+        : {}),
     });
 
-    return `${this.apiBaseUrl}/api/v1/storage/download/${encodeURIComponent(filePath)}?${params}`;
+    const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
+    return `${this.apiBaseUrl}/api/v1/storage/download/${encodedPath}?${params}`;
   }
 
   // Verify signed URL signature
-  static verifySignature(filePath: string, expires: string, signature: string): boolean {
+  static verifySignature(
+    filePath: string,
+    expires: string,
+    signature: string,
+    options?: SignedDownloadOptions
+  ): boolean {
+    if (!/^\d+$/.test(expires) || !/^[a-f0-9]{64}$/.test(signature)) {
+      return false;
+    }
     const now = Math.floor(Date.now() / 1000);
-    if (parseInt(expires, 10) < now) {
+    const expiry = Number(expires);
+    if (!Number.isSafeInteger(expiry) || expiry < now) {
       return false; // Expired
     }
 
-    const dataToSign = `${filePath}:${expires}`;
+    const dataToSign = LocalAdapter.signaturePayload(filePath, expires, options);
     const expectedSignature = crypto
       .createHmac('sha256', getSigningSecret())
       .update(dataToSign)
@@ -96,6 +123,20 @@ export class LocalAdapter implements StorageAdapter {
       Buffer.from(signature),
       Buffer.from(expectedSignature)
     );
+  }
+
+  private static signaturePayload(
+    filePath: string,
+    expires: string,
+    options?: SignedDownloadOptions
+  ): string {
+    if (!options) return `${filePath}:${expires}`;
+    return JSON.stringify([
+      filePath,
+      expires,
+      options.logicalName,
+      options.contentType,
+    ]);
   }
 
   async list(prefix: string): Promise<string[]> {

@@ -26,7 +26,9 @@ export function createFetchWrapper(
     if (token) {
       headers.set('Authorization', `Bearer ${token}`)
     }
-    if (!headers.has('Content-Type') && init?.body && !(init.body instanceof FormData)) {
+    const isFormData = typeof globalThis.FormData === 'function'
+      && init?.body instanceof globalThis.FormData
+    if (!headers.has('Content-Type') && init?.body && !isFormData) {
       headers.set('Content-Type', 'application/json')
     }
     return fetchFn(url, { ...init, headers })

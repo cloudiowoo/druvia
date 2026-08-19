@@ -67,4 +67,7 @@
 - Druvia RPC 会在调用事务中提供 `request.jwt.claims`、`request.headers` 和 `druvia.actor`。这只是可信调用者上下文，不等同于 Supabase PostgreSQL RLS；迁移的数据库函数仍必须读取 claims 并实现自身业务授权。
 - `druvia.graphql()` 按项目 `data_access_mode` 和 Function actor 使用 Hasura permissions。Project User/API Key 只能看到其角色允许的数据，Platform User 的管理测试调用不能借此获得 admin 数据访问。
 - 从 Supabase Edge Functions 迁移时，先为函数使用的表配置 Druvia Data Access 权限。依赖 service role 绕过 RLS 的函数不能原样迁移，应拆分为受控 trusted backend 能力或显式服务身份设计。
-- 直接 SDK Storage 仍沿用 Platform Session，尚未纳入本次 actor cutover；不要把 Functions internal Storage helper 的兼容适配误认为终端用户 Storage 授权已完成。
+- 直接 SDK Storage 已使用 Project Session/API Key application identity，不再使用 Platform Session。受保护对象路由要求 Project User；仅 API Key 调用会返回 `PROJECT_ACTOR_REQUIRED`，因此匿名文件必须使用 public URL 或显式 trusted capability。
+- bucket 的项目用户访问必须从 `admin_only / owner_only / authenticated_read` 中选择，公开下载由独立 `public` 开关控制。迁移 `020` 将旧 bucket 保守设为 `admin_only`，上线后需逐 bucket 显式开放。
+- SDK upload/download 的二进制实现当前只保证标准浏览器/Node；Taro/微信小程序应继续通过 Edge Function 与 `druvia.storage` runtime helper 或项目自有 native adapter 迁移。
+- 自定义 fetch 环境可使用 Auth、查询、RPC、Functions、Storage list/remove/signed URL 等 JSON-only 方法，即使没有全局 `FormData`；这不代表该环境已支持 Storage 二进制上传或 `Response.blob()` 下载。

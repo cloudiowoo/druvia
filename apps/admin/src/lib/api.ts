@@ -978,6 +978,7 @@ class ApiClient {
       projectId: string;
       name: string;
       public: boolean;
+      projectUserAccess: 'admin_only' | 'owner_only' | 'authenticated_read';
       fileSizeLimit: number | null;
       allowedMimeTypes: string[] | null;
       createdAt: string;
@@ -987,13 +988,20 @@ class ApiClient {
 
   async createBucket(
     projectId: string,
-    data: { name: string; public?: boolean; fileSizeLimit?: number; allowedMimeTypes?: string[] }
+    data: {
+      name: string;
+      public?: boolean;
+      projectUserAccess?: 'admin_only' | 'owner_only' | 'authenticated_read';
+      fileSizeLimit?: number | null;
+      allowedMimeTypes?: string[] | null;
+    }
   ) {
     return this.request<{
       bucketId: string;
       projectId: string;
       name: string;
       public: boolean;
+      projectUserAccess: 'admin_only' | 'owner_only' | 'authenticated_read';
       fileSizeLimit: number | null;
       allowedMimeTypes: string[] | null;
     }>('POST', `/api/v1/projects/${projectId}/storage/buckets`, data);
@@ -1005,6 +1013,7 @@ class ApiClient {
       projectId: string;
       name: string;
       public: boolean;
+      projectUserAccess: 'admin_only' | 'owner_only' | 'authenticated_read';
       fileSizeLimit: number | null;
       allowedMimeTypes: string[] | null;
       corsConfig: Record<string, unknown> | null;
@@ -1018,6 +1027,7 @@ class ApiClient {
     bucketName: string,
     data: Partial<{
       public: boolean;
+      projectUserAccess: 'admin_only' | 'owner_only' | 'authenticated_read';
       fileSizeLimit: number | null;
       allowedMimeTypes: string[] | null;
       corsConfig: Record<string, unknown> | null;
@@ -1027,6 +1037,7 @@ class ApiClient {
       bucketId: string;
       name: string;
       public: boolean;
+      projectUserAccess: 'admin_only' | 'owner_only' | 'authenticated_read';
       fileSizeLimit: number | null;
       allowedMimeTypes: string[] | null;
     }>('PATCH', `/api/v1/projects/${projectId}/storage/buckets/${bucketName}`, data);
@@ -1108,7 +1119,7 @@ class ApiClient {
     }
 
     const response = await fetch(
-      `${API_URL}/api/v1/projects/${projectId}/storage/buckets/${bucketName}/objects/${objectPath}`,
+      `${API_URL}/api/v1/projects/${encodeURIComponent(projectId)}/storage/buckets/${encodeURIComponent(bucketName)}/objects/${objectPath.split('/').map(encodeURIComponent).join('/')}`,
       { headers }
     );
 
@@ -1122,7 +1133,7 @@ class ApiClient {
   async deleteObject(projectId: string, bucketName: string, objectPath: string) {
     return this.request<void>(
       'DELETE',
-      `/api/v1/projects/${projectId}/storage/buckets/${bucketName}/objects/${objectPath}`
+      `/api/v1/projects/${encodeURIComponent(projectId)}/storage/buckets/${encodeURIComponent(bucketName)}/objects/${objectPath.split('/').map(encodeURIComponent).join('/')}`
     );
   }
 

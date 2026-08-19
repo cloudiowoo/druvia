@@ -22,7 +22,10 @@
   - 无 Project Session 时只发送项目 API key
   - 禁止回退 platform token
 - `rpc/functions` 使用应用身份选择：有 Project Session 时发送 project token，否则仅保留项目 API Key；禁止回退 platform token。无效 Project Session 也不得重试降级为 API Key。
-- Storage 在独立授权切片完成前仍使用原有 Platform Session 路径；不要把 RPC/Functions 的 application fetch 机械扩展到 Storage。
+- 直接 Storage 使用 application fetch：有 Project Session 时发送 project token，并保留项目 API key；无 Project Session 时只发送 API key；禁止回退 Platform Session，无效 Project Session 不得降级重试。
+- Storage trusted ticket 的签发/消费使用 raw fetch，只发送调用方显式提供的 trusted backend key 或 storage ticket，不得附带 application/platform 凭证。
+- SDK fetch wrapper 的 JSON-only 方法必须支持没有全局 `FormData` 的 custom-fetch 运行时；只有实际二进制 Storage upload/download 才可要求标准 `FormData`、`Blob`、`File` 和 `Response.blob()`。
+- 当前直接二进制 upload/download 只保证标准浏览器与 Node 运行时；Taro/微信小程序仍使用 Edge Function/runtime-native adapter 路径，不能因 custom fetch 单测宣称已兼容。
 - Realtime 建连必须通过 Druvia API 换取短期 Hasura-verifiable token；不能把长期 Project JWT/API key 直接发送给 Hasura，也不能把空 `connection_init` 当作正式 actor 支持。
 - Realtime 每次 token exchange 必须通过 `projectAuth` 读取当前 Project Session，并同时支持同步/异步 `StorageAdapter`；不能只依赖客户端构造阶段的同步 session 缓存。
 - Realtime channel 必须维护 `connecting / connected / reconnecting / error / closed` 状态，短期令牌续期或身份变化时关闭旧 socket、重新交换并恢复现有订阅；重新连接只恢复快照，不承诺重放断线期间事件。

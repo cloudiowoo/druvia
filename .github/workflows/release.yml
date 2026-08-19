@@ -30,7 +30,7 @@ on:
       migration_to:
         description: Target migration ceiling
         required: true
-        default: '19'
+        default: '20'
       migration_requires_backup:
         description: Whether updater must take a database backup before apply
         required: true
@@ -160,6 +160,30 @@ jobs:
           tests/sdk/client.test.ts
           tests/sdk/functions.test.ts
           tests/sdk/project-auth.test.ts
+
+      - name: Verify Project Storage actor and object access
+        run: >-
+          pnpm vitest run
+          tests/unit/storage-project-access-schema.test.ts
+          tests/unit/migration-sql.test.ts
+          tests/unit/migration-runner-lock.test.ts
+          tests/unit/storage-path.test.ts
+          tests/unit/storage-delivery.test.ts
+          tests/unit/storage-local-signed-url.test.ts
+          tests/unit/storage-access.service.test.ts
+          tests/unit/storage-list-access.test.ts
+          tests/unit/storage-controller.test.ts
+          tests/unit/storage-service.test.ts
+          tests/unit/storage-validation-contract.test.ts
+          tests/unit/storage-trusted-access.service.test.ts
+          tests/unit/functions-internal-storage.test.ts
+          tests/unit/druvia-helper.test.ts
+          tests/sdk/storage.test.ts
+          tests/sdk/fetch-adapter.test.ts
+          tests/sdk/client.test.ts
+          tests/sdk/project-auth.test.ts
+          tests/unit/admin/storage-bucket-access.test.ts
+          tests/unit/release-pipeline.test.ts
 
       - name: Verify Deno Worker types
         run: >-
@@ -297,7 +321,7 @@ jobs:
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
           DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'true' }}
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '19' }}
+          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '20' }}
           DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'true' }}
           DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
         run: node scripts/release/generate-manifest.mjs
@@ -319,7 +343,7 @@ jobs:
           DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
           DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'true' }}
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '19' }}
+          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '20' }}
           DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'true' }}
           DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
         run: node scripts/release/generate-manifest.mjs

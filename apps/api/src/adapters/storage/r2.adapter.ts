@@ -7,7 +7,15 @@ import {
   GetObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { StorageAdapter, UploadOptions, UploadResult, R2StorageConfig } from './interface.js';
+import type {
+  StorageAdapter,
+  UploadOptions,
+  UploadResult,
+  R2StorageConfig,
+  SignedDownloadOptions,
+} from './interface.js';
+import { encodeStorageDownloadFilename } from '../../modules/storage/storage-delivery.js';
+import { safeStorageResponseMimeType } from '../../modules/storage/storage-validation.js';
 
 export class R2Adapter implements StorageAdapter {
   readonly name = 'r2';
@@ -90,10 +98,19 @@ export class R2Adapter implements StorageAdapter {
     return `${this.publicUrl}/${path}`;
   }
 
-  async getSignedUrl(path: string, expiresIn = 3600): Promise<string> {
+  async getSignedUrl(path: string, expiresIn = 3600, options?: SignedDownloadOptions): Promise<string> {
+    const filename = options?.logicalName.split('/').at(-1) || 'download';
+    const asciiFilename = filename.replace(/[^\x20-\x7e]|["\\]/g, '_');
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: path,
+      ...(options
+        ? {
+            ResponseContentDisposition:
+              `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeStorageDownloadFilename(filename)}`,
+            ResponseContentType: safeStorageResponseMimeType(options.contentType),
+          }
+        : {}),
     });
     return getSignedUrl(this.client, command, { expiresIn });
   }

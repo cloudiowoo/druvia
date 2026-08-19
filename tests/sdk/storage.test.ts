@@ -26,7 +26,10 @@ describe('DruviaStorage', () => {
   })
 
   it('upload sends POST to storage endpoint', async () => {
-    const fetch = createMockFetch({ success: true, data: { path: 'avatar.png' } })
+    const fetch = createMockFetch({ success: true, data: {
+      objectId: 'obj_123', bucketId: 'bucket_123', name: 'avatar.png', size: 3,
+      mimeType: 'image/png', createdAt: '2026-08-19T00:00:00.000Z', updatedAt: '2026-08-19T00:00:00.000Z',
+    } })
     const storage = new DruviaStorage('/api/v1', projectId, fetch)
     const result = await storage.from('team-assets').upload('avatar.png', new Blob(['img']))
     expect(fetch).toHaveBeenCalledWith(
@@ -34,6 +37,7 @@ describe('DruviaStorage', () => {
       expect.objectContaining({ method: 'POST' })
     )
     expect(result.error).toBeNull()
+    expect(result.data).toEqual({ path: 'avatar.png' })
   })
 
   it('download sends GET to storage endpoint', async () => {
@@ -56,7 +60,7 @@ describe('DruviaStorage', () => {
   })
 
   it('createSignedUrl sends POST', async () => {
-    const fetch = createMockFetch({ success: true, data: { signedUrl: 'https://example.com/signed' } })
+    const fetch = createMockFetch({ success: true, data: { url: 'https://example.com/signed', expiresIn: 3600 } })
     const storage = new DruviaStorage('/api/v1', projectId, fetch)
     const result = await storage.from('team-assets').createSignedUrl('avatar.png', 3600)
     expect(fetch).toHaveBeenCalledWith(
@@ -64,10 +68,14 @@ describe('DruviaStorage', () => {
       expect.objectContaining({ method: 'POST' })
     )
     expect(result.data?.signedUrl).toBeTruthy()
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)).toEqual({
+      objectPath: 'avatar.png', expiresIn: 3600,
+    })
   })
 
   it('issueUploadTicket sends trusted backend key header', async () => {
-    const fetch = createMockFetch({
+    const applicationFetch = vi.fn() as unknown as FetchFn
+    const rawFetch = createMockFetch({
       success: true,
       data: {
         ticket: 'upload-ticket',
@@ -84,7 +92,7 @@ describe('DruviaStorage', () => {
         },
       },
     })
-    const storage = new DruviaStorage('/api/v1', projectId, fetch)
+    const storage = new DruviaStorage('/api/v1', projectId, applicationFetch, rawFetch)
 
     const result = await storage.issueUploadTicket({
       userId: 'usr_proj_1',
@@ -94,7 +102,8 @@ describe('DruviaStorage', () => {
     })
 
     expect(result.error).toBeNull()
-    expect(fetch).toHaveBeenCalledWith(
+    expect(applicationFetch).not.toHaveBeenCalled()
+    expect(rawFetch).toHaveBeenCalledWith(
       `/api/v1/projects/${projectId}/storage/trusted/upload-ticket`,
       expect.objectContaining({
         method: 'POST',
@@ -107,7 +116,8 @@ describe('DruviaStorage', () => {
   })
 
   it('uploadWithTicket sends storage ticket header', async () => {
-    const fetch = createMockFetch({
+    const applicationFetch = vi.fn() as unknown as FetchFn
+    const rawFetch = createMockFetch({
       success: true,
       data: {
         path: 'user-avatars/avatar.png',
@@ -119,10 +129,11 @@ describe('DruviaStorage', () => {
           size: 3,
           mimeType: 'image/png',
           createdAt: '2026-03-28T12:00:00.000Z',
+          updatedAt: '2026-03-28T12:00:00.000Z',
         },
       },
     })
-    const storage = new DruviaStorage('/api/v1', projectId, fetch)
+    const storage = new DruviaStorage('/api/v1', projectId, applicationFetch, rawFetch)
 
     const result = await storage.uploadWithTicket('storage-ticket', new Blob(['img']), {
       path: 'user-avatars/avatar.png',
@@ -130,7 +141,8 @@ describe('DruviaStorage', () => {
     })
 
     expect(result.error).toBeNull()
-    expect(fetch).toHaveBeenCalledWith(
+    expect(applicationFetch).not.toHaveBeenCalled()
+    expect(rawFetch).toHaveBeenCalledWith(
       `/api/v1/storage/upload-with-ticket?path=user-avatars%2Favatar.png`,
       expect.objectContaining({
         method: 'POST',
@@ -142,13 +154,15 @@ describe('DruviaStorage', () => {
   })
 
   it('removeWithTicket sends storage ticket header', async () => {
-    const fetch = createMockFetch({ success: true, data: { removed: true } })
-    const storage = new DruviaStorage('/api/v1', projectId, fetch)
+    const applicationFetch = vi.fn() as unknown as FetchFn
+    const rawFetch = createMockFetch({ success: true, data: { removed: true } })
+    const storage = new DruviaStorage('/api/v1', projectId, applicationFetch, rawFetch)
 
     const result = await storage.removeWithTicket('storage-ticket', 'user-avatars/avatar.png')
 
     expect(result.error).toBeNull()
-    expect(fetch).toHaveBeenCalledWith(
+    expect(applicationFetch).not.toHaveBeenCalled()
+    expect(rawFetch).toHaveBeenCalledWith(
       `/api/v1/storage/remove-with-ticket`,
       expect.objectContaining({
         method: 'POST',
@@ -159,5 +173,17 @@ describe('DruviaStorage', () => {
         body: JSON.stringify({ path: 'user-avatars/avatar.png' }),
       })
     )
+  })
+
+  it('encodes object and public URL path segments', async () => {
+    const fetch = createMockFetch({})
+    const bucket = new DruviaStorage('/api/v1', projectId, fetch).from('team assets')
+    await bucket.download('folder/中 文#?.png')
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/projects/proj_123/storage/buckets/team%20assets/objects/folder/%E4%B8%AD%20%E6%96%87%23%3F.png',
+      expect.anything()
+    )
+    expect(bucket.getPublicUrl('folder/100%.png').data.publicUrl)
+      .toContain('/team%20assets/folder/100%25.png')
   })
 })

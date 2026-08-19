@@ -4,6 +4,16 @@ interface CreateDruviaHelperOptions {
   fetchFn?: typeof fetch;
 }
 
+export interface DruviaStorageObjectResponse {
+  objectId: string;
+  bucketId: string;
+  name: string;
+  size: number;
+  mimeType: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DruviaWorkerHelper {
   graphql<T = unknown>(
     query: string,
@@ -18,7 +28,7 @@ export interface DruviaWorkerHelper {
     }): Promise<{
       path: string;
       publicUrl: string | null;
-      object: Record<string, unknown>;
+      object: DruviaStorageObjectResponse;
     }>;
     remove(input: {
       bucket: string;
@@ -122,7 +132,7 @@ export function createDruviaHelper(options: CreateDruviaHelperOptions): DruviaWo
           data?: {
             path: string;
             publicUrl: string | null;
-            object: Record<string, unknown>;
+            object: DruviaStorageObjectResponse;
           };
         };
 

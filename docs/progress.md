@@ -121,7 +121,8 @@
 ## Current Next Steps
 
 - 在后续实际 release/OTA 窗口验证迁移 `019` 的备份、部署顺序和生产恢复手册；当前不触发发布
-- 设计并实施直接 Storage 路径的 project-user 身份、bucket/object policy 与 SDK token cutover；GraphQL、Realtime、RPC 和 Functions 的统一 actor 基线已完成
+- 直接 Storage Project User cutover 已完成：migration `020`、bucket 三预设、对象 owner、事务锁、opaque provider key、安全交付、SDK application identity 与 Admin 设置均已落地
+- 下一步用真实 taro-app/浏览器应用验证 Storage 迁移调用；Taro 二进制传输继续走 Edge Function/runtime-native adapter，不把本次浏览器/Node SDK 能力视为小程序直连完成
 - 修正 MCP Server 与 API 的认证头、路由身份和 scope 契约，并增加真实 API 契约测试
 - 继续完善 build、lint、核心测试和 manifest/digest 的自动化门禁；实际 `workflow_dispatch`、本地/生产 OTA、双 Registry、回滚和恢复演练暂不作为下一开发任务，待形成后续发布版本时统一安排
 - 继续用 taro-app 迁移验证 project auth、Storage helper、Realtime 重连和 SDK token 选择顺序

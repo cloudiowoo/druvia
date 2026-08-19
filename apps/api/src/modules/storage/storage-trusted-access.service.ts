@@ -3,6 +3,15 @@ import { queryOne } from '../../db/index.js';
 import { config } from '../../config/index.js';
 import * as projectService from '../project/project.service.js';
 import { getBucketByName, type Bucket } from './storage.service.js';
+import {
+  normalizeStorageObjectPath,
+  normalizeTrustedStoragePathPrefix,
+  StoragePathError,
+} from './storage-path.js';
+import {
+  MAX_STORAGE_OBJECT_BYTES,
+  normalizeAllowedStorageMimeTypes,
+} from './storage-validation.js';
 
 const DEFAULT_TICKET_TTL_SECONDS = 300;
 
@@ -84,29 +93,22 @@ function validateSchemaName(schemaName: string): void {
   }
 }
 
-function sanitizeObjectPath(path: string): string | null {
-  if (!path || path.length > 1024) return null;
-  if (path.includes('..') || path.includes('\0')) return null;
-  const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
-  return normalized || null;
-}
-
 function normalizePathPrefix(pathPrefix: string): string {
-  const sanitized = sanitizeObjectPath(pathPrefix);
-  if (!sanitized) {
+  try {
+    return normalizeTrustedStoragePathPrefix(pathPrefix);
+  } catch (error) {
+    if (!(error instanceof StoragePathError)) throw error;
     throw new StorageTrustedAccessError('INVALID_PATH_PREFIX', 'Invalid pathPrefix', 400);
   }
-
-  return sanitized.endsWith('/') ? sanitized : `${sanitized}/`;
 }
 
 function normalizeObjectPath(path: string): string {
-  const sanitized = sanitizeObjectPath(path);
-  if (!sanitized) {
+  try {
+    return normalizeStorageObjectPath(path);
+  } catch (error) {
+    if (!(error instanceof StoragePathError)) throw error;
     throw new StorageTrustedAccessError('INVALID_PATH', 'Invalid path', 400);
   }
-
-  return sanitized;
 }
 
 function getTrustedTicketSecret(): string {
@@ -147,8 +149,13 @@ function normalizeContentTypes(bucket: Bucket, contentTypes?: string[]): string[
     return bucketAllowed;
   }
 
-  const normalized = Array.from(new Set(contentTypes.filter((value): value is string => typeof value === 'string' && value.length > 0)));
-  if (normalized.length === 0) {
+  let normalized: string[] | null;
+  try {
+    normalized = normalizeAllowedStorageMimeTypes(contentTypes);
+  } catch {
+    throw new StorageTrustedAccessError('INVALID_CONTENT_TYPES', 'Invalid contentTypes', 400);
+  }
+  if (!normalized || normalized.length === 0) {
     return bucketAllowed;
   }
 
@@ -169,10 +176,10 @@ function resolveMaxBytes(bucket: Bucket, maxBytes?: number): number | undefined 
   }
 
   if (bucket.fileSizeLimit && maxBytes) {
-    return Math.min(bucket.fileSizeLimit, maxBytes);
+    return Math.min(bucket.fileSizeLimit, maxBytes, MAX_STORAGE_OBJECT_BYTES);
   }
 
-  return maxBytes ?? bucket.fileSizeLimit ?? undefined;
+  return Math.min(maxBytes ?? bucket.fileSizeLimit ?? MAX_STORAGE_OBJECT_BYTES, MAX_STORAGE_OBJECT_BYTES);
 }
 
 async function getProjectSchemaName(projectId: string): Promise<string> {

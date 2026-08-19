@@ -46,6 +46,10 @@
 - RPC 只接受同项目 Project User 或已通过项目访问校验的 Platform User；API Key 不获得匿名 RPC。写入 PostgreSQL 的 claims 必须使用同一连接、事务级 `set_config(..., true)`，业务函数仍需自行鉴权。
 - Functions 的 `invoke_auth_mode` 必须在 service 对实际执行的同一函数记录上校验；`anon_allowed` 只允许同项目 API Key，所有 service 调用都必须显式传 actor。
 - `/api/internal/functions/graphql` 只允许签名 token 中的同项目 Project User/API Key，并根据项目 `data_access_mode` 派生 Hasura role/session variables；Platform User 必须返回 `PROJECT_ACTOR_REQUIRED`。
+- 直接 Storage 对象路由只接受已授权 Platform User 或同项目 Project User；API Key 返回 `PROJECT_ACTOR_REQUIRED`。Project User 必须服从 bucket 的 `admin_only / owner_only / authenticated_read`，其他用户对象按矩阵返回 404/409，不得泄露 owner。
+- Storage actor-aware list/read 不能信任 controller 传入的 bucket preset；service 必须按 `bucket_id` 重读当前 bucket 并再次校验 project scope 后再判权。不存在和不可见的受保护对象统一使用 `OBJECT_NOT_FOUND`。
+- Storage 所有上传、覆盖、删除和 bucket 删除必须遵守 bucket-before-object 锁顺序，在同一 checked-out client 上使用 bucket row lock 与 transaction advisory path lock。新 provider key 只使用 server ID，不能重新使用用户逻辑路径。
+- 公开 Storage 下载只由 `bucket.public` 决定；HTML、SVG 和未知类型必须 attachment，只有受支持的公开图片可 inline。对象 JSON 只能通过安全 DTO 返回，历史非法 MIME 进入响应头或签名参数前必须降级为 `application/octet-stream`。
 - API 调用 Worker 必须发送 `x-druvia-worker-secret`。`DENO_WORKER_SECRET` 至少 32 UTF-8 字节，不能进入 Function token、caller、日志或用户函数环境。
 - 如新增需要匿名开放的函数能力，先确认 Worker 本身是否具备调用者身份校验。
 - 涉及 GraphQL 代理限流时：
@@ -60,7 +64,8 @@
 - `invoke_auth_mode` 依赖数据库迁移；代码先行、数据库未升级时，管理端会报保存失败。
 - 上传类函数若未做调用者鉴权，不应依赖平台层匿名放行。
 - `druvia_projects.settings` 更新虽已改为 JSONB 顶层 merge，但 `rateLimits` 等嵌套对象仍不是深合并；路由和前端都不能误判。
-- 直接终端用户 Storage 路由尚未完成统一 actor/object policy；不能因为 Function internal Storage helper 已适配嵌套 actor token 就宣称 Storage cutover 完成。
+- migration `020_storage_project_user_access` 必须先于包含直接 Storage actor cutover 的 API/Admin 启动；升级前必须审计旧逻辑名和 Local 大小写物理 key 冲突。
+- migration CLI 只能在迁移 SQL 同时存在最外层 `BEGIN` 与 `COMMIT` 时剥离包装；孤立事务边界必须保留并由 PostgreSQL 报错。
 
 ## 参考入口
 

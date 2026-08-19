@@ -9,6 +9,12 @@ import { api } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  BucketAccessSettingsDialog,
+  type BucketProjectUserAccess,
+} from '@/components/storage/BucketAccessSettingsDialog';
 import {
   Table,
   TableBody,
@@ -54,6 +60,7 @@ import {
   File,
   Image as ImageIcon,
   ArrowLeft,
+  Settings,
 } from 'lucide-react';
 
 interface Bucket {
@@ -61,6 +68,7 @@ interface Bucket {
   projectId: string;
   name: string;
   public: boolean;
+  projectUserAccess: BucketProjectUserAccess;
   fileSizeLimit: number | null;
   allowedMimeTypes: string[] | null;
   createdAt: string;
@@ -91,6 +99,10 @@ function isImageMime(mimeType: string | null): boolean {
   return !!mimeType && mimeType.startsWith('image/');
 }
 
+function encodeObjectPath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
 function groupByDirectory(objects: StorageObject[], prefix: string) {
   const dirs = new Set<string>();
   const files: StorageObject[] = [];
@@ -115,7 +127,7 @@ function ObjectThumbnail({ projectId, bucket, obj }: { projectId: string; bucket
     let revoked = false;
     if (bucket.public) {
       // 公开 bucket 直接用公开 URL
-      const url = `${process.env.NEXT_PUBLIC_API_URL ?? ''}/api/v1/storage/public/${projectId}/${bucket.name}/${obj.name}`;
+      const url = `${process.env.NEXT_PUBLIC_API_URL ?? ''}/api/v1/storage/public/${encodeURIComponent(projectId)}/${encodeURIComponent(bucket.name)}/${encodeObjectPath(obj.name)}`;
       setSrc(url);
     } else {
       // 私有 bucket 通过 fetch + blob URL
@@ -170,6 +182,10 @@ export default function StoragePage() {
   const [createBucketOpen, setCreateBucketOpen] = useState(false);
   const [newBucketName, setNewBucketName] = useState('');
   const [newBucketPublic, setNewBucketPublic] = useState(false);
+  const [newBucketAccess, setNewBucketAccess] = useState<BucketProjectUserAccess>('admin_only');
+  const [newBucketSizeMb, setNewBucketSizeMb] = useState('');
+  const [newBucketMimeTypes, setNewBucketMimeTypes] = useState('');
+  const [bucketSettingsTarget, setBucketSettingsTarget] = useState<Bucket | null>(null);
 
   // Delete confirmation states
   const [deleteBucketTarget, setDeleteBucketTarget] = useState<Bucket | null>(null);
@@ -237,19 +253,49 @@ export default function StoragePage() {
 
   const handleCreateBucket = async () => {
     if (!newBucketName.trim()) return;
+    const normalizedNewBucketSize = newBucketSizeMb.trim() === ''
+      ? null
+      : Math.round(Number(newBucketSizeMb) * 1024 * 1024);
+    const isSizeValid = normalizedNewBucketSize === null
+      || (Number.isSafeInteger(normalizedNewBucketSize)
+        && normalizedNewBucketSize > 0
+        && normalizedNewBucketSize <= 50 * 1024 * 1024);
+    if (!isSizeValid) {
+      toast({
+        title: '创建失败',
+        description: '单文件上限必须大于 0 且不超过 50 MB',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const normalizedNewBucketMimes = [...new Set(
+      newBucketMimeTypes.split(/[,\n]/).map((value) => value.trim().toLowerCase()).filter(Boolean)
+    )];
     const res = await api.createBucket(projectId, {
       name: newBucketName.trim(),
       public: newBucketPublic,
+      projectUserAccess: newBucketAccess,
+      fileSizeLimit: normalizedNewBucketSize,
+      allowedMimeTypes: normalizedNewBucketMimes.length > 0 ? normalizedNewBucketMimes : null,
     });
     if (res.success) {
       setCreateBucketOpen(false);
       setNewBucketName('');
       setNewBucketPublic(false);
+      setNewBucketAccess('admin_only');
+      setNewBucketSizeMb('');
+      setNewBucketMimeTypes('');
       fetchBuckets();
       toast({ title: '存储桶已创建' });
     } else {
       toast({ title: '创建失败', description: res.error?.message, variant: 'destructive' });
     }
+  };
+
+  const handleBucketSettingsSaved = (updated: Bucket) => {
+    setBuckets((current) => current.map((bucket) => bucket.name === updated.name ? { ...bucket, ...updated } : bucket));
+    setSelectedBucket((current) => current?.name === updated.name ? { ...current, ...updated } : current);
+    setBucketSettingsTarget(updated);
   };
 
   const handleConfirmDeleteBucket = async () => {
@@ -424,12 +470,44 @@ export default function StoragePage() {
                 <label htmlFor="bucket-public" className="text-sm font-medium">
                   公开访问
                 </label>
-                <input
-                  type="checkbox"
+                <Switch
                   id="bucket-public"
                   checked={newBucketPublic}
-                  onChange={(e) => setNewBucketPublic(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300"
+                  onCheckedChange={setNewBucketPublic}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">项目用户访问</label>
+                <Select value={newBucketAccess} onValueChange={(value) => setNewBucketAccess(value as BucketProjectUserAccess)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin_only">仅管理员</SelectItem>
+                    <SelectItem value="owner_only">仅本人</SelectItem>
+                    <SelectItem value="authenticated_read">登录可读，个人可写</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="new-bucket-size-limit" className="text-sm font-medium">
+                  单文件上限（MB）
+                </label>
+                <Input
+                  id="new-bucket-size-limit"
+                  inputMode="decimal"
+                  value={newBucketSizeMb}
+                  onChange={(event) => setNewBucketSizeMb(event.target.value)}
+                  placeholder="不限制"
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="new-bucket-mime-types" className="text-sm font-medium">
+                  允许的文件类型
+                </label>
+                <Input
+                  id="new-bucket-mime-types"
+                  value={newBucketMimeTypes}
+                  onChange={(event) => setNewBucketMimeTypes(event.target.value)}
+                  placeholder="image/png, image/jpeg"
                 />
               </div>
             </div>
@@ -535,6 +613,14 @@ export default function StoragePage() {
         </DialogContent>
       </Dialog>
 
+      <BucketAccessSettingsDialog
+        projectId={projectId}
+        bucket={bucketSettingsTarget}
+        open={!!bucketSettingsTarget}
+        onOpenChange={(open) => { if (!open) setBucketSettingsTarget(null); }}
+        onSaved={handleBucketSettingsSaved}
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Bucket List */}
         <div className="lg:col-span-1">
@@ -569,6 +655,13 @@ export default function StoragePage() {
                           公开
                         </span>
                       )}
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        {bucket.projectUserAccess === 'admin_only'
+                          ? '仅管理员'
+                          : bucket.projectUserAccess === 'owner_only'
+                            ? '仅本人'
+                            : '登录可读'}
+                      </span>
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -582,6 +675,15 @@ export default function StoragePage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setBucketSettingsTarget(bucket);
+                          }}
+                        >
+                          <Settings className="h-4 w-4 mr-2" />
+                          设置
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-destructive"
                           onClick={(e) => {
