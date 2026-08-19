@@ -14,7 +14,7 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - `apps/api`: Fastify 5 管理层 API
 - `apps/updater`: Docker Compose 在线升级控制面
 - `packages/sdk`: `@druvia/sdk`
-- `packages/mcp-server`: MCP Server
+- `packages/mcp-server`: 实验性 MCP Server 原型（非生产运行链路）
 - `packages/shared`: 共享类型与工具
 - `hasura/metadata`: Hasura metadata
 - `migrations`: SQL 迁移
@@ -39,8 +39,7 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 
 1. 收紧 Hasura 默认权限，并用真实应用继续验证已完成 cutover 的 GraphQL、Realtime、RPC、Functions 和直接 Storage actor 基线。
 2. 将 CI、release manifest、双 Registry 发布、迁移和 OTA 回滚固化为可重复验证的发布门禁。
-3. 修正 MCP 与 API 的认证及路由契约后，再宣称 MCP 可用于生产。
-4. 继续补齐真实迁移所需 SDK 能力，避免以抽象完整性替代迁移验证。
+3. 继续补齐真实迁移所需 SDK 能力，避免以抽象完整性替代迁移验证。
 
 完整现状和分阶段建议见 `docs/plans/2026-08-14-project-update-direction-analysis.md`。
 
@@ -52,6 +51,7 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - 权限和认证变更默认采用安全值；匿名能力必须按功能显式允许。
 - 数据库结构变化必须同时检查 migration、Hasura metadata、回滚策略和旧部署升级路径。
 - 发布与 OTA 改动必须检查 GHCR、自建 Registry、本地 release 演练和生产部署四条路径。
+- `packages/mcp-server` 当前只保留实验性原型；在明确管理型或项目型身份、完成真实 API 契约测试并解除私有包状态前，不得宣称可发布或用于生产。
 - 不提交非 example 的 `.env` 配置、Registry 凭证、证书、数据库/Redis/Storage 运行数据或生产绝对路径。
 - 保留用户已有未提交改动；不要使用破坏性 Git 命令。
 

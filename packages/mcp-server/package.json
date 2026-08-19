@@ -1,7 +1,8 @@
 {
   "name": "@druvia/mcp-server",
   "version": "0.1.0",
-  "description": "MCP Server for Druvia BaaS platform",
+  "private": true,
+  "description": "Experimental MCP server for the Druvia BaaS platform",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

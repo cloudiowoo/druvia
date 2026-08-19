@@ -14,13 +14,14 @@
 - 真实需求牵引以 taro-app / Supabase -> Druvia 迁移为主
 - 后续采用“应用驱动平台演进”框架：taro-app 验证迁移兼容，足球运动数据应用验证原生移动端、离线批量、Storage 和后台分析场景
 - 新需求按 `Core / Optional Capability / Application Domain` 分层，只有平台安全基础或经跨应用验证的通用能力进入 Core
-- 近期最高优先级是 Hasura 默认权限、project-user 全链路身份、发布门禁、OTA 恢复和 MCP 契约
+- 近期最高优先级是 Hasura 默认权限、project-user 全链路身份、发布门禁和 OTA 恢复
 - 项目整体评估与分阶段路线已归档到 `docs/plans/2026-08-14-project-update-direction-analysis.md`
 - 应用驱动的未来开发框架已归档到 `docs/plans/2026-08-17-application-driven-development-framework.md`
 - Codex 项目说明已改为官方 `AGENTS.md` 分层模型，不再维护平行的 `project-memory.md`
 
 ## Recent Milestones
 
+- MCP Server 已收口为实验性原型：包保持私有且不提供正式启动配置，当前不属于 Admin、SDK、Compose、release 或 OTA 运行链路；待真实 AI 使用场景明确管理型或项目型身份并补齐 API 契约测试后再重新启动实现
 - Project Data Access Batch 1 已建立安全 metadata 基线：表 tracking 不再自动生成宽泛 CRUD permissions，Realtime 开关不再修改 select permission，Admin 默认改用数据接口/实时更新语义展示就绪状态
 - 已引入版本化 data-scope role resolver 作为后续项目角色、环境作用域和 service principal 的内部扩展基础；现有项目尚未切换到 scoped role，需等待显式权限编辑和迁移批次
 - Project Data Access Batch 2A 已落地默认生产 schema 的表级访问配置：认证用户 CRUD 支持关闭/全部记录/仅自己的记录，匿名侧仅支持读取；保存只批量替换当前项目受管 scoped roles，保留旧角色和自定义规则，HTTP/WebSocket actor 尚未切换。Hasura v2.48 不接受 permission command 的 `bulk_atomic` 时会精确回退到 `bulk`，并由迁移快照、差异恢复和验证闭环兜底
@@ -123,7 +124,6 @@
 - 在后续实际 release/OTA 窗口验证迁移 `019` 的备份、部署顺序和生产恢复手册；当前不触发发布
 - 直接 Storage Project User cutover 已完成：migration `020`、bucket 三预设、对象 owner、事务锁、opaque provider key、安全交付、SDK application identity 与 Admin 设置均已落地
 - 下一步用真实 taro-app/浏览器应用验证 Storage 迁移调用；Taro 二进制传输继续走 Edge Function/runtime-native adapter，不把本次浏览器/Node SDK 能力视为小程序直连完成
-- 修正 MCP Server 与 API 的认证头、路由身份和 scope 契约，并增加真实 API 契约测试
 - 继续完善 build、lint、核心测试和 manifest/digest 的自动化门禁；实际 `workflow_dispatch`、本地/生产 OTA、双 Registry、回滚和恢复演练暂不作为下一开发任务，待形成后续发布版本时统一安排
 - 继续用 taro-app 迁移验证 project auth、Storage helper、Realtime 重连和 SDK token 选择顺序
 - 在权限和发布基线稳定后，以足球运动数据应用验证原生客户端、批量写入、IMU Storage 和 Trusted Backend Worker；领域模型与算法保留在应用侧
