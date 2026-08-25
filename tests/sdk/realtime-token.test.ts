@@ -4,6 +4,7 @@ import {
   createRealtimeTokenProvider,
 } from '../../packages/sdk/src/modules/realtime-token.js'
 import type { FetchFn } from '../../packages/sdk/src/types.js'
+import { createHttpOnlyUrlConstructor } from './http-only-url-runtime.js'
 
 function response(body: unknown, status = 200, headers?: HeadersInit): Response {
   return {
@@ -23,6 +24,7 @@ function createProvider(fetchFn: FetchFn) {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -48,6 +50,60 @@ describe('Realtime token provider', () => {
       'http://localhost:3001/api/v1/projects/proj_123/realtime/token',
       { method: 'POST' }
     )
+  })
+
+  it('accepts a WebSocket URL when the runtime URL implementation only supports HTTP(S)', async () => {
+    vi.stubGlobal('URL', createHttpOnlyUrlConstructor(globalThis.URL))
+    const fetchFn = vi.fn().mockResolvedValue(response({
+      success: true,
+      data: {
+        token: 'signed-token',
+        expiresIn: 300,
+        expiresAt: '2099-08-18T10:05:00.000Z',
+        websocketUrl: 'wss://druvia.example.com/v1/graphql',
+      },
+    })) as unknown as FetchFn
+
+    await expect(createProvider(fetchFn)()).resolves.toMatchObject({
+      websocketUrl: 'wss://druvia.example.com/v1/graphql',
+    })
+  })
+
+  it('preserves the validated WebSocket URL returned by the API', async () => {
+    const websocketUrl = ' \nWSS://Example.COM:443/custom/\t'
+    const fetchFn = vi.fn().mockResolvedValue(response({
+      success: true,
+      data: {
+        token: 'signed-token',
+        expiresIn: 300,
+        expiresAt: '2099-08-18T10:05:00.000Z',
+        websocketUrl,
+      },
+    })) as unknown as FetchFn
+
+    await expect(createProvider(fetchFn)()).resolves.toMatchObject({ websocketUrl })
+  })
+
+  it.each([
+    'wss://user:pass@druvia.example.com/v1/graphql',
+    'wss://druvia.example.com/v1/graphql?token=secret',
+    'wss://druvia.example.com/v1/graphql#fragment',
+  ])('rejects an unsafe WebSocket URL with an HTTP-only runtime: %s', async (websocketUrl) => {
+    vi.stubGlobal('URL', createHttpOnlyUrlConstructor(globalThis.URL))
+    const fetchFn = vi.fn().mockResolvedValue(response({
+      success: true,
+      data: {
+        token: 'signed-token',
+        expiresIn: 300,
+        expiresAt: '2099-08-18T10:05:00.000Z',
+        websocketUrl,
+      },
+    })) as unknown as FetchFn
+
+    await expect(createProvider(fetchFn)()).rejects.toMatchObject({
+      code: 'REALTIME_TOKEN_RESPONSE_INVALID',
+      retryable: false,
+    })
   })
 
   it.each([

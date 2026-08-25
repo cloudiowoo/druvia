@@ -15,6 +15,11 @@
 - 管理型工具默认要求平台身份或专用管理凭证。项目 key 只允许访问同项目且显式开放的能力。
 - 日志不得输出 bearer token、API key、trusted backend key 或完整用户输入中的 secret。
 
+## Subagent Triggers
+
+- MCP 官方协议、SDK 或配置行为需要外部依据时使用 `docs_researcher`。
+- 管理身份、项目身份或工具授权边界变更在最终验证前必须使用 `critical_reviewer`；通过审查不能解除本包的实验性状态。
+
 ## 当前风险
 
 - 现有 API key 请求头与 API 中间件读取方式需要统一。
@@ -25,4 +30,3 @@
 - `apps/api/AGENTS.md`
 - `docs/agent/design-decisions.md`
 - `docs/plans/2026-08-14-project-update-direction-analysis.md`
-

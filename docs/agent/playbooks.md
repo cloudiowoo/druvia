@@ -15,8 +15,222 @@
 
 ## 数据库迁移
 
+- 查看代码 migration 与目标数据库的版本状态：
+  - `pnpm migrate status`
 - 执行全部未应用迁移：
-  - `pnpm --filter @druvia/api exec node --import tsx/esm src/cli/migrate.ts up`
+  - `pnpm migrate up`
+- migration CLI 从仓库根 `.env` 读取 `DB_HOST / DB_PORT / DB_USER / POSTGRES_PASSWORD / DB_NAME`。若目标容器不是该端口，先修正 Compose/env 契约；临时诊断可显式使用 `DB_PORT=<实际宿主端口> pnpm migrate status`，但不要长期依赖命令行覆盖掩盖环境漂移。
+
+## 本地 Docker 恢复生产数据库
+
+该流程用于把 `pg_dump` 生成的生产备份完整覆盖到本地 Docker 数据库，输入可以是纯 SQL、custom archive 或它们的 gzip 外层压缩。它会删除当前本地 `druvia` 数据库，只能在确认目标容器为 `druvia-postgres` 后执行；备份文件不得放入 Git 仓库。
+
+当前本地容器契约：
+
+- PostgreSQL 容器：`druvia-postgres`
+- 数据库用户：`postgres`
+- 数据库名称：`druvia`
+- Compose 文件：`docker/docker-compose.local.yml`
+
+以下流程假设备份由未带 `--create` 的 `pg_dump` 生成。若原命令使用了 `--create`，不要直接套用重建步骤，应先核对归档中的目标数据库名，避免创建或覆盖错误数据库。重建空库后恢复还要求 dump 未使用 `--clean`，或同时使用了 `--clean --if-exists`；仅使用 `--clean` 的纯 SQL 会因空库中的首条 `DROP` 失败而被 `ON_ERROR_STOP` 中止，推荐重新导出而不是关闭错误门禁。
+
+### 0. 推荐的生产导出方式
+
+用于导入本地或其他环境时，优先生成 PostgreSQL custom archive。该格式自带压缩，不需要额外 gzip；不要使用 `docker exec -t`、`pg_dump --clean` 或误导性的 `.sql.gz` 扩展名：
+
+```bash
+BACKUP_DIR="$HOME/backups/druvia"
+BACKUP="$BACKUP_DIR/druvia_$(date +%F_%H%M%S).dump"
+
+mkdir -p "$BACKUP_DIR"
+
+docker exec druvia-postgres \
+  pg_dump \
+    -h localhost \
+    -p 5432 \
+    -U postgres \
+    -d druvia \
+    -Fc \
+    --no-owner \
+    --no-privileges \
+  > "$BACKUP"
+
+test -s "$BACKUP"
+docker exec -i druvia-postgres pg_restore -l < "$BACKUP" > /dev/null
+sha256sum "$BACKUP" > "$BACKUP.sha256"
+```
+
+- host shell 的 `>` 将归档直接写到宿主机 `BACKUP_DIR`，不是容器 `/tmp`。
+- `-Fc` 已包含压缩和大对象，不需要再加 `-b` 或 gzip。
+- 不指定 schema 时会包含业务 schema、`public` 和同库的 `hdb_catalog`。
+- `--no-owner --no-privileges` 适用于导入本地、预发布或不同角色环境；RLS policies、表结构和 Hasura catalog 仍会导出。
+- 若用途是同环境的严格灾难恢复，需要保留原 owner/ACL，则生成另一份不带 `--no-owner --no-privileges` 的归档，并同时备份所依赖的 PostgreSQL roles；不要把跨环境联调归档与灾难恢复归档混为一份。
+- macOS 默认使用 `shasum -a 256 "$BACKUP" > "$BACKUP.sha256"` 替代 `sha256sum`。
+
+### 1. 确认备份格式和 Hasura catalog
+
+```bash
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+BACKUP="/生产备份的完整路径/production.sql.gz"
+
+# 先以实际内容判断格式，不相信扩展名。
+file "$BACKUP"
+
+# gzip 文件：输出 PGDMP 表示内层是 custom archive，否则通常是纯 SQL。
+gzip -dc "$BACKUP" | head -c 5
+
+# 非 gzip 文件：输出 PGDMP 表示直接是 custom archive；以 -- 开头通常是纯 SQL。
+head -c 5 "$BACKUP"
+```
+
+路径变量中不要写字面量 `~/...`，因为变量展开后 shell 不会再次展开波浪号。应使用 `BACKUP="$HOME/..."` 或完整绝对路径。文件名以 `.gz` 结尾不代表内容一定经过 gzip；`file` 显示 `Unicode text` / `ASCII text` 时应按未压缩纯 SQL 处理。
+
+Hasura 默认与业务数据共用 `druvia` 数据库，其 tracking、relationships、permissions、actions 等 metadata 位于 `hdb_catalog`。恢复前确认备份是否包含该 schema：
+
+```bash
+# 纯 SQL gzip
+gzip -dc "$BACKUP" | rg -m 1 'hdb_catalog'
+
+# 未压缩纯 SQL
+rg -m 1 'hdb_catalog' "$BACKUP"
+
+# custom archive gzip
+gzip -dc "$BACKUP" |
+  docker exec -i druvia-postgres pg_restore -l |
+  rg -m 1 'hdb_catalog'
+```
+
+没有匹配时，业务 schema 仍可恢复，但 Hasura metadata 不会随数据库恢复，后续必须通过已有 metadata 部署流程重新应用 `hasura/metadata`，不能只执行 reload。
+
+### 2. 停止写入并重建本地数据库
+
+```bash
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+# 可选：先把当前本地库备份到仓库外。
+docker exec druvia-postgres \
+  pg_dump -U postgres -d druvia -Fc \
+  > /tmp/druvia-local-before-restore.dump
+
+# 停止所有可能读写数据库的应用服务，保留 PostgreSQL 和 Redis 容器。
+docker compose -f docker-compose.local.yml stop api admin hasura deno
+
+docker exec druvia-postgres \
+  dropdb -U postgres --if-exists --force druvia
+
+docker exec druvia-postgres \
+  createdb -U postgres -T template0 -O postgres druvia
+```
+
+### 3. 按备份格式恢复
+
+未压缩纯 SQL：
+
+```bash
+docker exec -i druvia-postgres \
+  psql -X -U postgres -d druvia -v ON_ERROR_STOP=1 \
+  < "$BACKUP"
+```
+
+纯 SQL gzip：
+
+```bash
+gzip -dc "$BACKUP" |
+  docker exec -i druvia-postgres \
+    psql -X -U postgres -d druvia -v ON_ERROR_STOP=1
+```
+
+custom archive gzip（解压后以 `PGDMP` 开头）：
+
+```bash
+gzip -dc "$BACKUP" |
+  docker exec -i druvia-postgres \
+    pg_restore \
+      -U postgres \
+      -d druvia \
+      --exit-on-error \
+      --no-owner \
+      --no-privileges
+```
+
+未压缩 custom archive（文件直接以 `PGDMP` 开头）：
+
+```bash
+docker exec -i druvia-postgres \
+  pg_restore \
+    -U postgres \
+    -d druvia \
+    --exit-on-error \
+    --no-owner \
+    --no-privileges \
+  < "$BACKUP"
+```
+
+恢复命令必须成功退出后才能继续。不要通过移除 `ON_ERROR_STOP` 或 `--exit-on-error` 跳过失败对象；应先处理版本、扩展、owner 或 dump 范围不一致问题，再从重建数据库开始重试。
+
+### 4. 清理旧缓存并启动服务
+
+数据库已被整体替换，旧 Redis session/cache 可能引用不存在或已经变化的数据，因此本地演练需要清空 Redis：
+
+```bash
+docker exec druvia-redis redis-cli FLUSHALL
+
+docker compose -f docker-compose.local.yml up -d
+docker compose -f docker-compose.local.yml ps
+```
+
+若本地代码比生产备份更新，不要默认把“恢复成功”当作“数据库已符合当前代码版本”。先核对 migration 版本，再按目标联调基线决定是否执行未应用 migration；执行后该数据库不再是生产库的原样副本。
+
+### 5. 主动刷新 Hasura metadata
+
+当备份包含 `hdb_catalog` 时，Hasura 重启会读取恢复后的 catalog；仍应主动 reload source 和 metadata cache，并重建 event triggers：
+
+```bash
+# 等待 Hasura 真正开始接受请求，避免 compose up -d 后立即 reload 的启动竞态。
+until docker exec druvia-hasura \
+  curl -fsS http://localhost:8080/healthz > /dev/null; do
+  sleep 2
+done
+
+docker exec druvia-hasura sh -lc '
+curl -fsS -X POST http://localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-admin-secret: $HASURA_GRAPHQL_ADMIN_SECRET" \
+  -d "{\"type\":\"reload_metadata\",\"args\":{\"reload_sources\":true,\"recreate_event_triggers\":true}}"
+'
+```
+
+随后检查不一致 metadata：
+
+```bash
+docker exec druvia-hasura sh -lc '
+curl -fsS -X POST http://localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-admin-secret: $HASURA_GRAPHQL_ADMIN_SECRET" \
+  -d "{\"type\":\"get_inconsistent_metadata\",\"args\":{}}"
+'
+```
+
+正常结果必须包含：
+
+```json
+{
+  "is_consistent": true,
+  "inconsistent_objects": []
+}
+```
+
+最后执行基础检查：
+
+```bash
+docker exec druvia-postgres \
+  psql -U postgres -d druvia -c '\dn'
+
+curl -fsS http://localhost:3001/health
+curl -fsS http://localhost:8180/healthz
+```
+
+PostgreSQL 备份不包含 `docker/storage_data` 的对象文件，也不包含 Redis 数据。需要验证 Storage 时必须单独、安全地同步对象目录；生产用户数据和备份不得提交到仓库或用于无访问控制的共享开发环境。
 
 ## SDK 发布
 
@@ -43,9 +257,42 @@
   - 执行前应明确接受 `npm i @druvia/sdk` 将默认安装该 beta 版本
   - 示例：
   - `npm dist-tag add @druvia/sdk@0.1.0-beta.3 latest`
-- 若只是测试分发，不想直接发 npm：
+
+### 本地 tarball 联调
+
+- 适用于 Druvia SDK 尚未发布到 npm，但需要在独立的 taro-app 根项目和 H5 子项目中验证当前源码的场景。
+- 打包前仍需从 Druvia 根目录执行最小验证：
+  - `pnpm test:sdk`
+  - `pnpm --filter @druvia/sdk build`
+- 确认 `packages/sdk/package.json` 已使用一个未发布的测试版本；例如当前下一版为 `0.1.0-beta.5`。
+- 进入 SDK 目录并检查、生成 tarball：
+  - `cd /Users/cloudio/Developer/nodejs/Druvia/packages/sdk`
+  - `npm pack --dry-run`
   - `npm pack`
-  - 产物为 `druvia-sdk-<version>.tgz`
+- scoped package `@druvia/sdk@0.1.0-beta.5` 的默认产物名为：
+  - `/Users/cloudio/Developer/nodejs/Druvia/packages/sdk/druvia-sdk-0.1.0-beta.5.tgz`
+- Taro 根项目使用独立 `node_modules`，需要单独临时安装：
+
+  ```bash
+  cd /Users/cloudio/Developer/RN/TestRn-Cursor/taro/taro-app
+  npm install --no-save --package-lock=false \
+    /Users/cloudio/Developer/nodejs/Druvia/packages/sdk/druvia-sdk-0.1.0-beta.5.tgz \
+    --legacy-peer-deps
+  ```
+
+- H5 子项目也使用独立 `node_modules`，需要再次安装：
+
+  ```bash
+  cd /Users/cloudio/Developer/RN/TestRn-Cursor/taro/taro-app/h5
+  npm install --no-save --package-lock=false \
+    /Users/cloudio/Developer/nodejs/Druvia/packages/sdk/druvia-sdk-0.1.0-beta.5.tgz
+  ```
+
+- 安装后分别在 Taro 根项目和 `h5/` 中执行 `npm ls @druvia/sdk`，确认实际解析到 tarball 中的版本。
+- `--no-save --package-lock=false` 只替换本地 `node_modules`，不应把本机绝对 tarball 路径写入应用的 `package.json` 或 `package-lock.json`；安装后仍应检查应用仓库 `git status`。
+- tarball 联调仅用于本地验证，不是可提交或生产分发方式。验证通过并发布 npm beta 后，应在 Taro 和 H5 中分别安装精确的 registry 版本，并提交各自的 `package.json` 与 lockfile。
+- 同一版本重新打包前必须确认内容与版本语义；对外发布后禁止用相同版本号覆盖已有 npm 包。
+
 - 常见失败优先排查：
   - `You must specify a tag using --tag when publishing a prerelease version.`
   - 结论：当前版本是 prerelease，改用 `npm publish --tag beta`
@@ -106,6 +353,51 @@
   - SDK 发布侧持续维护 `beta` dist-tag 指向最新 beta
   - 应用侧默认使用 `@beta` 安装或升级
   - 不建议把 beta 强行切到默认 `latest`，否则未显式声明 beta 通道的应用也可能被动吃到预发布版本
+
+## taro-app 生产基线与后续升级
+
+### 冻结上线依赖
+
+- 建立一份可审计的版本矩阵：
+  - taro-app/H5/小程序客户端版本或 commit
+  - `@druvia/sdk` 精确版本
+  - Druvia release/tag 与四个镜像 digest
+  - migration 起止版本
+  - Registry 和 release manifest URL
+- 盘点 taro-app 实际使用的业务表、owner column、匿名/认证权限、Project Auth provider、RPC、Functions、Realtime subscription 和 Storage bucket preset。
+- 未被 taro-app 使用的 Phase B-D 能力不进入上线阻塞清单。
+
+### 真实应用验收
+
+- 使用真实 taro-app 凭证和业务数据形态验证：
+  - 登录、silent login、session 恢复、refresh 和 logout
+  - GraphQL 查询/写入、匿名边界、同项目跨用户隔离和跨项目拒绝
+  - Realtime token exchange、首次订阅、断线重连、身份变化和停止订阅
+  - H5/浏览器直连 Storage，以及小程序实际使用的 Edge Function/runtime-native 上传路径
+  - taro-app 实际调用的 RPC 和 Functions，不使用 Platform Session 或客户端 Hasura admin secret
+- 只将真实失败、安全缺口和兼容阻塞回写 Druvia Core；不因上线窗口横向增加未使用的 provider、adapter 或平台服务。
+
+### 预发布与 stable 发布
+
+- 在与生产相同 Compose/release 结构的预发布环境执行：
+  - 数据库和 Storage 备份
+  - 当前生产 migration 到目标 migration 的升级
+  - API/Admin/Worker/Updater 健康检查
+  - taro-app 核心 smoke test
+  - 镜像回滚和必要的数据库人工恢复演练
+- migration `018 -> 020` 包含权限模式、迁移状态和 Storage owner/preset 变更；旧部署升级前必须重新核对当前数据库版本、manifest 范围和备份要求，不能只依据默认 workflow 输入。
+- 正式生产只使用 `DRUVIA_UPDATE_CHANNEL=stable` 和通过上述验收的 manifest；镜像实际引用必须为 digest。
+- updater 保持被动通知和人工 apply。Actions 完成、镜像推送或 release 创建都不是生产升级授权。
+- 当前 production manifest 示例使用 GitHub `releases/latest/download`。release workflow 尚未将 beta/nightly 完整隔离为不会影响该入口的 prerelease 路径，因此隔离完成前不得让 beta/nightly 覆盖生产跟随的 latest Release。
+
+### 上线后的升级节奏
+
+- 紧急 patch：只包含安全、数据一致性、生产故障或 taro-app 兼容修复，执行定向回归后发布。
+- 普通平台更新：按完整、可回滚的功能切片积累，在 taro-app 兼容回归通过后发布下一 stable，不按 commit 或 Phase 子任务更新生产。
+- 后续 Phase 功能默认停留在开发/验证环境；未进入 stable manifest 前，不要求 taro-app 生产升级。
+- 服务端变更至少兼容当前生产客户端和下一客户端版本。小程序新版本通过审核且完成迁移后，才能移除旧接口或旧字段。
+- 数据库使用 expand-contract：先增加并双读/双写或保持兼容，再迁移客户端，最后在后续 stable 删除旧结构。
+- 任何不可逆 migration 都必须先备份。应用镜像回滚成功时，仍需单独判断数据库是否需要人工恢复。
 
 ## Functions invoke 配置排查
 

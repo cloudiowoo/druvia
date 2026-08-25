@@ -23,6 +23,11 @@
 - Function 子 Worker 必须保持 `env: false`；项目 Function secrets 只能通过每次调用独立的 `Deno.env` shim 提供，不能暴露容器环境。
 - Worker 请求鉴权协议升级时，新 API 必须先健康再替换 Worker；自动与手动回滚都先恢复旧 Worker，再恢复完整服务集。
 
+## Subagent Triggers
+
+- Compose、Registry、nginx 或 certbot 的版本化行为需要外部依据时使用 `docs_researcher` 核对官方文档。
+- OTA、证书、持久化数据、双 Registry 发布或回滚变更在最终验证前必须使用 `critical_reviewer`。
+
 ## Release Verification
 
 - 变更 compose 或 env 契约后，分别执行 local、prod、release 配置渲染检查。

@@ -10,6 +10,7 @@ import type {
   WebSocketFactory,
   WebSocketLike,
 } from '../../packages/sdk/src/types.js'
+import { createHttpOnlyUrlConstructor } from './http-only-url-runtime.js'
 
 class FakeSocket implements WebSocketLike {
   readonly send = vi.fn()
@@ -71,6 +72,7 @@ describe('DruviaRealtime lifecycle', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -121,6 +123,34 @@ describe('DruviaRealtime lifecycle', () => {
 
     expect(provider).toHaveBeenCalledTimes(1)
     expect(factory).toHaveBeenCalledWith('ws://localhost:8180/v1/graphql', ['graphql-transport-ws'])
+  })
+
+  it('normalizes an override when the runtime URL implementation only supports HTTP(S)', async () => {
+    vi.stubGlobal('URL', createHttpOnlyUrlConstructor(globalThis.URL))
+    const provider = vi.fn().mockResolvedValue(access())
+    const { realtime, factory } = createRealtime(provider, ' \nwss://druvia.example.com\t')
+
+    realtime.channel('events').subscribe()
+    await flushPromises()
+
+    expect(factory).toHaveBeenCalledWith(
+      'wss://druvia.example.com/v1/graphql',
+      ['graphql-transport-ws']
+    )
+  })
+
+  it('normalizes a token URL when the runtime URL implementation only supports HTTP(S)', async () => {
+    vi.stubGlobal('URL', createHttpOnlyUrlConstructor(globalThis.URL))
+    const provider = vi.fn().mockResolvedValue(access())
+    const { realtime, factory } = createRealtime(provider)
+
+    realtime.channel('events').subscribe()
+    await flushPromises()
+
+    expect(factory).toHaveBeenCalledWith(
+      'wss://druvia.example.com/v1/graphql',
+      ['graphql-transport-ws']
+    )
   })
 
   it.each([
@@ -323,6 +353,48 @@ describe('DruviaRealtime lifecycle', () => {
     expect(callback).not.toHaveBeenCalled()
     sockets[1].message({ type: 'next', payload: { data: { events: [{ id: 1 }, { id: 2 }, { id: 3 }] } } })
     expect(callback).toHaveBeenCalledTimes(1)
+  })
+
+  it('maintains JSON snapshots when structuredClone is unavailable', async () => {
+    vi.stubGlobal('structuredClone', undefined)
+    const provider = vi.fn().mockResolvedValue(access())
+    const { realtime, sockets } = createRealtime(provider)
+    const callback = vi.fn()
+    realtime.channel('events')
+      .on('postgres_changes', { event: '*', table: 'events' }, callback)
+      .subscribe()
+    await flushPromises()
+    sockets[0].open()
+    sockets[0].message({ type: 'connection_ack' })
+
+    expect(() => sockets[0].message({
+      type: 'next',
+      payload: { data: { events: [{ id: 1, details: { label: 'before' } }] } },
+    })).not.toThrow()
+    expect(() => sockets[0].message({
+      type: 'next',
+      payload: {
+        data: {
+          events: [
+            { id: 1, details: { label: 'after' } },
+            { id: 2, details: { label: 'created' } },
+          ],
+        },
+      },
+    })).not.toThrow()
+
+    expect(callback.mock.calls.map(([event]) => event)).toEqual([
+      {
+        eventType: 'INSERT',
+        new: { id: 2, details: { label: 'created' } },
+        old: null,
+      },
+      {
+        eventType: 'UPDATE',
+        new: { id: 1, details: { label: 'after' } },
+        old: { id: 1, details: { label: 'before' } },
+      },
+    ])
   })
 
   it('closes an expiring socket when a temporary renewal cannot finish in time', async () => {

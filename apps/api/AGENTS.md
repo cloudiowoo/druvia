@@ -58,6 +58,11 @@
   - 当前匿名 `apikey` 流量仍按 `request.ip` 归并；认证上下文虽已有稳定 API Key ID，但更改限流维度仍需独立兼容性设计
   - 若 API 部署在 nginx / ingress 后，必须开启 `TRUST_PROXY`；否则 `request.ip` 会退化为代理地址，匿名 GraphQL 限流会把多用户错误合并
 
+## Subagent Triggers
+
+- GraphQL、Realtime、Storage、RPC、Functions 间的 actor 调用链和跨模块契约使用 `explorer`。
+- 认证、权限、migration、锁、数据完整性或恢复逻辑变更在最终验证前必须使用 `critical_reviewer`。
+
 ## 近期风险
 
 - MCP Server 当前使用的 API key 请求头和部分 schema 路由的身份要求仍需与 API 对齐，完成前不要把 MCP 标记为生产就绪。

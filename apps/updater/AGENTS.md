@@ -19,6 +19,11 @@
 - 数据库自动回滚能力与镜像回滚分开声明。当前 dump 后的数据库恢复仍是人工流程，不得在 UI 中暗示为自动恢复。
 - 修改状态机时，同步检查 API 代理契约、Admin 轮询/按钮状态和 updater finalizer。
 
+## Subagent Triggers
+
+- Updater、API、Admin 与 Compose 间的更新状态协作使用 `explorer`。
+- Docker socket、release manifest、迁移、回滚或 updater 自更新变更在最终验证前必须使用 `critical_reviewer`。
+
 ## Verification
 
 - 至少覆盖无更新、下载、应用、健康检查失败、镜像回滚、finalizer 成功/失败和进程重启后的状态恢复。
@@ -29,4 +34,3 @@
 - `docs/agent/design-decisions.md`
 - `docs/plans/2026-07-28-compose-ota-update-implementation.md`
 - `docs/plans/2026-08-14-project-update-direction-analysis.md`
-

@@ -2,7 +2,7 @@
 
 日期：2026-08-17
 
-状态：已采纳的方向框架。具体能力仍需独立设计、实施计划和当前代码验证。
+状态：已采纳并执行中的方向框架。具体能力仍需独立设计、实施计划、当前代码验证和真实应用验收。
 
 ## 1. 文档定位
 
@@ -15,9 +15,21 @@
 
 本文不是具体功能的实施计划。进入编码前，仍需为每个独立能力编写设计与实施计划，并以当前代码和测试重新核实现状。
 
+### 1.1 2026-08-19 执行快照
+
+本文定义长期治理和依赖顺序，不以单个版本或一次发布作为“全部完成”条件。当前执行状态为：
+
+- Phase A 的主要 Core 实现已落地：安全默认 permissions、显式表权限、旧项目迁移控制面、GraphQL/Realtime actor、RPC/Functions actor、直接 Storage Project User 授权和 MCP 实验性收口均已完成对应代码切片。
+- Phase A 尚未关闭：真实 taro-app 尚未按最新契约完成 Project Auth、GraphQL、Realtime、Storage、RPC 和 Functions 全链路验收；根级 build/lint/核心测试与 release 必过门禁也未完全统一。
+- Phase B 仅部分完成：双 Registry、digest manifest 和 Compose-native OTA 已具备；migration metadata 自动生成、当前基线的升级/恢复演练、PostgreSQL override 和 Trusted Backend 生命周期仍未闭环。
+- Phase C 尚未进入产品化验收：taro-app 的真实兼容矩阵、足球应用、Swift SDK 候选和 Recipe 候选均未完成。
+- Phase D 尚未开始，并继续保持证据驱动，不因 taro-app 上线而提前建设通用 Queue、Worker Runtime 或商业化能力。
+
+当前主线调整为“taro-app 优先上线验证”：不等待 Phase B-D 全部完成，以真实 taro-app 暴露并修复上线阻塞；足球应用和后续能力不作为 taro-app 的前置条件。
+
 ## 2. 背景与目标
 
-Druvia 已经具备 Admin、API、Hasura、Storage、Project Auth、Realtime、Functions、SDK、MCP 和 Compose-native OTA 等真实实现。当前阶段的主要矛盾不是缺少功能入口，而是权限、身份、发布和恢复能力尚未形成一致的生产闭环。
+Druvia 已经具备 Admin、API、Hasura、Storage、Project Auth、Realtime、Functions、SDK 和 Compose-native OTA 等真实实现；MCP 仅保留实验性原型。当前阶段的主要矛盾不是缺少功能入口，而是权限、身份、发布和恢复能力尚未形成一致的生产闭环。
 
 与此同时，真实应用开始提出更具体的需求：
 
@@ -162,10 +174,10 @@ Recipe 必须来源于已运行的应用实践，包含版本前提、配置、�
 
 | 能力 | 当前判断 | 方向 | 优先级 |
 | --- | --- | --- | --- |
-| Project User 全链路身份 | 已有 Phase 1，GraphQL/Realtime/Storage 未统一 | Core | P0 |
-| Hasura 默认权限 | 默认 user CRUD 和匿名写入过宽 | Core | P0 |
-| 跨模块 actor 契约测试 | 当前缺少完整端到端覆盖 | Core | P0 |
-| 发布质量门禁 | workflow 已有，稳定质量门禁不足 | Core | P0 |
+| Project User 全链路身份 | GraphQL、Realtime、RPC、Functions 和直接 Storage 已完成 actor 切换；待真实应用联合验收 | Core | P0 验收 |
+| Hasura 默认权限 | 新表安全默认值、显式表权限和旧项目受控迁移已实现 | Core | 已实现，待应用验收 |
+| 跨模块 actor 契约测试 | 分模块和真实服务测试已增加；仍缺 taro-app 驱动的统一端到端矩阵 | Core | P0 验收 |
+| 发布质量门禁 | release workflow 已有定向回归、Deno check、SDK build、镜像 digest；根级 build/lint/核心测试门禁仍不足 | Core | P0 |
 | OTA 恢复门禁 | 更新链路已有，故障和数据库恢复演练不足 | Core | P1 |
 | PostgreSQL 扩展部署 | Compose 固定默认镜像，但原生 override 尚未形成官方验证路径 | Optional deployment capability | P1 |
 | Trusted Backend 生命周期 | 有 key/scope/last-used，删除为硬删除，缺少完整过期、可审计撤销和轮换 | Core | P1 |
@@ -199,6 +211,8 @@ Recipe 必须来源于已运行的应用实践，包含版本前提、配置、�
 
 阶段出口：新建业务表不再自动获得匿名写入或无过滤 CRUD；已有项目完成宽权限盘点并具备可回退的清理路径；同一 Project User 在五条数据/执行路径中具有一致身份、适用的行级限制和审计信息；参考应用可通过显式 permissions 工作，不需要管理凭证绕过项目权限。
 
+当前判断：前两项和五条路径的代码基础已基本完成，MCP 已选择保持实验性；真实 taro-app 验收和统一 release 质量门禁未完成，因此 Phase A 仍为“实现接近完成、阶段出口未通过”。
+
 ### Phase B：0.4.x 发布可靠性与扩展入口
 
 - 自动生成并校验 migration metadata。
@@ -208,6 +222,8 @@ Recipe 必须来源于已运行的应用实践，包含版本前提、配置、�
 - 完善 Trusted Backend 的过期、撤销、轮换和审计。
 
 阶段出口：平台扩展不破坏 local/prod/release 一致性，OTA 不会隐式切换数据库基础镜像。
+
+taro-app 上线不要求 Phase B 全部完成，但以下生产相关子集不可跳过：目标环境备份、migration `018 -> 020` 适用性确认、一次生产同构部署/健康检查/恢复演练、可靠的单一 Registry 路径和固定 digest。PostgreSQL 扩展、完整双 Registry 演练和未被 taro-app 使用的 Trusted Backend 能力可以继续延期；若 taro-app 生产直接使用 Trusted Backend Key，则其过期、撤销、轮换和审计必须提前完成。
 
 ### Phase C：0.5.x 双应用验证与 SDK 产品化
 
@@ -283,6 +299,12 @@ Recipe 发布前必须包含：
 
 应用驱动的新能力不得绕过现有发布模型：
 
+- Phase 表示能力依赖和成熟度，不等于生产发布批次。main 分支开发、Actions 构建、GitHub Release 和生产 OTA 是四个独立动作。
+- taro-app 生产只接收通过其兼容回归的 `stable` release；updater 保持被动通知和人工 apply，不自动把后续 Phase 开发送入生产。
+- 当前 release workflow 支持 `stable / beta / nightly` manifest channel，但 GitHub `releases/latest/download` 尚未为 beta/nightly 建立独立 prerelease/latest 隔离。使用该 latest URL 的生产环境期间，不得让 beta/nightly 发布覆盖其稳定入口；隔离方案需另行设计和验证。
+- 发布镜像 tag 不得复用；生产实际应用继续固定 manifest 中的 digest。紧急 patch release 只包含生产故障、安全或兼容修复，不夹带无关 Phase 功能。
+- 服务端至少兼容当前生产 taro-app 和下一待发布客户端版本。破坏性 API 变更必须经过弃用窗口；数据库变更优先使用 expand-contract，不能把镜像回滚等同于数据库回滚。
+- 每个 taro-app stable 基线必须记录客户端版本、SDK 版本、Druvia release、migration 范围、备份要求、回滚边界和已验证流程。
 - 数据库变更必须提供 migration、metadata 影响和回滚说明。
 - PostgreSQL 扩展镜像属于部署配置，应显式固定版本或 digest，不由常规应用 OTA 静默切换；它也不属于当前 `api/admin/worker/updater` 应用镜像 manifest，必须独立制定升级和恢复步骤。
 - Core 镜像继续通过 GHCR 和自建 Registry 两条完整 manifest 路径发布。
@@ -314,14 +336,15 @@ Recipe 发布前必须包含：
 
 按当前项目状态，后续顺序应保持为：
 
-1. 先完成 Hasura 默认权限和 Project User actor P0。
-2. 同步补齐发布门禁、OTA 恢复和现有失败测试。
-3. 用 taro-app 继续验证迁移兼容，不扩大抽象 API 清单。
-4. Phase A 权限主链可用后，足球应用在开发环境以现有 Core 开始 MVP，记录所有绕行、失败和性能数据。
-5. 验证 Compose 原生 PostgreSQL override；只有三套部署模式确有统一入口需求时才修改 Core 配置。
-6. 足球 Worker 进入生产前，完成 Trusted Backend 生命周期加固和凭证使用审计。
-7. 服务端契约稳定后，再提取 Swift SDK 和已验证 Recipe。
-8. Jobs、Queue、Resumable Upload 和通用 Worker Runtime 保持证据驱动。
+1. 冻结 taro-app 上线依赖清单和版本基线，盘点真实表权限、Auth、GraphQL、Realtime、Storage、RPC、Functions 和部署依赖。
+2. 在真实 taro-app/H5/小程序路径执行全链路验收，只修复实际阻塞上线的 Druvia Core 缺口，不横向扩展抽象 API 清单。
+3. 补齐与本次 stable 基线直接相关的 build/lint/核心测试门禁，并清理或显式隔离会阻断确定性发布的既有失败。
+4. 在生产同构预发布环境验证 migration、备份、部署、健康检查和恢复，再发布固定 digest 的 taro-app stable 基线。
+5. taro-app 上线后按紧急 patch 或经过兼容回归的稳定批次升级，不按 commit 或 Phase 子任务反复更新生产。
+6. 足球应用可以在开发环境使用现有 Core 开始 MVP，但不阻塞 taro-app 上线；记录所有绕行、失败和性能数据。
+7. 验证 Compose 原生 PostgreSQL override；只有三套部署模式确有统一入口需求时才修改 Core 配置。
+8. 足球 Worker 进入生产前，完成 Trusted Backend 生命周期加固和凭证使用审计。
+9. 服务端契约稳定后，再提取 Swift SDK 和已验证 Recipe；Jobs、Queue、Resumable Upload 和通用 Worker Runtime 继续保持证据驱动。
 
 ## 14. 框架验收标准
 
@@ -333,6 +356,7 @@ Recipe 发布前必须包含：
 - taro-app 和足球应用共同使用同一套 Project User 契约。
 - SDK 和 Recipe 只从已运行、可测试的实现中提取。
 - 新能力进入 release 前具备 migration、测试、发布和回退证据。
+- Phase B-D 的开发不会自动进入 taro-app 生产，生产升级只由通过兼容回归的 stable release 和人工 apply 触发。
 - Druvia 默认部署依赖和资源占用不会因领域功能持续膨胀。
 
 ## 15. 当前明确不做

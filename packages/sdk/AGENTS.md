@@ -29,11 +29,18 @@
 - Realtime 建连必须通过 Druvia API 换取短期 Hasura-verifiable token；不能把长期 Project JWT/API key 直接发送给 Hasura，也不能把空 `connection_init` 当作正式 actor 支持。
 - Realtime 每次 token exchange 必须通过 `projectAuth` 读取当前 Project Session，并同时支持同步/异步 `StorageAdapter`；不能只依赖客户端构造阶段的同步 session 缓存。
 - Realtime channel 必须维护 `connecting / connected / reconnecting / error / closed` 状态，短期令牌续期或身份变化时关闭旧 socket、重新交换并恢复现有订阅；重新连接只恢复快照，不承诺重放断线期间事件。
+- Realtime 快照只处理 GraphQL JSON 数据；复制时必须兼容没有原生 `structuredClone` 的小程序运行时，不得要求应用侧注入全局 monkeypatch。
+- Realtime URL 解析必须由 SDK 共享实现同时覆盖显式 override 与 token 响应；兼容只能解析 HTTP(S) 且缺少 `username/password` 属性的小程序 `URL`，同时继续拒绝 credentials、query 和 fragment，不得要求应用侧 URL monkeypatch。
 - `unsubscribe()` / `removeChannel()` 必须终止自动重连；只有调用方再次显式 `subscribe()` 才能启动新连接。
 - SDK 认证头或 session 选择顺序变化时，必须用 API 端真实中间件契约验证，不能只做客户端单测。
 - SDK prerelease 发包必须显式带 dist-tag：
   - 例如 `0.1.0-beta.3` 应使用 `npm publish --tag beta`
   - 不要把 beta 版本直接当作默认 `latest` 发布
+
+## Subagent Triggers
+
+- SDK、API 与 taro-app 的公开契约或身份调用链使用 `explorer`，形成可审查成果后使用 `reviewer`。
+- 身份选择、凭证降级、会话回退或迁移兼容边界变更在最终验证前必须使用 `critical_reviewer`。
 
 ## 参考入口
 

@@ -37,9 +37,9 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 
 ## Current Priorities
 
-1. 收紧 Hasura 默认权限，并用真实应用继续验证已完成 cutover 的 GraphQL、Realtime、RPC、Functions 和直接 Storage actor 基线。
-2. 将 CI、release manifest、双 Registry 发布、迁移和 OTA 回滚固化为可重复验证的发布门禁。
-3. 继续补齐真实迁移所需 SDK 能力，避免以抽象完整性替代迁移验证。
+1. 以真实 taro-app/H5/小程序完成 Project Auth、GraphQL、Realtime、Storage、RPC 和 Functions 全链路及生产上线验收，只修复实际阻塞、安全或正确性缺口。
+2. 为 taro-app stable 基线补齐确定性的 build/lint/核心测试、migration、备份、健康检查和恢复门禁，再进入实际发布窗口。
+3. 继续补齐真实迁移暴露的 SDK 能力，避免以抽象完整性替代迁移验证；足球应用、Swift、Recipe 和 Phase D 不阻塞 taro-app 上线。
 
 完整现状和分阶段建议见 `docs/plans/2026-08-14-project-update-direction-analysis.md`。
 
@@ -51,9 +51,24 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - 权限和认证变更默认采用安全值；匿名能力必须按功能显式允许。
 - 数据库结构变化必须同时检查 migration、Hasura metadata、回滚策略和旧部署升级路径。
 - 发布与 OTA 改动必须检查 GHCR、自建 Registry、本地 release 演练和生产部署四条路径。
+- Phase 开发、镜像构建、stable release 和生产 OTA 是独立动作；生产只跟随通过 taro-app 兼容回归的 stable manifest，并由运维人工 apply。
+- 当前 `releases/latest/download` 尚未隔离 beta/nightly prerelease；生产跟随该入口期间，不得让非 stable 发布覆盖它。
 - `packages/mcp-server` 当前只保留实验性原型；在明确管理型或项目型身份、完成真实 API 契约测试并解除私有包状态前，不得宣称可发布或用于生产。
 - 不提交非 example 的 `.env` 配置、Registry 凭证、证书、数据库/Redis/Storage 运行数据或生产绝对路径。
 - 保留用户已有未提交改动；不要使用破坏性 Git 命令。
+
+## Subagent Collaboration
+
+- 主 agent 对需求理解、实施计划、代码集成、最终验证和文档同步负责；子 agent 只承担边界清晰、可独立完成的辅助任务。
+- 简单任务、强顺序任务和当前主流程的阻塞任务由主 agent 直接处理；不得为每个子任务机械启动 agent 或设置检查点。
+- 仅在任务可并行、需要独立证据或需要专项复核时调用子 agent；同时运行不得超过全局配置的 3 个。
+- `scout` 用于快速定位文件和符号；`explorer` 用于跨模块调用链与边界分析；`docs_researcher` 用于核对当前官方文档。
+- 不得为同一问题同时调用职责重叠的子 agent；优先选择能够完成任务的最轻量角色。
+- 常规变更完成后可调用 `reviewer`；身份权限、数据库迁移、数据完整性、发布或 OTA 等高风险变更使用 `critical_reviewer`。
+- Druvia 默认由主 agent 在当前主工作区实施。`worker` 仅在用户明确授权并行实现，且需求、允许修改范围和验收条件已经明确时使用；任务之间的写入文件必须互斥，不得创建或依赖 `.worktrees`。
+- 子 agent 必须遵守根目录及目标模块最近的 `AGENTS.md`，不得继续派生子 agent，不得覆盖已有未提交内容、扩大任务范围、commit、push 或修改外部系统。
+- 主 agent 必须复核子 agent 的结论和改动；子 agent 的完成报告不能替代主流程的测试、review 和最终验证。
+- 用户明确要求“不使用子 agent”或“直接在本会话处理”时，不得委派。
 
 ## Documentation Model
 

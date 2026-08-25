@@ -7,6 +7,7 @@ import type {
   WebSocketLike,
 } from '../types.js'
 import { escapeGraphQLString } from '../lib/graphql-builder.js'
+import { normalizeWebSocketUrl } from '../lib/websocket-url.js'
 import {
   RealtimeTokenRequestError,
   type RealtimeAccessToken,
@@ -32,26 +33,10 @@ type ChangeCallback = (event: ChangeEvent) => void
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000]
 
 function normalizeRealtimeUrl(value: string): string {
-  try {
-    const url = new URL(value)
-    if (
-      (url.protocol !== 'ws:' && url.protocol !== 'wss:')
-      || url.username !== ''
-      || url.password !== ''
-      || url.search !== ''
-      || url.hash !== ''
-    ) {
-      throw new Error('invalid Realtime URL')
-    }
+  const normalized = normalizeWebSocketUrl(value)
+  if (normalized) return normalized
 
-    const trimmedPath = url.pathname.replace(/\/+$/, '')
-    url.pathname = trimmedPath.endsWith('/v1/graphql')
-      ? trimmedPath
-      : `${trimmedPath}/v1/graphql`.replace(/^\/{2,}/, '/')
-    return url.toString().replace(/\/$/, '')
-  } catch {
-    throw new Error('@druvia/sdk: Realtime URL must be an absolute ws:// or wss:// URL without credentials, query, or fragment')
-  }
+  throw new Error('@druvia/sdk: Realtime URL must be an absolute ws:// or wss:// URL without credentials, query, or fragment')
 }
 
 function toDruviaError(error: unknown): DruviaError {
@@ -62,6 +47,17 @@ function toDruviaError(error: unknown): DruviaError {
     code: 'REALTIME_CONNECTION_ERROR',
     message: 'Realtime connection failed',
   }
+}
+
+function cloneRealtimeRows(
+  rows: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(rows)
+  }
+
+  // Hasura subscription payloads are JSON data; some mini-program runtimes lack structuredClone.
+  return JSON.parse(JSON.stringify(rows)) as Record<string, unknown>[]
 }
 
 export class RealtimeChannel {
@@ -321,14 +317,14 @@ export class RealtimeChannel {
     const newRows = (payload.data[tableName] as Record<string, unknown>[] | undefined) ?? []
     const oldRows = this.snapshot.get(tableName)
     if (!oldRows) {
-      this.snapshot.set(tableName, structuredClone(newRows))
+      this.snapshot.set(tableName, cloneRealtimeRows(newRows))
       return
     }
 
     const config = this.configs.find((item) => item.config.table === tableName)
     if (!config) return
     this.diffAndEmit(oldRows, newRows, config.config, config.callback)
-    this.snapshot.set(tableName, structuredClone(newRows))
+    this.snapshot.set(tableName, cloneRealtimeRows(newRows))
   }
 
   private sendSubscriptions(socket: WebSocketLike): void {

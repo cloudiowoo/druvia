@@ -14,7 +14,9 @@
 - 真实需求牵引以 taro-app / Supabase -> Druvia 迁移为主
 - 后续采用“应用驱动平台演进”框架：taro-app 验证迁移兼容，足球运动数据应用验证原生移动端、离线批量、Storage 和后台分析场景
 - 新需求按 `Core / Optional Capability / Application Domain` 分层，只有平台安全基础或经跨应用验证的通用能力进入 Core
-- 近期最高优先级是 Hasura 默认权限、project-user 全链路身份、发布门禁和 OTA 恢复
+- Phase A 的主要 Core 代码切片已落地，但阶段出口仍缺真实 taro-app 全链路验收和统一 release 质量门禁
+- 近期最高优先级调整为 taro-app 生产上线验证；Phase B-D 不要求全部完成，只提前处理目标生产直接依赖的发布、备份、migration 和恢复子集
+- 平台开发、Actions 构建、stable release 和生产 OTA 已明确解耦；生产只人工应用通过 taro-app 兼容回归的 stable manifest
 - 项目整体评估与分阶段路线已归档到 `docs/plans/2026-08-14-project-update-direction-analysis.md`
 - 应用驱动的未来开发框架已归档到 `docs/plans/2026-08-17-application-driven-development-framework.md`
 - Codex 项目说明已改为官方 `AGENTS.md` 分层模型，不再维护平行的 `project-memory.md`
@@ -121,11 +123,13 @@
 
 ## Current Next Steps
 
-- 在后续实际 release/OTA 窗口验证迁移 `019` 的备份、部署顺序和生产恢复手册；当前不触发发布
-- 直接 Storage Project User cutover 已完成：migration `020`、bucket 三预设、对象 owner、事务锁、opaque provider key、安全交付、SDK application identity 与 Admin 设置均已落地
-- 下一步用真实 taro-app/浏览器应用验证 Storage 迁移调用；Taro 二进制传输继续走 Edge Function/runtime-native adapter，不把本次浏览器/Node SDK 能力视为小程序直连完成
-- 继续完善 build、lint、核心测试和 manifest/digest 的自动化门禁；实际 `workflow_dispatch`、本地/生产 OTA、双 Registry、回滚和恢复演练暂不作为下一开发任务，待形成后续发布版本时统一安排
-- 继续用 taro-app 迁移验证 project auth、Storage helper、Realtime 重连和 SDK token 选择顺序
-- 在权限和发布基线稳定后，以足球运动数据应用验证原生客户端、批量写入、IMU Storage 和 Trusted Backend Worker；领域模型与算法保留在应用侧
-- 根据真实应用证据决定 PostgreSQL 扩展入口、Swift SDK 和 Recipe 的晋升，暂不建设通用 Jobs、Queue 或 Worker Runtime
+- 冻结 taro-app/H5/小程序上线依赖和版本矩阵，盘点真实表权限、Auth provider、GraphQL、Realtime、Storage、RPC、Functions、SDK 和部署依赖
+- 在真实应用中验证 Project Session 生命周期、数据/实时跨用户隔离、Storage 浏览器与小程序实际上传路径，以及 RPC/Functions token 选择；只修复联调发现的 Core 阻塞
+- 为目标 stable 基线补齐根级 build/lint/核心测试门禁，并明确隔离当前并发集成和环境依赖失败；不以定向测试通过替代完整门禁结论
+- 在生产同构预发布环境核对并演练 migration `018 -> 020`、数据库/Storage 备份、服务健康检查、镜像回滚和必要的数据库人工恢复
+- 验收通过后发布固定 digest 的 stable 基线并由生产人工 apply；此前不触发实际生产 OTA，后续也不按 commit 或 Phase 子任务反复升级
+- beta/nightly 与 GitHub `releases/latest/download` 完成隔离前，不让非 stable Release 覆盖生产 manifest 入口
+- taro-app 上线不等待足球应用、PostgreSQL 扩展、Swift SDK 或 Recipe；这些能力继续由真实应用证据决定优先级
+- 足球运动数据应用后续验证原生客户端、批量写入、IMU Storage 和 Trusted Backend Worker；领域模型与算法保留在应用侧
+- 暂不建设通用 Jobs、Queue、Resumable Upload 或 Worker Runtime
 - 补齐公开仓库 README、LICENSE、敏感信息历史检查和版本轴说明

@@ -67,7 +67,7 @@
 - Function internal GraphQL 继续使用 Hasura admin secret 做服务间认证，但始终附加服务端派生的项目 role/session variables；Project User/API Key 数据能力由现有 Hasura permissions 决定。
 - API-to-Worker 使用独立 `DENO_WORKER_SECRET`，要求至少 32 UTF-8 字节并在读取执行 body 前验证。Function 子 Worker 没有真实 env 权限，只能读取 invocation-local Function secret shim。
 - 该不对称协议的部署顺序固定为新 API 先于新 Worker；回滚顺序固定为旧 Worker 先于旧 API。升级器的自动和手动回滚必须遵循同一顺序。
-- SDK Database/RPC/Functions 不得隐式使用 Platform Session。直接 Storage 仍等待独立 actor/object authorization 设计，不随本决策自动切换。
+- SDK Database/RPC/Functions 不得隐式使用 Platform Session。直接 Storage 已由后续独立 actor/object authorization 切片完成 Project User cutover，同样不得回退 Platform Session；该能力不是从 RPC/Functions 决策中隐式派生。
 
 ## Edge Function 数据访问策略
 
@@ -155,6 +155,7 @@
   - Realtime 不直接复用长期 Project JWT/API key；Druvia API 验证同项目 actor 后签发短期 Hasura-verifiable token
   - compatibility Project User/API key 分别映射到旧 `user` / `anonymous` role；explicit actor 使用项目 scoped role
   - SDK 在建连前交换令牌，在令牌续期和项目身份变化时重建 socket 并恢复订阅；断线期间事件不重放
+  - SDK 统一校验显式 override 与 token 响应中的 WebSocket URL；小程序运行时可通过 HTTP(S) 映射完成解析，但仍拒绝 credentials、query 和 fragment，应用侧不得依赖全局 `URL` monkeypatch
   - API 与 Hasura 共享独立 `HASURA_JWT_SECRET`，固定 issuer `druvia`、audience `druvia-hasura`；`JWT_SECRET` 仅保留迁移期回退
   - Admin 只用内存中的应用凭证执行真实 token exchange 和 WebSocket 探测，不读取平台 session
   - 非默认环境在具备不可变 environment identity 前不开放运行时 Realtime token
@@ -221,6 +222,25 @@
 - 数据库迁移前由 updater 执行完整 `pg_dump`。不可逆迁移失败时，自动回滚范围限定为镜像和 compose 状态，数据库恢复需要使用升级前 dump 人工执行。
 - Updater 通过宿主 Docker socket 执行 `docker compose`，所以 release 部署目录必须以宿主绝对路径 `DRUVIA_DEPLOY_DIR` 挂入 updater 的同一个绝对路径；不能只挂载到容器内 `/deploy`，否则 compose bind mount 源会被宿主 Docker daemon 解析成错误路径。
 - Updater 不允许在自身容器进程内同步执行 `docker compose up -d updater` 替换自己；标准 OTA 使用一次性 finalizer 容器执行 updater 自更新。启动 finalizer 后状态进入 `finalizing`，finalizer 通过继承旧 updater 挂载写回共享 update state，成功后再置为 `succeeded`。
+
+## 应用驱动发布与生产兼容策略
+
+- Druvia Phase 表示能力依赖和成熟度，不表示生产环境必须按 Phase 子任务逐次升级。
+- main 分支开发、Actions 构建、GitHub Release 和生产 OTA 是独立动作；代码合并或镜像构建不会自动改变生产运行版本。
+- taro-app 是当前优先生产验证应用：
+  - 不等待 Phase B-D 全部完成
+  - 先完成其真实 Auth、GraphQL、Realtime、Storage、RPC、Functions 和部署链路
+  - 只把真实阻塞、安全或正确性问题提升为当前 Core 工作
+- taro-app 生产只跟随完成兼容回归的 `stable` release，并由运维人工 apply；不启用自动 apply。
+- 当前 release workflow 虽接受 `stable / beta / nightly`，但 GitHub `releases/latest/download` 尚未按 prerelease channel 完整隔离。生产使用该 latest URL 时，beta/nightly 不得覆盖同一入口；隔离完成前只将 stable 发布到生产跟随的 Release 路径。
+- 生产镜像使用 release manifest 中的 digest，版本 tag 不得覆盖复用。后续 Phase 功能可以持续开发，但只有进入新的 stable manifest 后才成为生产可选升级。
+- 紧急 patch 只包含安全、数据一致性、生产故障或 taro-app 兼容修复，不夹带无关 Phase 功能或非必要 migration。
+- 服务端至少维持“当前生产客户端 + 下一待发布客户端”的兼容窗口，兼顾小程序审核与客户端发布滞后：
+  - 破坏性 API/SDK 行为先弃用，再移除
+  - 数据库优先采用 expand-contract
+  - 镜像回滚不代表不可逆数据库 migration 已回滚
+- 每个 taro-app stable 基线必须记录客户端版本、SDK 版本、Druvia release、migration 范围、备份要求、回滚边界、Registry/manifest 来源和已验证流程。
+- taro-app 上线前只要求 Phase B 中与目标生产直接相关的最小子集：生产同构部署、备份、migration、健康检查、恢复演练和一条可靠 Registry 路径。未使用的 PostgreSQL 扩展、第二 Registry 演练、足球/Swift/Recipe 和 Phase D 能力不阻塞上线。
 
 ## 文档策略
 

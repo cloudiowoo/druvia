@@ -25,6 +25,11 @@
 - 非默认环境在缺少不可变 environment identity 前只能显示运行时不可用，不得让用户误以为 dev/test 环境已具备隔离的 Realtime actor。
 - 已有项目数据访问升级必须通过预检、独立风险确认、持久阶段进度、恢复和回滚预检完成；界面不得提供直接切换 `data_access_mode`，也不得展示物理 role、原始 metadata 或 Hasura secret。
 
+## Subagent Triggers
+
+- UI、API 与 migration 跨层问题使用 `explorer` 定位状态流和契约边界。
+- 认证凭证、权限配置或敏感信息展示形成可审查成果后使用 `reviewer`；实际改变权限能力时使用 `critical_reviewer`。
+
 ## 近期风险
 
 - Functions 页面 `invokeAuthMode` 依赖后端字段和数据库迁移同时存在。

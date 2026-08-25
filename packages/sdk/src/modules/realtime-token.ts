@@ -1,4 +1,5 @@
 import type { FetchFn } from '../types.js'
+import { normalizeWebSocketUrl } from '../lib/websocket-url.js'
 
 export interface RealtimeAccessToken {
   token: string
@@ -41,21 +42,6 @@ function parseRetryAfter(value: string | null): number | undefined {
   return Math.max(0, date - Date.now())
 }
 
-function isValidWebsocketUrl(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length === 0) return false
-
-  try {
-    const url = new URL(value)
-    return (url.protocol === 'ws:' || url.protocol === 'wss:')
-      && url.username === ''
-      && url.password === ''
-      && url.search === ''
-      && url.hash === ''
-  } catch {
-    return false
-  }
-}
-
 function parseAccessToken(value: unknown): RealtimeAccessToken | null {
   if (!value || typeof value !== 'object') return null
   const envelope = value as { success?: unknown; data?: unknown }
@@ -65,6 +51,8 @@ function parseAccessToken(value: unknown): RealtimeAccessToken | null {
 
   const data = envelope.data as Partial<RealtimeAccessToken>
   const expiresAtMs = typeof data.expiresAt === 'string' ? Date.parse(data.expiresAt) : NaN
+  const websocketUrl = data.websocketUrl
+  const normalizedWebsocketUrl = normalizeWebSocketUrl(websocketUrl)
   if (
     typeof data.token !== 'string'
     || data.token.length === 0
@@ -73,7 +61,8 @@ function parseAccessToken(value: unknown): RealtimeAccessToken | null {
     || data.expiresIn <= 0
     || !Number.isFinite(expiresAtMs)
     || expiresAtMs <= Date.now()
-    || !isValidWebsocketUrl(data.websocketUrl)
+    || typeof websocketUrl !== 'string'
+    || !normalizedWebsocketUrl
   ) {
     return null
   }
@@ -82,7 +71,7 @@ function parseAccessToken(value: unknown): RealtimeAccessToken | null {
     token: data.token,
     expiresIn: data.expiresIn,
     expiresAt: data.expiresAt as string,
-    websocketUrl: data.websocketUrl,
+    websocketUrl,
   }
 }
 
