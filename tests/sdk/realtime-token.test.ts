@@ -69,6 +69,23 @@ describe('Realtime token provider', () => {
     })
   })
 
+  it('accepts a WebSocket URL when the runtime has no global URL implementation', async () => {
+    vi.stubGlobal('URL', undefined)
+    const fetchFn = vi.fn().mockResolvedValue(response({
+      success: true,
+      data: {
+        token: 'signed-token',
+        expiresIn: 300,
+        expiresAt: '2099-08-18T10:05:00.000Z',
+        websocketUrl: 'wss://druvia.example.com/v1/graphql',
+      },
+    })) as unknown as FetchFn
+
+    await expect(createProvider(fetchFn)()).resolves.toMatchObject({
+      websocketUrl: 'wss://druvia.example.com/v1/graphql',
+    })
+  })
+
   it('preserves the validated WebSocket URL returned by the API', async () => {
     const websocketUrl = ' \nWSS://Example.COM:443/custom/\t'
     const fetchFn = vi.fn().mockResolvedValue(response({
@@ -97,6 +114,24 @@ describe('Realtime token provider', () => {
         expiresIn: 300,
         expiresAt: '2099-08-18T10:05:00.000Z',
         websocketUrl,
+      },
+    })) as unknown as FetchFn
+
+    await expect(createProvider(fetchFn)()).rejects.toMatchObject({
+      code: 'REALTIME_TOKEN_RESPONSE_INVALID',
+      retryable: false,
+    })
+  })
+
+  it('rejects a numeric authority that the socket runtime could reinterpret', async () => {
+    vi.stubGlobal('URL', undefined)
+    const fetchFn = vi.fn().mockResolvedValue(response({
+      success: true,
+      data: {
+        token: 'signed-token',
+        expiresIn: 300,
+        expiresAt: '2099-08-18T10:05:00.000Z',
+        websocketUrl: 'wss://0x7f000001/v1/graphql',
       },
     })) as unknown as FetchFn
 

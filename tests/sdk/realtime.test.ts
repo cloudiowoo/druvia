@@ -153,6 +153,34 @@ describe('DruviaRealtime lifecycle', () => {
     )
   })
 
+  it('normalizes an override when the runtime has no global URL implementation', async () => {
+    vi.stubGlobal('URL', undefined)
+    const provider = vi.fn().mockResolvedValue(access())
+    const { realtime, factory } = createRealtime(provider, 'wss://druvia.example.com')
+
+    realtime.channel('events').subscribe()
+    await flushPromises()
+
+    expect(factory).toHaveBeenCalledWith(
+      'wss://druvia.example.com/v1/graphql',
+      ['graphql-transport-ws']
+    )
+  })
+
+  it('normalizes a token URL when the runtime has no global URL implementation', async () => {
+    vi.stubGlobal('URL', undefined)
+    const provider = vi.fn().mockResolvedValue(access())
+    const { realtime, factory } = createRealtime(provider)
+
+    realtime.channel('events').subscribe()
+    await flushPromises()
+
+    expect(factory).toHaveBeenCalledWith(
+      'wss://druvia.example.com/v1/graphql',
+      ['graphql-transport-ws']
+    )
+  })
+
   it.each([
     'https://example.com',
     'wss://user:pass@example.com',

@@ -30,7 +30,7 @@
 - Realtime 每次 token exchange 必须通过 `projectAuth` 读取当前 Project Session，并同时支持同步/异步 `StorageAdapter`；不能只依赖客户端构造阶段的同步 session 缓存。
 - Realtime channel 必须维护 `connecting / connected / reconnecting / error / closed` 状态，短期令牌续期或身份变化时关闭旧 socket、重新交换并恢复现有订阅；重新连接只恢复快照，不承诺重放断线期间事件。
 - Realtime 快照只处理 GraphQL JSON 数据；复制时必须兼容没有原生 `structuredClone` 的小程序运行时，不得要求应用侧注入全局 monkeypatch。
-- Realtime URL 解析必须由 SDK 共享实现同时覆盖显式 override 与 token 响应；兼容只能解析 HTTP(S) 且缺少 `username/password` 属性的小程序 `URL`，同时继续拒绝 credentials、query 和 fragment，不得要求应用侧 URL monkeypatch。
+- Realtime URL 解析必须由 SDK 共享实现同时覆盖显式 override 与 token 响应；不得依赖全局 `URL`，并须兼容没有 `URL` 或只有受限 HTTP(S) `URL` 的小程序运行时，同时继续拒绝 credentials、query、fragment 和无效 authority，不得要求应用侧 URL monkeypatch。hostname 只接受 ASCII（含调用方预先转换的 punycode）；不在 SDK 内隐式转换 Unicode IDN。
 - `unsubscribe()` / `removeChannel()` 必须终止自动重连；只有调用方再次显式 `subscribe()` 才能启动新连接。
 - SDK 认证头或 session 选择顺序变化时，必须用 API 端真实中间件契约验证，不能只做客户端单测。
 - SDK prerelease 发包必须显式带 dist-tag：

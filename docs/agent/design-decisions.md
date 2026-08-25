@@ -155,7 +155,7 @@
   - Realtime 不直接复用长期 Project JWT/API key；Druvia API 验证同项目 actor 后签发短期 Hasura-verifiable token
   - compatibility Project User/API key 分别映射到旧 `user` / `anonymous` role；explicit actor 使用项目 scoped role
   - SDK 在建连前交换令牌，在令牌续期和项目身份变化时重建 socket 并恢复订阅；断线期间事件不重放
-  - SDK 统一校验显式 override 与 token 响应中的 WebSocket URL；小程序运行时可通过 HTTP(S) 映射完成解析，但仍拒绝 credentials、query 和 fragment，应用侧不得依赖全局 `URL` monkeypatch
+  - SDK 统一校验显式 override 与 token 响应中的 WebSocket URL，解析过程不依赖全局 `URL`；没有 `URL` 或只有受限 HTTP(S) `URL` 的小程序运行时均可建连，但仍拒绝 credentials、query、fragment 和无效 authority；hostname 只接受 ASCII（含调用方预先转换的 punycode），不隐式转换 Unicode IDN，应用侧不得注入全局 monkeypatch
   - API 与 Hasura 共享独立 `HASURA_JWT_SECRET`，固定 issuer `druvia`、audience `druvia-hasura`；`JWT_SECRET` 仅保留迁移期回退
   - Admin 只用内存中的应用凭证执行真实 token exchange 和 WebSocket 探测，不读取平台 session
   - 非默认环境在具备不可变 environment identity 前不开放运行时 Realtime token
