@@ -21,7 +21,7 @@
 
 - Phase A 的主要 Core 实现已落地：安全默认 permissions、显式表权限、旧项目迁移控制面、GraphQL/Realtime actor、RPC/Functions actor、直接 Storage Project User 授权和 MCP 实验性收口均已完成对应代码切片。
 - Phase A 尚未关闭：真实 taro-app 尚未按最新契约完成 Project Auth、GraphQL、Realtime、Storage、RPC 和 Functions 全链路验收；根级 build/lint/核心测试与 release 必过门禁也未完全统一。
-- Phase B 仅部分完成：双 Registry、digest manifest 和 Compose-native OTA 已具备；migration metadata 自动生成、当前基线的升级/恢复演练、PostgreSQL override 和 Trusted Backend 生命周期仍未闭环。
+- Phase B 仅部分完成：双 Registry、digest manifest、Compose-native OTA 和可选 PostGIS override 已具备；migration metadata 自动生成、当前基线的升级/恢复演练和 Trusted Backend 生命周期仍未闭环。
 - Phase C 尚未进入产品化验收：taro-app 的真实兼容矩阵、足球应用、Swift SDK 候选和 Recipe 候选均未完成。
 - Phase D 尚未开始，并继续保持证据驱动，不因 taro-app 上线而提前建设通用 Queue、Worker Runtime 或商业化能力。
 
@@ -179,7 +179,7 @@ Recipe 必须来源于已运行的应用实践，包含版本前提、配置、�
 | 跨模块 actor 契约测试 | 分模块和真实服务测试已增加；仍缺 taro-app 驱动的统一端到端矩阵 | Core | P0 验收 |
 | 发布质量门禁 | release workflow 已有定向回归、Deno check、SDK build、镜像 digest；根级 build/lint/核心测试门禁仍不足 | Core | P0 |
 | OTA 恢复门禁 | 更新链路已有，故障和数据库恢复演练不足 | Core | P1 |
-| PostgreSQL 扩展部署 | Compose 固定默认镜像，但原生 override 尚未形成官方验证路径 | Optional deployment capability | P1 |
+| PostgreSQL 扩展部署 | 默认镜像保持不变；PostGIS overlay 已覆盖 local/prod/release 渲染和已有数据库显式启用路径，镜像升级仍由运维管理 | Optional deployment capability | 已实现基础路径，待应用验收 |
 | Trusted Backend 生命周期 | 有 key/scope/last-used，删除为硬删除，缺少完整过期、可审计撤销和轮换 | Core | P1 |
 | Swift 客户端 | 仓库尚无实现，服务端契约仍在稳定 | 应用内实验，成熟后官方 SDK | P2 |
 | PostGIS | 足球场景有价值，但不是通用默认依赖 | Optional Recipe | P2 |
@@ -218,7 +218,7 @@ Recipe 必须来源于已运行的应用实践，包含版本前提、配置、�
 - 自动生成并校验 migration metadata。
 - 完成双 Registry 独立发布策略和上一稳定版 OTA smoke test。
 - 演练镜像失败、迁移失败、健康检查失败和数据库恢复。
-- 先验证并文档化 Compose 原生 override 对 local/prod/release 的覆盖方式；只有它无法形成一致操作时，才增加 PostgreSQL 镜像环境变量入口。默认仍为 `postgres:17-alpine`。
+- 使用 Compose 原生 PostGIS override 覆盖 local/prod/release；默认仍为 `postgres:17-alpine`，数据库镜像与扩展不进入普通 OTA 自动切换。
 - 完善 Trusted Backend 的过期、撤销、轮换和审计。
 
 阶段出口：平台扩展不破坏 local/prod/release 一致性，OTA 不会隐式切换数据库基础镜像。
@@ -342,7 +342,7 @@ Recipe 发布前必须包含：
 4. 在生产同构预发布环境验证 migration、备份、部署、健康检查和恢复，再发布固定 digest 的 taro-app stable 基线。
 5. taro-app 上线后按紧急 patch 或经过兼容回归的稳定批次升级，不按 commit 或 Phase 子任务反复更新生产。
 6. 足球应用可以在开发环境使用现有 Core 开始 MVP，但不阻塞 taro-app 上线；记录所有绕行、失败和性能数据。
-7. 验证 Compose 原生 PostgreSQL override；只有三套部署模式确有统一入口需求时才修改 Core 配置。
+7. 在足球应用开发环境验收 PostGIS override、扩展启用、Hasura metadata 刷新和数据库备份/恢复；只有真实运维证明 overlay 不足时才修改 Core 配置。
 8. 足球 Worker 进入生产前，完成 Trusted Backend 生命周期加固和凭证使用审计。
 9. 服务端契约稳定后，再提取 Swift SDK 和已验证 Recipe；Jobs、Queue、Resumable Upload 和通用 Worker Runtime 继续保持证据驱动。
 

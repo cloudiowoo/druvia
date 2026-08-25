@@ -155,6 +155,7 @@ jobs:
           tests/unit/deno-worker-runtime.test.ts
           tests/unit/deno-worker-logging.test.ts
           tests/unit/worker-compose-config.test.ts
+          tests/unit/postgis-compose-config.test.ts
           tests/unit/update-compose-command.test.ts
           tests/unit/updater-service.test.ts
           tests/sdk/client.test.ts

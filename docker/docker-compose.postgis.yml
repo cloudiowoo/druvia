@@ -1,0 +1,33 @@
+# Optional PostGIS overlay for local, prod, and release deployments.
+# Always combine this file with one of Druvia's primary Compose files.
+
+services:
+  postgres:
+    image: ${DRUVIA_POSTGRES_IMAGE:-postgis/postgis:17-3.5-alpine}
+    platform: ${DRUVIA_POSTGRES_PLATFORM:-linux/amd64}
+
+  postgis-enable:
+    image: ${DRUVIA_POSTGRES_IMAGE:-postgis/postgis:17-3.5-alpine}
+    platform: ${DRUVIA_POSTGRES_PLATFORM:-linux/amd64}
+    profiles:
+      - postgis-tools
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - psql
+      - -h
+      - postgres
+      - -U
+      - postgres
+      - -d
+      - druvia
+      - -v
+      - ON_ERROR_STOP=1
+      - -c
+      - CREATE EXTENSION IF NOT EXISTS postgis;
+    networks:
+      - druvia-network

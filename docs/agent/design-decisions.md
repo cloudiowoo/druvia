@@ -204,6 +204,7 @@
 ## Docker Compose 在线升级策略
 
 - Druvia 生产在线升级采用 Compose-native 模型，不采用 Sub2API 式容器内替换单个可执行文件模型。
+- PostgreSQL 扩展保持可选部署能力：默认镜像仍为 `postgres:17-alpine`，PostGIS 使用独立 `docker-compose.postgis.yml` 叠加 local/prod/release，并由显式一次性任务为已有数据库启用扩展。Updater 的 migration/apply/rollback 对受管应用服务统一使用 `--no-deps`，不得通过 Compose 依赖图收敛 PostgreSQL；数据库镜像、扩展升级和回退必须人工执行并先完成备份。已有空间依赖时不能把原数据目录直接切回普通 PostgreSQL 镜像。
 - 系统升级控制面必须独立为 `updater` 服务：
   - `updater` 持有 Docker socket、部署目录和 update state volume
   - API 只做 `platform_user + super_admin` 鉴权代理

@@ -315,10 +315,10 @@ describe('updater service', () => {
     await expect(readFile(releaseEnvPath, 'utf8')).resolves.toBe('DRUVIA_VERSION=0.1.0\n');
     await expect(readFile(composePath, 'utf8')).resolves.toBe(oldCompose);
     expect(commands.map((item) => item.args.join(' '))).toEqual([
-      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' run --rm api node apps/api/dist/cli/migrate.js up',
-      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --remove-orphans api admin deno hasura',
+      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' run --rm --no-deps api node apps/api/dist/cli/migrate.js up',
+      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --no-deps --remove-orphans api admin deno hasura',
       'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --no-deps deno',
-      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --remove-orphans api admin deno hasura',
+      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --no-deps --remove-orphans api admin deno hasura',
     ]);
     const status = await service.getStatus();
     expect(status.phase).toBe('rolled_back');
@@ -388,8 +388,8 @@ describe('updater service', () => {
 
     await expect(readFile(releaseEnvPath, 'utf8')).resolves.toBe('DRUVIA_VERSION=0.2.0\n');
     expect(commands.slice(0, 2).map((item) => `${item.command} ${item.args.join(' ')}`)).toEqual([
-      'docker compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' run --rm api node apps/api/dist/cli/migrate.js up',
-      'docker compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --remove-orphans api admin deno hasura',
+      'docker compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' run --rm --no-deps api node apps/api/dist/cli/migrate.js up',
+      'docker compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --no-deps --remove-orphans api admin deno hasura',
     ]);
     const finalizerCommand = commands[2];
     expect(finalizerCommand?.command).toBe('docker');
@@ -454,7 +454,7 @@ describe('updater service', () => {
     await expect(readFile(releaseEnvPath, 'utf8')).resolves.toBe('DRUVIA_VERSION=0.1.0\n');
     expect(commands.map((item) => item.args.join(' '))).toEqual([
       'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --no-deps deno',
-      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --remove-orphans api admin deno hasura',
+      'compose --project-directory ' + config.compose.projectDirectory + ' --env-file ' + config.compose.baseEnvFile + ' --env-file ' + config.compose.releaseEnvFile + ' -f ' + config.compose.composeFile + ' up -d --no-deps --remove-orphans api admin deno hasura',
     ]);
     const status = await service.getStatus();
     expect(status.phase).toBe('rolled_back');

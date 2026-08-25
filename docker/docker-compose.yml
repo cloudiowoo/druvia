@@ -87,7 +87,7 @@ services:
     ports:
       - "127.0.0.1:${DENO_PORT:-7133}:7133"
     healthcheck:
-      test: ["CMD", "deno", "eval", "--allow-net=127.0.0.1:7133", "const r = await fetch('http://127.0.0.1:7133/health'); if (!r.ok) Deno.exit(1)"]
+      test: ["CMD", "deno", "eval", "const r = await fetch('http://127.0.0.1:7133/health'); if (!r.ok) Deno.exit(1)"]
       interval: 30s
       timeout: 10s
       retries: 3

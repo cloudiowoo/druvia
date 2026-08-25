@@ -50,16 +50,16 @@ export function buildComposeArgs(action: ComposeAction, options: ComposeOptions)
     : ['api', 'admin', 'deno', 'hasura'];
 
   if (action === 'migrate') {
-    return [...base, 'run', '--rm', 'api', 'node', 'apps/api/dist/cli/migrate.js', 'up'];
+    return [...base, 'run', '--rm', '--no-deps', 'api', 'node', 'apps/api/dist/cli/migrate.js', 'up'];
   }
   if (action === 'up') {
-    return [...base, 'up', '-d', '--remove-orphans', ...services];
+    return [...base, 'up', '-d', '--no-deps', '--remove-orphans', ...services];
   }
   if (action === 'rollbackWorker') {
     return [...base, 'up', '-d', '--no-deps', 'deno'];
   }
   if (action === 'rollbackUp') {
-    return [...base, 'up', '-d', '--remove-orphans', ...services];
+    return [...base, 'up', '-d', '--no-deps', '--remove-orphans', ...services];
   }
   if (action === 'restart') {
     return [...base, 'restart', 'api', 'admin', 'deno'];

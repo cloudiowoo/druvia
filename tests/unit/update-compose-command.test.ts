@@ -30,12 +30,22 @@ describe('updater Docker command builders', () => {
       '/deploy/docker-compose.release.yml',
       'up',
       '-d',
+      '--no-deps',
       '--remove-orphans',
       'api',
       'admin',
       'deno',
       'hasura',
     ]);
+  });
+
+  it('does not reconcile PostgreSQL dependencies during managed-service updates', () => {
+    for (const action of ['migrate', 'up', 'rollbackUp'] as const) {
+      const args = buildComposeArgs(action, options);
+
+      expect(args).toContain('--no-deps');
+      expect(args).not.toContain('postgres');
+    }
   });
 
   it('adds configured profiles and managed services for built-in nginx deployments', () => {

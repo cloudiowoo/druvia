@@ -28,6 +28,8 @@ describe.each(composeFiles)('%s Worker security contract', (file) => {
     )
     expect(deno).not.toMatch(/^\s+FUNCTIONS_INTERNAL_TOKEN_SECRET:/m)
     expect(deno).toContain('healthcheck:')
+    expect(deno).toContain('test: ["CMD", "deno", "eval", "const r = await fetch')
+    expect(deno).not.toContain('"eval", "--allow-net=127.0.0.1:7133"')
     expect(deno).toContain("fetch('http://127.0.0.1:7133/health')")
   })
 

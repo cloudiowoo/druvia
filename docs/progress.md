@@ -23,6 +23,7 @@
 
 ## Recent Milestones
 
+- 已增加 `docker-compose.postgis.yml` 可选 overlay：local/prod/release 可在不改变默认 PostgreSQL 镜像的前提下切换同主版本 PostGIS，并通过显式一次性任务为已有数据库启用扩展；数据库镜像、扩展升级与回退继续由运维人工管理，不进入普通 OTA
 - MCP Server 已收口为实验性原型：包保持私有且不提供正式启动配置，当前不属于 Admin、SDK、Compose、release 或 OTA 运行链路；待真实 AI 使用场景明确管理型或项目型身份并补齐 API 契约测试后再重新启动实现
 - Project Data Access Batch 1 已建立安全 metadata 基线：表 tracking 不再自动生成宽泛 CRUD permissions，Realtime 开关不再修改 select permission，Admin 默认改用数据接口/实时更新语义展示就绪状态
 - 已引入版本化 data-scope role resolver 作为后续项目角色、环境作用域和 service principal 的内部扩展基础；现有项目尚未切换到 scoped role，需等待显式权限编辑和迁移批次

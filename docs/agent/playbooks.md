@@ -21,6 +21,232 @@
   - `pnpm migrate up`
 - migration CLI 从仓库根 `.env` 读取 `DB_HOST / DB_PORT / DB_USER / POSTGRES_PASSWORD / DB_NAME`。若目标容器不是该端口，先修正 Compose/env 契约；临时诊断可显式使用 `DB_PORT=<实际宿主端口> pnpm migrate status`，但不要长期依赖命令行覆盖掩盖环境漂移。
 
+## 可选 PostGIS 部署
+
+`docker/docker-compose.postgis.yml` 是 local、prod、release 共用的可选 overlay，只替换 PostgreSQL 镜像并提供 `postgis-enable` 一次性任务。默认 Druvia 部署仍使用 `postgres:17-alpine`。OTA 不管理 PostgreSQL/PostGIS 镜像，也不会自动升级或回退数据库扩展。
+
+- 切换已有数据库前先完成 custom archive 备份并验证 `pg_restore -l` 可读取；不得把镜像切换当作数据库备份。
+- overlay 默认使用与 Druvia 相同主版本的 `postgis/postgis:17-3.5-alpine`，并固定 `linux/amd64`；ARM 主机依赖 Docker 模拟。生产可通过 `DRUVIA_POSTGRES_IMAGE` 固定已验证的 tag 或 digest，通过 `DRUVIA_POSTGRES_PLATFORM` 覆盖平台，但不得改用 PostgreSQL 18 直接挂载现有 PostgreSQL 17 数据目录。
+
+### 本地上架 PostGIS
+
+以下命令只替换 `druvia-postgres` 容器，继续使用 `docker/postgres_data` bind mount。开始前先进入 Docker 目录，并确认实际挂载符合预期：
+
+```bash
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+docker inspect druvia-postgres \
+  --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'
+```
+
+输出必须包含当前仓库的 `docker/postgres_data -> /var/lib/postgresql/data`。随后在仓库外创建并验证切换前备份：
+
+```bash
+BACKUP_DIR="$HOME/backups/druvia"
+BACKUP="$BACKUP_DIR/druvia_before_postgis_$(date +%F_%H%M%S).dump"
+
+mkdir -p "$BACKUP_DIR"
+
+docker exec druvia-postgres \
+  pg_dump -U postgres -d druvia \
+  -Fc --no-owner --no-privileges \
+  > "$BACKUP"
+
+test -s "$BACKUP"
+docker exec -i druvia-postgres pg_restore -l < "$BACKUP" > /dev/null
+```
+
+拉取镜像，停止可能写数据库的服务，只重建 PostgreSQL：
+
+```bash
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  pull postgres
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  stop api admin hasura deno
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  up -d postgres
+
+until docker exec druvia-postgres \
+  pg_isready -U postgres -d druvia; do
+  sleep 2
+done
+```
+
+数据库健康后，为已有数据库显式启用扩展：
+
+```bash
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  --profile postgis-tools \
+  run --rm postgis-enable
+
+docker exec druvia-postgres \
+  psql -U postgres -d druvia \
+  -c "SELECT extname, extversion
+      FROM pg_extension
+      WHERE extname LIKE 'postgis%';"
+```
+
+最后恢复应用服务并检查状态：
+
+```bash
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  up -d api admin hasura deno
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  ps
+```
+
+PostGIS 仍启用时，后续本地 Compose 命令必须保持主文件在前、overlay 在后。
+
+### 本地仅下架容器并保留数据
+
+该流程用于删除 PostGIS 容器、暂时停止数据库，但保留 `docker/postgres_data`，以后仍以 PostGIS 镜像重新上架。先停止写入服务，再停止并移除 PostgreSQL 容器：
+
+```bash
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  stop api admin hasura deno postgres
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  rm -f postgres
+
+test -d postgres_data
+du -sh postgres_data
+```
+
+重新上架时仍须携带 overlay：
+
+```bash
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  up -d postgres
+```
+
+`rm -f postgres` 只删除容器，不删除 bind mount。禁止使用 `docker compose down -v`、`docker compose rm -v postgres`、`docker volume prune` 或手工删除 `postgres_data`。
+
+### Release 部署示例
+
+Release 环境使用相同 overlay，首次切换时只重建 `postgres`，确认健康后再显式启用扩展：
+
+```bash
+cd /opt/apps/druvia/docker
+
+docker compose \
+  --env-file .env.prod \
+  --env-file .env.release \
+  -f docker-compose.release.yml \
+  -f docker-compose.postgis.yml \
+  up -d postgres
+
+docker compose \
+  --env-file .env.prod \
+  --env-file .env.release \
+  -f docker-compose.release.yml \
+  -f docker-compose.postgis.yml \
+  --profile postgis-tools \
+  run --rm postgis-enable
+```
+
+- 传统生产使用 `docker-compose.prod.yml`，其余参数和文件顺序不变；主 Compose 必须在前，PostGIS overlay 必须在后。
+- 验证扩展与 Hasura 状态：
+
+```bash
+docker exec druvia-postgres \
+  psql -U postgres -d druvia \
+  -c "SELECT extname, extversion FROM pg_extension WHERE extname = 'postgis';"
+
+docker exec druvia-hasura sh -lc '
+curl -fsS -X POST http://localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-admin-secret: $HASURA_GRAPHQL_ADMIN_SECRET" \
+  -d "{\"type\":\"reload_metadata\",\"args\":{\"reload_sources\":true,\"recreate_event_triggers\":true}}"
+'
+```
+
+- PostGIS 仍启用或继续使用原数据目录期间，所有人工 `up`、数据库恢复和维护命令都必须同时传入主 Compose 与 `docker-compose.postgis.yml`。遗漏 overlay 后执行完整 `up -d` 可能按主文件中的 `postgres:17-alpine` 重建数据库容器。只有完成下述无依赖卸载，或把启用前备份恢复到新的普通 PostgreSQL 17 数据目录后，才能停止携带 override。
+- 普通 OTA 仍只管理应用服务；PostGIS overlay 文件不会被 release manifest 替换。数据库镜像、PostGIS 扩展版本升级和回退必须在维护窗口人工执行，并分别验证备份、扩展版本、Hasura metadata 和应用查询。
+
+### PostGIS 安全回退
+
+不能把 PostGIS 镜像回退等同于普通容器镜像回退。`CREATE EXTENSION postgis` 会持久化数据库 catalog；空间列、索引、函数或视图一旦依赖扩展，普通 `postgres:17-alpine` 即使能够启动同一数据目录，也无法正常提供这些对象。
+
+- 尚未创建任何 PostGIS 依赖对象时：停止应用写入并再次备份，然后先在事务中验证无外部依赖。该命令必须成功且最终回滚：
+
+```bash
+docker exec druvia-postgres \
+  psql -X -U postgres -d druvia -v ON_ERROR_STOP=1 \
+  -c 'BEGIN; DROP EXTENSION postgis; ROLLBACK;'
+```
+
+- 只有上述验证成功，才能在维护窗口执行不带 `CASCADE` 的 `DROP EXTENSION postgis`，确认扩展不存在后停止 PostgreSQL，再用不带 overlay 的主 Compose 切回普通 PostgreSQL 17 镜像。
+- 已存在空间列、索引、函数、视图或数据时：不得执行 `DROP EXTENSION postgis CASCADE`，也不得让普通 PostgreSQL 镜像复用当前 `postgres_data`。应继续固定兼容的 PostGIS 镜像；若必须完全退出 PostGIS，则停止所有写入，把当前目录保留为隔离副本，创建新的空 PostgreSQL 17 数据目录，并恢复“启用 PostGIS 之前”的已验证备份。
+- 启用 PostGIS 之后生成的完整备份通常包含扩展和空间对象，恢复目标也必须先具备兼容 PostGIS 库；它不能替代启用前备份作为普通 PostgreSQL 回退点。
+
+本地确认事务测试成功后，安全切回普通 PostgreSQL 的最小命令如下。执行前仍须停止所有写入并重新备份：
+
+```bash
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  stop api admin hasura deno
+
+docker exec druvia-postgres \
+  psql -X -U postgres -d druvia -v ON_ERROR_STOP=1 \
+  -c 'DROP EXTENSION postgis;'
+
+docker exec druvia-postgres \
+  psql -X -U postgres -d druvia -v ON_ERROR_STOP=1 \
+  -c "SELECT extname FROM pg_extension WHERE extname LIKE 'postgis%';"
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  stop postgres
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  up -d postgres
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  up -d api admin hasura deno
+```
+
+扩展查询必须为空后才能省略 overlay。若还存在 `postgis_topology`、`postgis_raster` 等扩展，必须逐个确认没有外部依赖并按依赖顺序无 `CASCADE` 删除；任一删除失败都应停止切换。若已经存在空间数据或其他依赖，则不能执行以上复用原数据目录的流程，只能继续使用 PostGIS，或者把启用前备份恢复到新的普通 PostgreSQL 17 数据目录。
+
 ## 本地 Docker 恢复生产数据库
 
 该流程用于把 `pg_dump` 生成的生产备份完整覆盖到本地 Docker 数据库，输入可以是纯 SQL、custom archive 或它们的 gzip 外层压缩。它会删除当前本地 `druvia` 数据库，只能在确认目标容器为 `druvia-postgres` 后执行；备份文件不得放入 Git 仓库。
