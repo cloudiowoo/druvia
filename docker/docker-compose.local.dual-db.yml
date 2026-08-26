@@ -1,0 +1,58 @@
+# Local-only dual database overlay.
+# Keep postgres as the default Druvia database and run PostGIS in parallel.
+
+services:
+  postgres-postgis:
+    image: ${DRUVIA_POSTGRES_IMAGE:-postgis/postgis:17-3.5-alpine}
+    platform: ${DRUVIA_POSTGRES_PLATFORM:-linux/amd64}
+    container_name: druvia-postgres-postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: druvia
+    volumes:
+      - ./postgres_postgis_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_POSTGIS_PORT:-5632}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d druvia"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - druvia-network
+
+  postgis-enable:
+    image: ${DRUVIA_POSTGRES_IMAGE:-postgis/postgis:17-3.5-alpine}
+    platform: ${DRUVIA_POSTGRES_PLATFORM:-linux/amd64}
+    profiles:
+      - postgis-tools
+    restart: "no"
+    depends_on:
+      postgres-postgis:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - psql
+      - -h
+      - postgres-postgis
+      - -U
+      - postgres
+      - -d
+      - druvia
+      - -v
+      - ON_ERROR_STOP=1
+      - -c
+      - CREATE EXTENSION IF NOT EXISTS postgis;
+    networks:
+      - druvia-network
+
+  api:
+    environment:
+      DB_HOST: ${DRUVIA_LOCAL_DB_HOST:-postgres}
+
+  hasura:
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD_ENCODED}@${DRUVIA_LOCAL_DB_HOST:-postgres}:5432/druvia

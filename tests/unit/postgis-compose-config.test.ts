@@ -52,6 +52,31 @@ function renderCompose(baseFile: string): Record<string, any> {
   return JSON.parse(output) as Record<string, any>;
 }
 
+function renderDualDatabaseCompose(target: 'postgres' | 'postgres-postgis'): Record<string, any> {
+  const output = execFileSync('docker', [
+    'compose',
+    '-f',
+    'docker/docker-compose.local.yml',
+    '-f',
+    'docker/docker-compose.local.dual-db.yml',
+    '--profile',
+    'postgis-tools',
+    'config',
+    '--format',
+    'json',
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: {
+      ...composeEnv,
+      DRUVIA_LOCAL_DB_HOST: target,
+      POSTGRES_POSTGIS_PORT: '5632',
+    },
+  });
+
+  return JSON.parse(output) as Record<string, any>;
+}
+
 describe('PostGIS Compose override', () => {
   it('overrides only PostgreSQL and provides an explicit extension task', () => {
     const compose = read('docker/docker-compose.postgis.yml');
@@ -100,5 +125,117 @@ describe('PostGIS Compose override', () => {
     expect(localEnv).toContain('DRUVIA_POSTGRES_PLATFORM=linux/amd64');
     expect(prodEnv).toContain('DRUVIA_POSTGRES_IMAGE=postgis/postgis:17-3.5-alpine');
     expect(prodEnv).toContain('DRUVIA_POSTGRES_PLATFORM=linux/amd64');
+  });
+
+  it.each(['postgres', 'postgres-postgis'] as const)(
+    'renders local dual databases with %s selected',
+    (target) => {
+      const rendered = renderDualDatabaseCompose(target);
+      const plain = rendered.services.postgres;
+      const postgis = rendered.services['postgres-postgis'];
+
+      expect(plain.image).toBe('postgres:17-alpine');
+      expect(plain.volumes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: expect.stringMatching(/postgres_data$/) }),
+      ]));
+      expect(postgis.image).toBe('postgis/postgis:17-3.5-alpine');
+      expect(postgis.platform).toBe('linux/amd64');
+      expect(postgis.volumes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: expect.stringMatching(/postgres_postgis_data$/) }),
+      ]));
+      expect(rendered.services.api.environment.DB_HOST).toBe(target);
+      expect(rendered.services.hasura.environment.HASURA_GRAPHQL_DATABASE_URL).toContain(
+        `@${target}:5432/druvia`
+      );
+      expect(rendered.services.api.depends_on['postgres-postgis']).toBeUndefined();
+      expect(rendered.services.hasura.depends_on['postgres-postgis']).toBeUndefined();
+      expect(rendered.services['postgis-enable'].command).toContain('postgres-postgis');
+    }
+  );
+
+  it('documents local database target selection and ignores both data directories', () => {
+    const localEnv = read('docker/.env.example');
+    const dockerIgnore = read('docker/.gitignore');
+
+    expect(localEnv).toContain('DRUVIA_LOCAL_DB_HOST=postgres');
+    expect(localEnv).toContain('POSTGRES_POSTGIS_PORT=5632');
+    expect(dockerIgnore).toContain('postgres_data/');
+    expect(dockerIgnore).toContain('postgres_postgis_data/');
+  });
+
+  it('documents deterministic PostGIS initialization before target switching', () => {
+    const playbook = read('docs/agent/playbooks.md');
+
+    expect(playbook).toContain('druvia_local_plain_before_postgis');
+    expect(playbook).toContain('druvia_local_postgis_before_reset');
+    expect(playbook).toContain('export_metadata');
+    expect(playbook).toContain('up -d postgres postgres-postgis redis api hasura');
+    expect(playbook).toContain('select(has("event_triggers"))');
+    expect(playbook).toContain("n.nspname = 'hdb_catalog'");
+    expect(playbook).toContain('-N hdb_catalog');
+    expect(playbook).toContain('= "$(pwd)/postgres_postgis_data"');
+    expect(playbook).toContain('pg_restore -U postgres -d druvia');
+    expect(playbook).toContain('stop api admin hasura deno');
+    expect(playbook).toContain('--profile postgis-tools');
+    expect(playbook).toContain('POSTGIS_HOST_PORT="$(docker inspect druvia-postgres-postgis');
+    expect(playbook).toContain('DB_PORT="$POSTGIS_HOST_PORT" pnpm migrate up');
+    expect(playbook).toContain('replace_metadata');
+    expect(playbook).toContain('get_inconsistent_metadata');
+
+    const initialUp = playbook.indexOf('up -d postgres postgres-postgis redis api hasura');
+    const initialWait = playbook.indexOf('HASURA_READY=0', initialUp);
+    const metadataExport = playbook.indexOf('export_metadata', initialWait);
+    expect(initialUp).toBeGreaterThanOrEqual(0);
+    expect(initialWait).toBeGreaterThan(initialUp);
+    expect(metadataExport).toBeGreaterThan(initialWait);
+
+    expect(playbook).toContain('stop api admin hasura deno');
+    expect(playbook).toContain('up -d --no-deps --force-recreate hasura');
+    expect(playbook).toContain('up -d --no-deps --force-recreate api');
+    expect(playbook).toContain('up -d --no-deps --force-recreate admin deno');
+
+    expect(playbook).toContain('up -d postgres postgres-postgis redis');
+    expect(playbook).toContain('druvia-local-switch-metadata.json');
+    expect(playbook).toContain('EXPECTED_MIGRATIONS=');
+    expect(playbook).toContain('APPLIED_MIGRATIONS=');
+    expect(playbook).toContain("string_agg(version::text, ',' ORDER BY version)");
+    expect(playbook).toContain("-c 'SELECT 1;'");
+    expect(playbook).toContain('重置失败时恢复原 PostGIS');
+    expect(playbook).toContain('POSTGIS_BACKUP="/absolute/path/to/');
+    expect(playbook).toContain('METADATA_BACKUP="/absolute/path/to/');
+    expect(playbook).toContain('< "$POSTGIS_BACKUP"');
+
+    const writerStop = playbook.indexOf('stop api admin deno');
+    const metadataExportAfterStop = playbook.indexOf('export_metadata', writerStop);
+    const plainDump = playbook.indexOf('pg_dump -U postgres -d druvia');
+    expect(writerStop).toBeGreaterThanOrEqual(0);
+    expect(metadataExportAfterStop).toBeGreaterThan(writerStop);
+    expect(plainDump).toBeGreaterThan(writerStop);
+  });
+
+  it('keeps daily dual-database operations ahead of low-frequency recovery details', () => {
+    const playbook = read('docs/agent/playbooks.md');
+    const quickReference = playbook.indexOf('#### 日常速查（重点）');
+    const initialization = playbook.indexOf('首次初始化或重置 PostGIS（低频操作）');
+    const detailsOpen = playbook.match(/<details>/g)?.length ?? 0;
+    const detailsClose = playbook.match(/<\/details>/g)?.length ?? 0;
+
+    expect(quickReference).toBeGreaterThanOrEqual(0);
+    expect(initialization).toBeGreaterThan(quickReference);
+    expect(detailsOpen).toBe(2);
+    expect(detailsClose).toBe(detailsOpen);
+  });
+
+  it('documents executable guards before stopping the parallel PostGIS service', () => {
+    const playbook = read('docs/agent/playbooks.md');
+    const stopSection = playbook.indexOf('#### 停止 PostGIS 并保留数据');
+    const apiGuard = playbook.indexOf("sed -n 's/^DB_HOST=//p')\" = \"postgres\"", stopSection);
+    const hasuraGuard = playbook.indexOf('HASURA_GRAPHQL_DATABASE_URL=.*@\\([^:]*\\):5432/druvia', stopSection);
+    const stopPostgis = playbook.indexOf('stop postgres-postgis', stopSection);
+
+    expect(stopSection).toBeGreaterThanOrEqual(0);
+    expect(apiGuard).toBeGreaterThan(stopSection);
+    expect(hasuraGuard).toBeGreaterThan(stopSection);
+    expect(stopPostgis).toBeGreaterThan(hasuraGuard);
   });
 });

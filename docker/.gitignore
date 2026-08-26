@@ -1,5 +1,7 @@
 # Data directories
 postgres_data/
+postgres_postgis_data/
+postgres_plain_recovery_data/
 redis_data/
 storage_data/*
 !storage_data/.gitkeep

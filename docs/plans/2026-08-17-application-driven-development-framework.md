@@ -342,7 +342,7 @@ Recipe 发布前必须包含：
 4. 在生产同构预发布环境验证 migration、备份、部署、健康检查和恢复，再发布固定 digest 的 taro-app stable 基线。
 5. taro-app 上线后按紧急 patch 或经过兼容回归的稳定批次升级，不按 commit 或 Phase 子任务反复更新生产。
 6. 足球应用可以在开发环境使用现有 Core 开始 MVP，但不阻塞 taro-app 上线；记录所有绕行、失败和性能数据。
-7. 在足球应用开发环境验收 PostGIS override、扩展启用、Hasura metadata 刷新和数据库备份/恢复；只有真实运维证明 overlay 不足时才修改 Core 配置。
+7. 在足球应用开发环境优先使用本地双库 overlay 验收 PostGIS：普通 PostgreSQL 保持默认基线，PostGIS 使用独立数据目录，显式切换 API/Hasura 后验证扩展、migration、metadata 刷新和数据库备份/恢复；生产仍按单库 PostGIS override 管理，只有真实运维证明现有模式不足时才修改 Core 配置。
 8. 足球 Worker 进入生产前，完成 Trusted Backend 生命周期加固和凭证使用审计。
 9. 服务端契约稳定后，再提取 Swift SDK 和已验证 Recipe；Jobs、Queue、Resumable Upload 和通用 Worker Runtime 继续保持证据驱动。
 

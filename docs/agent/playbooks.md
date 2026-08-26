@@ -28,9 +28,477 @@
 - 切换已有数据库前先完成 custom archive 备份并验证 `pg_restore -l` 可读取；不得把镜像切换当作数据库备份。
 - overlay 默认使用与 Druvia 相同主版本的 `postgis/postgis:17-3.5-alpine`，并固定 `linux/amd64`；ARM 主机依赖 Docker 模拟。生产可通过 `DRUVIA_POSTGRES_IMAGE` 固定已验证的 tag 或 digest，通过 `DRUVIA_POSTGRES_PLATFORM` 覆盖平台，但不得改用 PostgreSQL 18 直接挂载现有 PostgreSQL 17 数据目录。
 
-### 本地上架 PostGIS
+### 本地双库并行与切换
 
-以下命令只替换 `druvia-postgres` 容器，继续使用 `docker/postgres_data` bind mount。开始前先进入 Docker 目录，并确认实际挂载符合预期：
+本地需要保留普通 PostgreSQL 基线并独立开发 PostGIS 数据时，使用 `docker-compose.local.dual-db.yml`。
+
+#### 日常速查（重点）
+
+| 用途 | 普通 PostgreSQL | PostGIS |
+| --- | --- | --- |
+| Compose 服务 | `postgres` | `postgres-postgis` |
+| 容器 | `druvia-postgres` | `druvia-postgres-postgis` |
+| 数据目录 | `docker/postgres_data` | `docker/postgres_postgis_data` |
+| 宿主端口 | `5532` | `5632`（默认） |
+| `DRUVIA_LOCAL_DB_HOST` | `postgres`（默认） | `postgres-postgis` |
+
+日常只需记住以下顺序：
+
+1. 两套数据库可以同时运行，但 API 与 Hasura 一次只能使用一个目标。
+2. 切换前从当前 Hasura 导出 canonical metadata，再修改 `docker/.env` 的 `DRUVIA_LOCAL_DB_HOST`。
+3. 停止 `api/admin/hasura/deno`，先重建目标 Hasura 并应用 canonical metadata。
+4. Hasura 一致、目标数据库 SQL/migration readiness 通过后，再启动 API。
+5. API liveness 通过后才启动 Admin 与 Deno；任一步失败都保持后续服务停止，并恢复原目标。
+
+常规冷启动先只启动两套数据库和 Redis；应用服务继续执行下方“完整安全切换命令”，不能用无门禁的全量 `up -d` 代替：
+
+```bash
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  up -d postgres postgres-postgis redis
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  ps
+```
+
+切换前必须确认目标库已经完成 migration 和 metadata 初始化。普通库与 PostGIS 数据相互独立，切换不会复制或同步数据。完整切换命令见下方折叠区。
+
+#### 固定边界
+
+- `postgres` / `docker/postgres_data`：普通 PostgreSQL，默认目标，保持与其他部署模式一致。
+- `postgres-postgis` / `docker/postgres_postgis_data`：本地可选 PostGIS，宿主端口默认 `127.0.0.1:5632`。
+- 两套数据库拥有独立 catalog、migration、Hasura metadata 和业务数据；切换连接不会复制或同步数据。
+- 该 overlay 只用于本地开发，不能与 `docker-compose.postgis.yml` 同时使用，也不改变生产、release 或 OTA 的单库模型。
+
+<details>
+<summary><strong>首次初始化或重置 PostGIS（低频操作）</strong></summary>
+
+> 该流程会重建 PostGIS 目标数据库。已有且需要保留的 `postgres_postgis_data` 不应执行本段。
+
+首次先确认 Compose 渲染仍以普通库为默认，再拉起两套数据库和导出 metadata 所需的普通库基线服务；不要把空的 PostGIS 数据库直接作为应用目标：
+
+```bash
+set -euo pipefail
+
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  config --format json \
+  | jq -e '.services.api.environment.DB_HOST == "postgres"
+      and (.services.hasura.environment.HASURA_GRAPHQL_DATABASE_URL
+        | contains("@postgres:5432/druvia"))' > /dev/null
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  up -d postgres postgres-postgis redis api hasura
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  ps
+
+HASURA_READY=0
+for _ in $(seq 1 60); do
+  if docker exec druvia-hasura \
+    curl -fsS http://localhost:8080/healthz > /dev/null 2>&1; then
+    HASURA_READY=1
+    break
+  fi
+  sleep 2
+done
+test "$HASURA_READY" = "1"
+```
+
+新建或明确需要重置 `postgres_postgis_data` 时，先确认应用仍指向普通库，分别备份普通库、现有 PostGIS 库和 Hasura metadata。业务归档明确排除 `hdb_catalog`，避免把 event/scheduled-event 等运行队列复制到另一实例；metadata 通过 Hasura API 单独迁移。当前流程只支持没有 Hasura event trigger 的基线，双重门禁失败时必须停止并设计专项 trigger 迁移，不能删除检查或忽略错误：
+
+```bash
+set -euo pipefail
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+STAMP="$(date +%F_%H%M%S)"
+BACKUP_DIR="$HOME/backups/druvia"
+PLAIN_BACKUP="$BACKUP_DIR/druvia_local_plain_before_postgis_$STAMP.dump"
+POSTGIS_BACKUP="$BACKUP_DIR/druvia_local_postgis_before_reset_$STAMP.dump"
+METADATA_BACKUP="$BACKUP_DIR/druvia_local_hasura_metadata_$STAMP.json"
+mkdir -p "$BACKUP_DIR"
+
+test "$(docker inspect druvia-api --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's/^DB_HOST=//p')" = "postgres"
+test "$(docker inspect druvia-hasura --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's#^HASURA_GRAPHQL_DATABASE_URL=.*@\([^:]*\):5432/druvia$#\1#p')" = "postgres"
+test "$(docker inspect druvia-postgres-postgis \
+  --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Source}}{{end}}{{end}}')" \
+  = "$(pwd)/postgres_postgis_data"
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  stop api admin deno
+
+docker exec druvia-hasura sh -lc '
+curl -fsS -X POST http://localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-admin-secret: $HASURA_GRAPHQL_ADMIN_SECRET" \
+  -d "{\"type\":\"export_metadata\",\"args\":{}}"
+' > "$METADATA_BACKUP"
+jq -e '.version and .sources' "$METADATA_BACKUP" > /dev/null
+
+jq -e '[.. | objects | select(has("event_triggers")) | .event_triggers[]?]
+  | length == 0' "$METADATA_BACKUP" > /dev/null
+test "$(docker exec druvia-postgres \
+  psql -X -U postgres -d druvia -Atc \
+  "SELECT count(*)
+     FROM pg_trigger t
+     JOIN pg_proc p ON p.oid = t.tgfoid
+     JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE NOT t.tgisinternal AND n.nspname = 'hdb_catalog';")" = "0"
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  stop hasura
+
+docker exec druvia-postgres \
+  pg_dump -U postgres -d druvia \
+  -Fc --no-owner --no-privileges -N hdb_catalog \
+  > "$PLAIN_BACKUP"
+
+docker exec druvia-postgres-postgis \
+  pg_dump -U postgres -d druvia \
+  -Fc --no-owner --no-privileges \
+  > "$POSTGIS_BACKUP"
+
+test -s "$PLAIN_BACKUP"
+test -s "$POSTGIS_BACKUP"
+docker exec -i druvia-postgres pg_restore -l < "$PLAIN_BACKUP" > /dev/null
+docker exec -i druvia-postgres-postgis pg_restore -l < "$POSTGIS_BACKUP" > /dev/null
+
+docker exec druvia-postgres-postgis \
+  dropdb -U postgres --if-exists --force druvia
+docker exec druvia-postgres-postgis \
+  createdb -U postgres -T template0 -O postgres druvia
+docker exec -i druvia-postgres-postgis \
+  pg_restore -U postgres -d druvia \
+  --no-owner --no-privileges --exit-on-error \
+  < "$PLAIN_BACKUP"
+```
+
+随后显式启用扩展，从实际容器端口映射解析 migration 目标，并在执行前确认数据库身份。`DB_HOST` / `DB_PORT` 命令行值会覆盖仓库根 `.env`；执行前仍要确认两套数据库使用相同的本地密码：
+
+```bash
+set -euo pipefail
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  --profile postgis-tools \
+  run --rm postgis-enable
+
+POSTGIS_HOST_PORT="$(docker inspect druvia-postgres-postgis \
+  --format '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}')"
+test -n "$POSTGIS_HOST_PORT"
+
+docker exec druvia-postgres-postgis \
+  psql -X -U postgres -d druvia -v ON_ERROR_STOP=1 \
+  -c "SELECT current_database(), current_setting('server_version_num'),
+             (SELECT system_identifier FROM pg_control_system());"
+
+cd ..
+DB_HOST=127.0.0.1 DB_PORT="$POSTGIS_HOST_PORT" pnpm migrate up
+cd docker
+
+docker exec druvia-postgres-postgis \
+  psql -X -U postgres -d druvia \
+  -c "SELECT extname, extversion FROM pg_extension WHERE extname = 'postgis';"
+```
+
+将 `.env` 的 `DRUVIA_LOCAL_DB_HOST` 改为 `postgres-postgis`，先只启动 Hasura 并应用刚导出的 metadata；`replace_metadata` 失败或产生 inconsistent metadata 时，不得启动应用服务：
+
+```bash
+set -euo pipefail
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+# 改为上面导出并已通过 jq 验证的绝对路径。
+METADATA_BACKUP="/absolute/path/to/druvia_local_hasura_metadata.json"
+test -s "$METADATA_BACKUP"
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  up -d --no-deps --force-recreate hasura
+
+HASURA_READY=0
+for _ in $(seq 1 60); do
+  if docker exec druvia-hasura \
+    curl -fsS http://localhost:8080/healthz > /dev/null 2>&1; then
+    HASURA_READY=1
+    break
+  fi
+  sleep 2
+done
+test "$HASURA_READY" = "1"
+
+jq -n --slurpfile metadata "$METADATA_BACKUP" \
+  '{type:"replace_metadata",args:{allow_inconsistent_metadata:false,metadata:$metadata[0]}}' \
+  | docker exec -i druvia-hasura sh -lc '
+      curl -fsS -X POST http://localhost:8080/v1/metadata \
+        -H "Content-Type: application/json" \
+        -H "x-hasura-admin-secret: $HASURA_GRAPHQL_ADMIN_SECRET" \
+        --data-binary @-
+    '
+
+docker exec druvia-hasura sh -lc '
+curl -fsS -X POST http://localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-admin-secret: $HASURA_GRAPHQL_ADMIN_SECRET" \
+  -d "{\"type\":\"get_inconsistent_metadata\",\"args\":{}}"
+' | jq -e '.is_consistent == true and (.inconsistent_objects | length == 0)'
+```
+
+已有且需要保留的 `postgres_postgis_data` 时不要执行上述重置；先检查 `druvia_schema_versions`、业务数据和 PostGIS 扩展，再仅执行确有需要的 migration。`.env` 默认保持 `DRUVIA_LOCAL_DB_HOST=postgres`。只有初始化、metadata apply 或已有库校验完成后，才能将其改为 `postgres-postgis`，然后重建其余数据库客户端服务：
+
+```bash
+set -euo pipefail
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  up -d --no-deps --force-recreate api admin deno
+```
+
+##### 重置失败时恢复原 PostGIS
+
+如果 restore、migration 或 metadata apply 任一步失败，保持应用客户端停止，并将 `.env` 保持或恢复为 `postgres`。使用重置前已验证的 `$POSTGIS_BACKUP` 恢复原 PostGIS 数据库：
+
+```bash
+set -euo pipefail
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+# 改为上面生成并已通过 pg_restore -l 验证的绝对路径。
+POSTGIS_BACKUP="/absolute/path/to/druvia_local_postgis_before_reset.dump"
+test -s "$POSTGIS_BACKUP"
+docker exec -i druvia-postgres-postgis pg_restore -l \
+  < "$POSTGIS_BACKUP" > /dev/null
+
+docker exec druvia-postgres-postgis \
+  dropdb -U postgres --if-exists --force druvia
+docker exec druvia-postgres-postgis \
+  createdb -U postgres -T template0 -O postgres druvia
+docker exec -i druvia-postgres-postgis \
+  pg_restore -U postgres -d druvia \
+  --no-owner --no-privileges --exit-on-error \
+  < "$POSTGIS_BACKUP"
+
+docker exec druvia-postgres-postgis \
+  psql -X -U postgres -d druvia -v ON_ERROR_STOP=1 \
+  -c "SELECT max(version) AS migration_version FROM druvia_schema_versions;
+      SELECT extname, extversion FROM pg_extension WHERE extname = 'postgis';"
+```
+
+恢复成功后仍应使用下方完整安全切换流程重新选择 PostGIS；在 metadata consistency 和数据库 readiness 通过前不得启动 API/Admin/Deno。
+
+</details>
+
+<details>
+<summary><strong>普通 PostgreSQL / PostGIS 完整安全切换命令</strong></summary>
+
+切换前先从当前运行目标导出 canonical metadata；导出成功后再修改 `.env` 的 `DRUVIA_LOCAL_DB_HOST`：
+
+```bash
+set -euo pipefail
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+METADATA_BACKUP="${TMPDIR:-/tmp}/druvia-local-switch-metadata.json"
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  up -d --no-deps hasura
+
+HASURA_READY=0
+for _ in $(seq 1 60); do
+  if docker exec druvia-hasura \
+    curl -fsS http://localhost:8080/healthz > /dev/null 2>&1; then
+    HASURA_READY=1
+    break
+  fi
+  sleep 2
+done
+test "$HASURA_READY" = "1"
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  stop api admin deno
+
+docker exec druvia-hasura sh -lc '
+curl -fsS -X POST http://localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-admin-secret: $HASURA_GRAPHQL_ADMIN_SECRET" \
+  -d "{\"type\":\"export_metadata\",\"args\":{}}"
+' > "$METADATA_BACKUP"
+jq -e '.version and .sources' "$METADATA_BACKUP" > /dev/null
+```
+
+修改目标后，按 Hasura、数据库 readiness、API、Admin/Deno 的顺序恢复，避免 API 与 Hasura 在切换期间连接不同数据库：
+
+```bash
+set -euo pipefail
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+METADATA_BACKUP="${TMPDIR:-/tmp}/druvia-local-switch-metadata.json"
+test -s "$METADATA_BACKUP"
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  stop api admin hasura deno
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  up -d --no-deps --force-recreate hasura
+
+HASURA_READY=0
+for _ in $(seq 1 60); do
+  if docker exec druvia-hasura \
+    curl -fsS http://localhost:8080/healthz > /dev/null 2>&1; then
+    HASURA_READY=1
+    break
+  fi
+  sleep 2
+done
+test "$HASURA_READY" = "1"
+
+jq -n --slurpfile metadata "$METADATA_BACKUP" \
+  '{type:"replace_metadata",args:{allow_inconsistent_metadata:false,metadata:$metadata[0]}}' \
+  | docker exec -i druvia-hasura sh -lc '
+      curl -fsS -X POST http://localhost:8080/v1/metadata \
+        -H "Content-Type: application/json" \
+        -H "x-hasura-admin-secret: $HASURA_GRAPHQL_ADMIN_SECRET" \
+        --data-binary @-
+    '
+docker exec druvia-hasura sh -lc '
+curl -fsS -X POST http://localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-admin-secret: $HASURA_GRAPHQL_ADMIN_SECRET" \
+  -d "{\"type\":\"get_inconsistent_metadata\",\"args\":{}}"
+' | jq -e '.is_consistent == true and (.inconsistent_objects | length == 0)'
+
+TARGET="$(docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  config --format json | jq -r '.services.api.environment.DB_HOST')"
+case "$TARGET" in
+  postgres) DB_CONTAINER=druvia-postgres ;;
+  postgres-postgis) DB_CONTAINER=druvia-postgres-postgis ;;
+  *) printf 'Unexpected database target: %s\n' "$TARGET" >&2; exit 1 ;;
+esac
+
+docker exec "$DB_CONTAINER" \
+  psql -X -U postgres -d druvia -v ON_ERROR_STOP=1 \
+  -c 'SELECT 1;'
+
+EXPECTED_MIGRATIONS="$(find ../migrations -name '*.up.sql' -exec basename {} \; \
+  | awk -F_ '{print $1 + 0}' | sort -n | paste -sd, -)"
+APPLIED_MIGRATIONS="$(docker exec "$DB_CONTAINER" \
+  psql -X -U postgres -d druvia -Atc \
+  "SELECT coalesce(string_agg(version::text, ',' ORDER BY version), '')
+     FROM druvia_schema_versions;")"
+test "$APPLIED_MIGRATIONS" = "$EXPECTED_MIGRATIONS"
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  up -d --no-deps --force-recreate api
+
+API_READY=0
+for _ in $(seq 1 60); do
+  if curl -fsS http://localhost:3001/health > /dev/null 2>&1; then
+    API_READY=1
+    break
+  fi
+  sleep 2
+done
+test "$API_READY" = "1"
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  up -d --no-deps --force-recreate admin deno
+```
+
+脚本中的 metadata replace/consistency、目标数据库 SQL/migration readiness 和 API liveness 是切换门禁；不能只根据容器 `running` 判定成功。任一步失败都不要继续启动后续服务，将 `.env` 恢复为原目标并重新执行完整流程。执行 migration 前还必须确认宿主连接端口：普通库为 `5532`，PostGIS 端口从容器实际映射读取。
+
+</details>
+
+#### 停止 PostGIS 并保留数据
+
+先确认 `.env` 与运行中的 API/Hasura 均已切回 `postgres`，再执行：
+
+```bash
+set -euo pipefail
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  config --format json \
+  | jq -e '.services.api.environment.DB_HOST == "postgres"
+      and (.services.hasura.environment.HASURA_GRAPHQL_DATABASE_URL
+        | contains("@postgres:5432/druvia"))' > /dev/null
+
+test "$(docker inspect druvia-api --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's/^DB_HOST=//p')" = "postgres"
+test "$(docker inspect druvia-hasura --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's#^HASURA_GRAPHQL_DATABASE_URL=.*@\([^:]*\):5432/druvia$#\1#p')" = "postgres"
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  stop postgres-postgis
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  rm -f postgres-postgis
+
+test -d postgres_postgis_data
+```
+
+不要为清理 Druvia 服务使用 `--remove-orphans`，本机可能存在共享 Compose project 名下的其他数据库容器。禁止使用 `down -v`、`rm -v` 或手工删除任一数据库目录。
+
+### 本地单库切换为 PostGIS
+
+以下是原地替换数据库镜像的单库流程，适用于需要模拟生产单库 PostGIS 的场景；日常本地开发优先使用上述双库模式。命令只替换 `druvia-postgres` 容器，继续使用 `docker/postgres_data` bind mount。开始前先进入 Docker 目录，并确认实际挂载符合预期：
 
 ```bash
 cd /Users/cloudio/Developer/nodejs/Druvia/docker
@@ -118,7 +586,7 @@ docker compose \
 
 PostGIS 仍启用时，后续本地 Compose 命令必须保持主文件在前、overlay 在后。
 
-### 本地仅下架容器并保留数据
+### 本地单库仅下架容器并保留数据
 
 该流程用于删除 PostGIS 容器、暂时停止数据库，但保留 `docker/postgres_data`，以后仍以 PostGIS 镜像重新上架。先停止写入服务，再停止并移除 PostgreSQL 容器：
 
