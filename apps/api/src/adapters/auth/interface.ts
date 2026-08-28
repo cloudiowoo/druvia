@@ -34,6 +34,50 @@ export interface AuthAdapter {
   getAuthUrl?(redirectUri: string, state?: string): string;
 }
 
+export interface AppleNativeCredential {
+  authorizationCode: string;
+  identityToken: string;
+  rawNonce: string;
+  profile?: {
+    givenName?: string;
+    familyName?: string;
+  };
+}
+
+export interface AppleVerifiedUser {
+  provider: 'apple';
+  providerId: string;
+  email?: string;
+  nickname?: string;
+}
+
+export interface AppleAuthenticationResult {
+  user: AppleVerifiedUser;
+  providerSession: {
+    audience: string;
+    refreshToken: string;
+  };
+}
+
+export interface AppleAuthAdapter {
+  readonly provider: 'apple';
+  authenticateNative(credential: AppleNativeCredential): Promise<AppleAuthenticationResult>;
+  revoke(input: { audience: string; refreshToken: string }): Promise<void>;
+  validateRefreshToken(input: {
+    audience: string;
+    refreshToken: string;
+    expectedSubject: string;
+  }): Promise<void>;
+}
+
+export interface AppleConfig {
+  clientId: string;
+  teamId: string;
+  keyId: string;
+  privateKeyPem: string;
+  allowedAudiences: string[];
+}
+
 // Configuration types
 export interface WeChatConfig {
   appId: string;

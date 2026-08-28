@@ -168,7 +168,10 @@ export interface ForeignKeyDetail {
 
 export type { EdgeFunction, FunctionSecret, FunctionSchedule, FunctionLog, InvokeResult };
 
-export type TrustedBackendKeyScope = 'project_session:issue' | 'storage_ticket:issue';
+export type TrustedBackendKeyScope =
+  | 'project_session:issue'
+  | 'storage_ticket:issue'
+  | 'project_auth_lifecycle:manage';
 export type { DruviaUpdateStatus };
 
 export interface DruviaUpdateOperation {
@@ -1220,6 +1223,45 @@ class ApiClient {
 
   async deleteAuthProvider(projectId: string, provider: string) {
     return this.request<void>('DELETE', `/api/v1/projects/${projectId}/auth/providers/${provider}`);
+  }
+
+  async listAppleAuthIdentities(projectId: string) {
+    return this.request<Array<{
+      id: number;
+      projectUserId: string;
+      provider: string;
+      audience: string | null;
+      status: 'active' | 'revoke_pending' | 'revoked' | 'deletion_pending';
+      subjectSummary: string;
+      updatedAt: string;
+      lastAuthenticatedAt: string;
+    }>>('GET', `/api/v1/projects/${projectId}/auth/apple/identities`);
+  }
+
+  async retryAppleAuthRevoke(projectId: string, identityId: number) {
+    return this.request<{ revoked: boolean }>(
+      'POST',
+      `/api/v1/projects/${projectId}/auth/apple/identities/${identityId}/retry-revoke`,
+    );
+  }
+
+  async listAppleLifecycleEvents(projectId: string) {
+    return this.request<{
+      items: Array<{
+        id: number;
+        type: string;
+        occurredAt: string;
+        projectUserId: string | null;
+      }>;
+      nextCursor: string | null;
+    }>('GET', `/api/v1/projects/${projectId}/auth/lifecycle-events?status=application_action_pending&limit=100`);
+  }
+
+  async acknowledgeAppleLifecycleEvent(projectId: string, eventId: number) {
+    return this.request<{ acknowledged: boolean }>(
+      'POST',
+      `/api/v1/projects/${projectId}/auth/lifecycle-events/${eventId}/ack`,
+    );
   }
 
   async getSupportedAuthProviders() {

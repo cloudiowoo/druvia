@@ -23,6 +23,7 @@
 
 ## Recent Milestones
 
+- Apple Project Auth Druvia 侧开发切片已完成本地实现：migration `021`、平台 identity binding、原生登录、identity-bound refresh、两阶段 revoke、Apple server notification、Admin 配置与 lifecycle 管理、SDK helper、独立密钥加密和双 Registry release ceiling 已落地。mock Apple 与数据库集成定向回归通过；PITCHETCH 当前没有 Apple Developer Program 付费团队身份，真实 provider 配置、原生实现、真机和公网 notification 验收暂缓，因此不标记生产就绪。
 - 本地数据库已支持并行普通 PostgreSQL 与 PostGIS：普通库继续使用默认 `postgres_data`，PostGIS 隔离到 `postgres_postgis_data`，API/Hasura 可通过显式目标切换进行应用适配验证；生产、release 和 OTA 仍保持单库部署
 - 已增加 `docker-compose.postgis.yml` 可选 overlay：local/prod/release 可在不改变默认 PostgreSQL 镜像的前提下切换同主版本 PostGIS，并通过显式一次性任务为已有数据库启用扩展；数据库镜像、扩展升级与回退继续由运维人工管理，不进入普通 OTA
 - MCP Server 已收口为实验性原型：包保持私有且不提供正式启动配置，当前不属于 Admin、SDK、Compose、release 或 OTA 运行链路；待真实 AI 使用场景明确管理型或项目型身份并补齐 API 契约测试后再重新启动实现
@@ -128,7 +129,7 @@
 - 冻结 taro-app/H5/小程序上线依赖和版本矩阵，盘点真实表权限、Auth provider、GraphQL、Realtime、Storage、RPC、Functions、SDK 和部署依赖
 - 在真实应用中验证 Project Session 生命周期、数据/实时跨用户隔离、Storage 浏览器与小程序实际上传路径，以及 RPC/Functions token 选择；只修复联调发现的 Core 阻塞
 - 为目标 stable 基线补齐根级 build/lint/核心测试门禁，并明确隔离当前并发集成和环境依赖失败；不以定向测试通过替代完整门禁结论
-- 在生产同构预发布环境核对并演练 migration `018 -> 020`、数据库/Storage 备份、服务健康检查、镜像回滚和必要的数据库人工恢复
+- 在生产同构预发布环境核对并演练 migration `018 -> 021`、数据库/Storage 备份、服务健康检查、镜像回滚和必要的数据库人工恢复
 - 验收通过后发布固定 digest 的 stable 基线并由生产人工 apply；此前不触发实际生产 OTA，后续也不按 commit 或 Phase 子任务反复升级
 - beta/nightly 与 GitHub `releases/latest/download` 完成隔离前，不让非 stable Release 覆盖生产 manifest 入口
 - taro-app 上线不等待足球应用、PostgreSQL 扩展、Swift SDK 或 Recipe；这些能力继续由真实应用证据决定优先级

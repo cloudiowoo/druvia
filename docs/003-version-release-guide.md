@@ -175,7 +175,7 @@ OTA 仍使用既有 updater 流程，但 release manifest 对应的 API 镜像�
 
 包含已有项目数据访问升级的版本必须先应用 `019_data_access_migrations`，再启动新 API/Admin。发布前先完成数据库和 Hasura metadata 备份；发布后通过 Admin 逐项目生成预检，不批量修改 `data_access_mode`。自定义旧规则会阻断，匿名写权限不会迁移，认证 aggregate 能力会收紧。
 
-当前 release workflow 的安全默认值为 `migration_required=true`、`migration_from=18`、`migration_to=20`、`migration_requires_backup=true`、`migration_reversible=false`。tag push 在没有 `workflow_dispatch` 输入时也使用这些值，GHCR 与自建 Registry manifest 必须保持一致；未来新增迁移时需同步提升该默认范围和对应契约测试。
+当前 release workflow 的安全默认值为 `migration_required=true`、`migration_from=18`、`migration_to=21`、`migration_requires_backup=true`、`migration_reversible=false`。tag push 在没有 `workflow_dispatch` 输入时也使用这些值，GHCR 与自建 Registry manifest 必须保持一致；未来新增迁移时需同步提升该默认范围和对应契约测试。
 
 迁移操作、恢复与回滚流程见 `docs/004-project-data-access-migration-guide.md`。`019` 保存恢复依据，镜像或 OTA 回滚时必须保留，不能自动执行 down migration。
 

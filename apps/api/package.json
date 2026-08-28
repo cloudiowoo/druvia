@@ -20,6 +20,7 @@
     "fastify-plugin": "^5.1.0",
     "graphql-ws": "^6.0.7",
     "ioredis": "^5.9.3",
+    "jose": "^6.2.10",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.11.0",
     "pg-format": "^1.0.4",

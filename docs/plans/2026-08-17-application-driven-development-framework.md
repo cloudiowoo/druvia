@@ -223,7 +223,7 @@ Recipe 必须来源于已运行的应用实践，包含版本前提、配置、�
 
 阶段出口：平台扩展不破坏 local/prod/release 一致性，OTA 不会隐式切换数据库基础镜像。
 
-taro-app 上线不要求 Phase B 全部完成，但以下生产相关子集不可跳过：目标环境备份、migration `018 -> 020` 适用性确认、一次生产同构部署/健康检查/恢复演练、可靠的单一 Registry 路径和固定 digest。PostgreSQL 扩展、完整双 Registry 演练和未被 taro-app 使用的 Trusted Backend 能力可以继续延期；若 taro-app 生产直接使用 Trusted Backend Key，则其过期、撤销、轮换和审计必须提前完成。
+taro-app 上线不要求 Phase B 全部完成，但以下生产相关子集不可跳过：目标环境备份、当前 stable manifest 所声明 migration（现为 `018 -> 021`）的适用性确认、一次生产同构部署/健康检查/恢复演练、可靠的单一 Registry 路径和固定 digest。PostgreSQL 扩展、完整双 Registry 演练和未被 taro-app 使用的 Trusted Backend 能力可以继续延期；若 taro-app 生产直接使用 Trusted Backend Key，则其过期、撤销、轮换和审计必须提前完成。
 
 ### Phase C：0.5.x 双应用验证与 SDK 产品化
 

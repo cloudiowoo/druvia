@@ -1,10 +1,34 @@
 import crypto from 'crypto';
+import type { PoolClient } from 'pg';
 import { generateUserId } from '@druvia/shared';
-import { createAuthAdapter, type AuthProviderConfig, type AuthResult } from '../../adapters/auth/index.js';
-import { query, queryOne } from '../../db/index.js';
+import {
+  AppleAdapterError,
+  createAppleAuthAdapter,
+  createAuthAdapter,
+  type AppleConfig,
+  type AppleNativeCredential,
+  type AuthProviderConfig,
+  type AuthResult,
+} from '../../adapters/auth/index.js';
+import { pool, query, queryOne } from '../../db/index.js';
+import { decryptSecret, encryptSecret, SecretEncryptionConfigError } from '../../lib/secret-encryption.js';
+import { createApiLogger } from '../../lib/logger.js';
 import { signProjectUserToken } from '../../middleware/auth.js';
 import * as authAdminService from '../auth-admin/auth-admin.service.js';
 import * as projectService from '../project/project.service.js';
+import {
+  acquireProjectAuthProjectLock,
+  acquireProjectAuthIdentityLock,
+  acquireProjectAuthIdentityIdLock,
+  createProjectAuthIdentity,
+  deleteProjectAuthProviderTokens,
+  findProjectAuthIdentity,
+  markProjectAuthIdentityRevokePending,
+  markProjectAuthIdentityRevoked,
+  reactivateProjectAuthIdentity,
+  upsertProjectAuthProviderToken,
+  type ProjectAuthIdentity,
+} from './project-identity.repository.js';
 
 type ProjectUserRow = {
   id: string;
@@ -17,6 +41,8 @@ type ProjectUserRow = {
   last_login_at: Date | null;
   created_at: Date | null;
 };
+
+const logger = createApiLogger({ module: 'project-auth' });
 
 type ProjectUser = {
   id: string;
@@ -43,6 +69,8 @@ type SchemaCapabilities = {
   hasCreatedAt: boolean;
   hasUpdatedAt: boolean;
   userIdDataType: string | null;
+  emailNullable: boolean;
+  providerIdNullable: boolean;
 };
 
 export interface ProjectSession {
@@ -196,14 +224,16 @@ async function getAuthAdapter(projectId: string, providerName: string) {
 async function getSchemaCapabilities(schemaName: string): Promise<SchemaCapabilities> {
   validateSchemaName(schemaName);
 
-  const columns = await query<{ column_name: string; data_type: string | null }>(
-    `SELECT column_name, data_type
+  const columns = await query<{ column_name: string; data_type: string | null; is_nullable?: string }>(
+    `SELECT column_name, data_type, is_nullable
      FROM information_schema.columns
      WHERE table_schema = $1 AND table_name = 'users'`,
     [schemaName]
   );
   const names = new Set(columns.map((column) => column.column_name));
   const idColumn = columns.find((column) => column.column_name === 'id');
+  const emailColumn = columns.find((column) => column.column_name === 'email');
+  const providerIdColumn = columns.find((column) => column.column_name === 'provider_id');
 
   return {
     hasEmail: names.has('email'),
@@ -217,6 +247,8 @@ async function getSchemaCapabilities(schemaName: string): Promise<SchemaCapabili
     hasCreatedAt: names.has('created_at'),
     hasUpdatedAt: names.has('updated_at'),
     userIdDataType: idColumn?.data_type ?? null,
+    emailNullable: emailColumn?.is_nullable !== 'NO',
+    providerIdNullable: providerIdColumn?.is_nullable !== 'NO',
   };
 }
 
@@ -580,6 +612,361 @@ export async function providerLogin(
   return issueProjectSession(projectId, toProjectUser(user), provider, authConfig);
 }
 
+function buildAppleConfig(
+  provider: NonNullable<Awaited<ReturnType<typeof authAdminService.getProvider>>>,
+  privateKeyPem: string,
+): AppleConfig {
+  const clientId = provider.clientId ?? '';
+  const teamId = typeof provider.config.teamId === 'string' ? provider.config.teamId : '';
+  const keyId = typeof provider.config.keyId === 'string' ? provider.config.keyId : '';
+  const allowedAudiences = Array.isArray(provider.config.allowedAudiences)
+    ? provider.config.allowedAudiences.filter((value): value is string => typeof value === 'string')
+    : [];
+  if (!clientId || !teamId || !keyId || !privateKeyPem || !allowedAudiences.includes(clientId)) {
+    throw new ProjectAuthError(
+      'PROVIDER_NOT_CONFIGURED',
+      'Apple auth provider credentials are incomplete',
+      503,
+    );
+  }
+  return { clientId, teamId, keyId, privateKeyPem, allowedAudiences };
+}
+
+export async function getAppleAdapter(
+  projectId: string,
+  options: { requireEnabled?: boolean } = {},
+) {
+  const provider = await authAdminService.getProvider(projectId, 'apple');
+  if (!provider || (options.requireEnabled !== false && !provider.enabled)) {
+    throw new ProjectAuthError('PROVIDER_NOT_CONFIGURED', 'Apple auth provider is not enabled', 503);
+  }
+
+  try {
+    const privateKeyPem = await authAdminService.getProviderSecret(
+      projectId,
+      'apple',
+      { requireDedicatedKey: true },
+    );
+    if (!privateKeyPem) {
+      throw new ProjectAuthError('PROVIDER_NOT_CONFIGURED', 'Apple private key is missing', 503);
+    }
+    return createAppleAuthAdapter(buildAppleConfig(provider, privateKeyPem));
+  } catch (error) {
+    if (error instanceof ProjectAuthError) throw error;
+    if (error instanceof SecretEncryptionConfigError) {
+      throw new ProjectAuthError('PROVIDER_NOT_CONFIGURED', error.message, 503);
+    }
+    throw error;
+  }
+}
+
+function mapAppleAdapterError(error: unknown): ProjectAuthError {
+  if (!(error instanceof AppleAdapterError)) {
+    return new ProjectAuthError('PROVIDER_UNAVAILABLE', 'Apple authentication is unavailable', 503);
+  }
+  switch (error.reason) {
+    case 'rate_limited':
+      return new ProjectAuthError('PROVIDER_RATE_LIMITED', 'Apple authentication is rate limited', 429);
+    case 'upstream_unavailable':
+      return new ProjectAuthError('PROVIDER_UNAVAILABLE', 'Apple authentication is unavailable', 503);
+    case 'configuration_invalid':
+      return new ProjectAuthError('PROVIDER_NOT_CONFIGURED', 'Apple provider configuration is invalid', 503);
+    default:
+      return new ProjectAuthError('PROVIDER_CREDENTIAL_INVALID', 'Invalid Apple credential', 401);
+  }
+}
+
+function assertAppleSchemaCompatible(capabilities: SchemaCapabilities): void {
+  if (!capabilities.userIdDataType) {
+    throw new ProjectAuthError(
+      'PROVIDER_SCHEMA_INCOMPATIBLE',
+      'Project users table with an id column is required',
+      409,
+    );
+  }
+  if (capabilities.hasProviderId && !capabilities.providerIdNullable) {
+    throw new ProjectAuthError(
+      'PROVIDER_SCHEMA_INCOMPATIBLE',
+      'Project users.provider_id must allow NULL for Apple Auth',
+      409,
+    );
+  }
+}
+
+async function getAppleProjectUserById(
+  client: PoolClient,
+  schemaName: string,
+  capabilities: SchemaCapabilities,
+  userId: string,
+): Promise<ProjectUserRow | null> {
+  const statusCondition = capabilities.hasStatus ? ` AND status = 'active'` : '';
+  const result = await client.query<ProjectUserRow>(
+    `${buildUserSelect(schemaName, capabilities)} WHERE id = $1${statusCondition} LIMIT 1`,
+    [userId],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function createAppleProjectUser(
+  client: PoolClient,
+  schemaName: string,
+  capabilities: SchemaCapabilities,
+  input: { email?: string; nickname?: string },
+): Promise<ProjectUserRow> {
+  const userId = capabilities.userIdDataType === 'uuid' ? crypto.randomUUID() : generateUserId();
+  const columns = ['id'];
+  const values: unknown[] = [userId];
+  const placeholders = ['$1'];
+
+  const addValue = (column: string, value: unknown) => {
+    columns.push(column);
+    values.push(value);
+    placeholders.push(`$${values.length}`);
+  };
+  if (capabilities.hasEmail) {
+    addValue('email', input.email ?? (capabilities.emailNullable ? null : `${userId}@users.invalid`));
+  }
+  if (capabilities.hasUsername) {
+    addValue('username', input.nickname ?? buildFallbackUsername(userId));
+  }
+  if (capabilities.hasAvatarUrl) addValue('avatar_url', null);
+  if (capabilities.hasProvider) addValue('provider', 'apple');
+  if (capabilities.hasProviderId) addValue('provider_id', null);
+  if (capabilities.hasStatus) addValue('status', 'active');
+  if (capabilities.hasLastLoginAt) {
+    columns.push('last_login_at');
+    placeholders.push('NOW()');
+  }
+  if (capabilities.hasCreatedAt) {
+    columns.push('created_at');
+    placeholders.push('NOW()');
+  }
+  if (capabilities.hasUpdatedAt) {
+    columns.push('updated_at');
+    placeholders.push('NOW()');
+  }
+
+  const result = await client.query<ProjectUserRow>(
+    `INSERT INTO ${schemaName}.users (${columns.join(', ')})
+     VALUES (${placeholders.join(', ')})
+     RETURNING id,
+       ${capabilities.hasEmail ? 'email' : 'NULL::text AS email'},
+       ${capabilities.hasUsername ? 'username' : 'NULL::text AS username'},
+       ${capabilities.hasAvatarUrl ? 'avatar_url' : 'NULL::text AS avatar_url'},
+       ${capabilities.hasProvider ? 'provider' : "'apple'::text AS provider"},
+       ${capabilities.hasProviderId ? 'provider_id' : 'NULL::text AS provider_id'},
+       ${capabilities.hasStatus ? 'status' : "'active'::text AS status"},
+       ${capabilities.hasLastLoginAt ? 'last_login_at' : 'NULL::timestamptz AS last_login_at'},
+       ${capabilities.hasCreatedAt ? 'created_at' : 'NOW() AS created_at'}`,
+    values,
+  );
+  if (!result.rows[0]) {
+    throw new Error('Failed to create Apple project user');
+  }
+  return result.rows[0];
+}
+
+async function issueAppleProjectSession(
+  client: PoolClient,
+  projectId: string,
+  user: ProjectUser,
+  identityId: number,
+  audience: string,
+  authConfig: Awaited<ReturnType<typeof authAdminService.getAuthConfig>>,
+): Promise<ProjectSession> {
+  const expiresIn = Math.min(authConfig.jwtExpiresIn, 3_600);
+  const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+  const token = signProjectUserToken({
+    sub: user.id,
+    projectId,
+    authType: 'project_user',
+    role: 'authenticated',
+    provider: 'apple',
+  }, expiresIn);
+  const refreshToken = crypto.randomBytes(32).toString('base64url');
+  await client.query(
+    `INSERT INTO druvia_project_refresh_tokens
+       (project_id, user_id, provider, identity_id, provider_audience, token_hash, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      projectId,
+      user.id,
+      'apple',
+      identityId,
+      audience,
+      hashToken(refreshToken),
+      new Date(Date.now() + authConfig.refreshTokenExpiresIn * 1000),
+    ],
+  );
+  return {
+    token,
+    refreshToken,
+    expiresIn,
+    expiresAt,
+    user: {
+      id: user.id,
+      email: user.email?.endsWith('@users.invalid') ? null : user.email,
+      username: user.username,
+      avatarUrl: user.avatarUrl,
+      role: 'authenticated',
+    },
+  };
+}
+
+async function markExistingIdentityPendingAfterFailure(identity: ProjectAuthIdentity): Promise<void> {
+  const recoveryClient = await pool.connect();
+  try {
+    await recoveryClient.query('BEGIN');
+    await acquireProjectAuthProjectLock(recoveryClient, identity.projectId);
+    await acquireProjectAuthIdentityIdLock(recoveryClient, identity.id);
+    await markProjectAuthIdentityRevokePending(recoveryClient, identity.id);
+    await recoveryClient.query('COMMIT');
+  } catch {
+    await recoveryClient.query('ROLLBACK');
+  } finally {
+    recoveryClient.release();
+  }
+}
+
+export async function appleLogin(
+  projectId: string,
+  credential: AppleNativeCredential,
+): Promise<ProjectSession> {
+  const { schemaName, authConfig } = await getProjectContext(projectId);
+  const capabilities = await getSchemaCapabilities(schemaName);
+  assertAppleSchemaCompatible(capabilities);
+  const adapter = await getAppleAdapter(projectId);
+
+  let authentication;
+  try {
+    authentication = await adapter.authenticateNative(credential);
+  } catch (error) {
+    throw mapAppleAdapterError(error);
+  }
+
+  const client = await pool.connect();
+  let existingIdentity: ProjectAuthIdentity | null = null;
+  let session: ProjectSession | undefined;
+  let localFailure: unknown;
+  try {
+    await client.query('BEGIN');
+    await acquireProjectAuthProjectLock(client, projectId);
+    const currentProvider = await authAdminService.getProvider(projectId, 'apple');
+    if (!currentProvider?.enabled) {
+      throw new ProjectAuthError(
+        'PROVIDER_NOT_CONFIGURED',
+        'Apple auth provider is not enabled',
+        503,
+      );
+    }
+    const identityKey = {
+      projectId,
+      provider: 'apple',
+      issuer: 'https://appleid.apple.com',
+      subject: authentication.user.providerId,
+    };
+    await acquireProjectAuthIdentityLock(client, identityKey);
+    existingIdentity = await findProjectAuthIdentity(client, identityKey);
+
+    let identity: ProjectAuthIdentity;
+    let userRow: ProjectUserRow;
+    if (existingIdentity) {
+      if (existingIdentity.status === 'revoke_pending' || existingIdentity.status === 'deletion_pending') {
+        throw new ProjectAuthError('PROVIDER_REAUTH_REQUIRED', 'Apple identity lifecycle action is pending', 409);
+      }
+      const reactivated = await reactivateProjectAuthIdentity(
+        client,
+        existingIdentity.id,
+        authentication.providerSession.audience,
+      );
+      if (!reactivated) throw new Error('Unable to reactivate Apple identity');
+      identity = reactivated;
+      const existingUser = await getAppleProjectUserById(
+        client,
+        schemaName,
+        capabilities,
+        identity.projectUserId,
+      );
+      if (!existingUser) {
+        throw new ProjectAuthError('IDENTITY_INCONSISTENT', 'Apple identity user is unavailable', 409);
+      }
+      userRow = existingUser;
+      if (capabilities.hasLastLoginAt) {
+        await client.query(
+          `UPDATE ${schemaName}.users SET last_login_at = NOW() WHERE id = $1`,
+          [userRow.id],
+        );
+      }
+    } else {
+      if (!authConfig.allowSignup) {
+        throw new ProjectAuthError('SIGNUP_DISABLED', 'Project signup is disabled', 403);
+      }
+      userRow = await createAppleProjectUser(client, schemaName, capabilities, {
+        email: authentication.user.email,
+        nickname: authentication.user.nickname,
+      });
+      identity = await createProjectAuthIdentity(client, {
+        ...identityKey,
+        projectUserId: userRow.id,
+        audience: authentication.providerSession.audience,
+      });
+    }
+
+    await upsertProjectAuthProviderToken(client, {
+      identityId: identity.id,
+      audience: authentication.providerSession.audience,
+      refreshTokenEncrypted: encryptSecret(authentication.providerSession.refreshToken, {
+        requireDedicatedKey: true,
+      }),
+    });
+    session = await issueAppleProjectSession(
+      client,
+      projectId,
+      toProjectUser(userRow),
+      identity.id,
+      authentication.providerSession.audience,
+      authConfig,
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    localFailure = error;
+    await client.query('ROLLBACK');
+  } finally {
+    client.release();
+  }
+
+  if (localFailure || !session) {
+    logger.warn('Apple project login local persistence failed', {
+      projectId,
+      existingIdentityId: existingIdentity?.id,
+      errorCode: localFailure instanceof ProjectAuthError ? localFailure.code : 'LOCAL_PERSISTENCE_FAILED',
+    });
+    try {
+      await adapter.revoke({
+        audience: authentication.providerSession.audience,
+        refreshToken: authentication.providerSession.refreshToken,
+      });
+    } catch {
+      // Recovery state below is authoritative; compensation is best effort.
+    }
+    if (existingIdentity) {
+      await markExistingIdentityPendingAfterFailure(existingIdentity);
+    }
+    throw new ProjectAuthError(
+      'PROVIDER_REAUTH_REQUIRED',
+      'Apple authorization was consumed before local session creation completed',
+      409,
+    );
+  }
+
+  logger.info('Apple project login completed', {
+    projectId,
+    projectUserId: session.user.id,
+    audience: authentication.providerSession.audience,
+  });
+  return session;
+}
+
 export async function wechatSilentLogin(
   projectId: string,
   input: { code: string }
@@ -606,6 +993,26 @@ export async function refreshProjectSession(
 ): Promise<ProjectSession> {
   const { schemaName, authConfig } = await getProjectContext(projectId);
   const capabilities = await getSchemaCapabilities(schemaName);
+  const tokenHash = hashToken(refreshToken);
+  const candidates = await query<{ provider: string; identity_id: string | number | null }>(
+    `SELECT provider, identity_id
+     FROM druvia_project_refresh_tokens
+     WHERE project_id = $1 AND token_hash = $2
+       AND revoked = false AND expires_at > NOW()
+     LIMIT 1`,
+    [projectId, tokenHash],
+  );
+  const candidate = candidates[0];
+  if (candidate?.provider === 'apple' && candidate.identity_id) {
+    return refreshAppleProjectSession({
+      projectId,
+      schemaName,
+      capabilities,
+      authConfig,
+      refreshToken,
+      identityId: Number(candidate.identity_id),
+    });
+  }
   const token = await consumeProjectRefreshToken(projectId, refreshToken);
   const user = await getProjectUserById(schemaName, capabilities, token.userId);
 
@@ -614,6 +1021,111 @@ export async function refreshProjectSession(
   }
 
   return issueProjectSession(projectId, toProjectUser(user), token.provider, authConfig);
+}
+
+async function refreshAppleProjectSession(input: {
+  projectId: string;
+  schemaName: string;
+  capabilities: SchemaCapabilities;
+  authConfig: Awaited<ReturnType<typeof authAdminService.getAuthConfig>>;
+  refreshToken: string;
+  identityId: number;
+}): Promise<ProjectSession> {
+  const client = await pool.connect();
+  let committed = false;
+  try {
+    await client.query('BEGIN');
+    await acquireProjectAuthProjectLock(client, input.projectId);
+    await acquireProjectAuthIdentityIdLock(client, input.identityId);
+    const result = await client.query<{
+      token_id: string | number;
+      user_id: string;
+      identity_id: string | number;
+      provider_audience: string;
+      status: string;
+      subject: string;
+      refresh_token_encrypted: string;
+      last_validated_at: Date | null;
+    }>(
+      `SELECT r.id AS token_id, r.user_id, r.identity_id, r.provider_audience,
+              i.status, i.subject, p.refresh_token_encrypted, p.last_validated_at
+       FROM druvia_project_refresh_tokens r
+       JOIN druvia_project_auth_identities i ON i.id = r.identity_id
+       JOIN druvia_project_auth_provider_tokens p
+         ON p.identity_id = i.id AND p.audience = r.provider_audience
+       WHERE r.project_id = $1 AND r.token_hash = $2 AND r.identity_id = $3
+         AND r.provider = 'apple' AND r.revoked = false AND r.expires_at > NOW()
+       FOR UPDATE OF r, i, p`,
+      [input.projectId, hashToken(input.refreshToken), input.identityId],
+    );
+    const refreshState = result.rows[0];
+    if (!refreshState || refreshState.status !== 'active') {
+      throw new ProjectAuthError('INVALID_TOKEN', 'Invalid or expired refresh token', 401);
+    }
+
+    const lastValidatedAt = refreshState.last_validated_at?.getTime() ?? 0;
+    if (Date.now() - lastValidatedAt >= 24 * 60 * 60 * 1000) {
+      const adapter = await getAppleAdapter(input.projectId, { requireEnabled: false });
+      try {
+        await adapter.validateRefreshToken({
+          audience: refreshState.provider_audience,
+          refreshToken: decryptSecret(refreshState.refresh_token_encrypted, {
+            requireDedicatedKey: true,
+          }),
+          expectedSubject: refreshState.subject,
+        });
+      } catch (error) {
+        if (error instanceof AppleAdapterError && error.reason === 'refresh_invalid') {
+          await markProjectAuthIdentityRevoked(client, input.identityId);
+          await deleteProjectAuthProviderTokens(client, input.identityId);
+          await client.query('COMMIT');
+          committed = true;
+          throw new ProjectAuthError(
+            'PROVIDER_CREDENTIAL_INVALID',
+            'Apple authorization is no longer valid',
+            401,
+          );
+        }
+        throw mapAppleAdapterError(error);
+      }
+      await client.query(
+        `UPDATE druvia_project_auth_provider_tokens
+         SET last_validated_at = NOW(), updated_at = NOW()
+         WHERE identity_id = $1 AND audience = $2`,
+        [input.identityId, refreshState.provider_audience],
+      );
+    }
+
+    const user = await getAppleProjectUserById(
+      client,
+      input.schemaName,
+      input.capabilities,
+      refreshState.user_id,
+    );
+    if (!user) throw new ProjectAuthError('USER_NOT_FOUND', 'Project user not found', 404);
+    await client.query(
+      `UPDATE druvia_project_refresh_tokens
+       SET revoked = true
+       WHERE id = $1 AND revoked = false`,
+      [refreshState.token_id],
+    );
+    const session = await issueAppleProjectSession(
+      client,
+      input.projectId,
+      toProjectUser(user),
+      input.identityId,
+      refreshState.provider_audience,
+      input.authConfig,
+    );
+    await client.query('COMMIT');
+    committed = true;
+    return session;
+  } catch (error) {
+    if (!committed) await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function logoutProjectUser(projectId: string, userId: string): Promise<void> {

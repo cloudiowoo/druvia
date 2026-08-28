@@ -26,4 +26,14 @@ describe('migration runner session lock contract', () => {
     expect(source).toContain("column_name = 'owner_project_user_id'")
     expect(source).toMatch(/20:\s*`SELECT EXISTS/)
   })
+
+  it('uses a composite bootstrap check for migration 021', () => {
+    expect(source).toContain("table_name = 'druvia_project_auth_identities'")
+    expect(source).toContain("table_name = 'druvia_project_auth_provider_tokens'")
+    expect(source).toContain("table_name = 'druvia_project_auth_events'")
+    expect(source).toContain("column_name = 'identity_id'")
+    expect(source).toContain("column_name = 'provider_audience'")
+    expect(source).toContain("constraint_name = 'druvia_project_refresh_tokens_apple_identity_check'")
+    expect(source).toMatch(/21:\s*`SELECT EXISTS/)
+  })
 })

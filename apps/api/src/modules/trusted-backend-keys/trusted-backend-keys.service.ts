@@ -7,9 +7,15 @@ const TRUSTED_BACKEND_KEY_PREFIX_LENGTH = 16;
 export const TRUSTED_BACKEND_KEY_SCOPES = [
   'project_session:issue',
   'storage_ticket:issue',
+  'project_auth_lifecycle:manage',
 ] as const;
 
 export type TrustedBackendKeyScope = typeof TRUSTED_BACKEND_KEY_SCOPES[number];
+
+const DEFAULT_TRUSTED_BACKEND_KEY_SCOPES: TrustedBackendKeyScope[] = [
+  'project_session:issue',
+  'storage_ticket:issue',
+];
 
 export interface TrustedBackendKey {
   id: number;
@@ -57,7 +63,7 @@ function hashTrustedBackendKey(key: string): string {
 
 function normalizeScopes(scopes?: TrustedBackendKeyScope[]): TrustedBackendKeyScope[] {
   if (!scopes || scopes.length === 0) {
-    return [...TRUSTED_BACKEND_KEY_SCOPES];
+    return [...DEFAULT_TRUSTED_BACKEND_KEY_SCOPES];
   }
 
   const allowedScopes = new Set<string>(TRUSTED_BACKEND_KEY_SCOPES);

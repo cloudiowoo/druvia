@@ -11,6 +11,7 @@ vi.mock('../../apps/api/src/modules/project-auth/project-auth.service.js', () =>
     }
   },
   providerLogin: vi.fn(),
+  appleLogin: vi.fn(),
   providerSilentLogin: vi.fn(),
   issueTrustedProjectSession: vi.fn(),
   wechatLogin: vi.fn(),
@@ -23,9 +24,17 @@ vi.mock('../../apps/api/src/modules/trusted-backend-keys/trusted-backend-keys.se
   validateTrustedBackendKey: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/modules/project-auth/apple-lifecycle.service.js', () => ({
+  acknowledgeAppleLifecycleEvent: vi.fn(),
+  listPendingAppleLifecycleEvents: vi.fn(),
+  processAppleNotification: vi.fn(),
+  revokeAppleProjectUser: vi.fn(),
+}))
+
 import * as controller from '../../apps/api/src/modules/project-auth/project-auth.controller.js'
 import {
   ProjectAuthError,
+  appleLogin,
   issueTrustedProjectSession,
   logoutProjectUser,
   providerLogin,
@@ -35,6 +44,9 @@ import {
   wechatSilentLogin,
 } from '../../apps/api/src/modules/project-auth/project-auth.service.js'
 import { validateTrustedBackendKey } from '../../apps/api/src/modules/trusted-backend-keys/trusted-backend-keys.service.js'
+import {
+  listPendingAppleLifecycleEvents,
+} from '../../apps/api/src/modules/project-auth/apple-lifecycle.service.js'
 
 type ReplyStub = {
   status: ReturnType<typeof vi.fn>
@@ -65,6 +77,171 @@ function createReply(): ReplyStub {
 describe('Project Auth Controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('allows a project-scoped trusted backend to read Apple lifecycle events', async () => {
+    vi.mocked(validateTrustedBackendKey).mockResolvedValue({
+      valid: true,
+      projectId: 'proj_123',
+      scopes: ['project_auth_lifecycle:manage'],
+      keyPrefix: 'drutb_fixture',
+    })
+    vi.mocked(listPendingAppleLifecycleEvents).mockResolvedValue({
+      items: [{
+        id: 7,
+        type: 'account-deleted',
+        occurredAt: new Date('2026-08-28T00:00:00.000Z'),
+        projectUserId: 'project-user-1',
+      }],
+      nextCursor: null,
+    })
+    const reply = createReply()
+
+    await controller.listAppleLifecycleEvents({
+      params: { projectId: 'proj_123' },
+      headers: { 'x-druvia-trusted-backend-key': 'drutb_secret' },
+    } as never, reply as never)
+
+    expect(validateTrustedBackendKey).toHaveBeenCalledWith('drutb_secret', {
+      requiredScope: 'project_auth_lifecycle:manage',
+      requiredProjectId: 'proj_123',
+    })
+    expect(listPendingAppleLifecycleEvents).toHaveBeenCalledWith('proj_123', {
+      limit: 100,
+      cursor: undefined,
+    })
+    expect(reply.payload).toEqual({
+      success: true,
+      data: { items: expect.any(Array), nextCursor: null },
+    })
+  })
+
+  it('rejects a trusted backend lifecycle key from another project', async () => {
+    vi.mocked(validateTrustedBackendKey).mockResolvedValue({
+      valid: false,
+      reason: 'project_mismatch',
+      projectId: 'proj_other',
+      scopes: ['project_auth_lifecycle:manage'],
+      keyPrefix: 'drutb_fixture',
+    })
+    const reply = createReply()
+
+    await controller.listAppleLifecycleEvents({
+      params: { projectId: 'proj_123' },
+      headers: { 'x-druvia-trusted-backend-key': 'drutb_secret' },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(403)
+    expect(listPendingAppleLifecycleEvents).not.toHaveBeenCalled()
+  })
+
+  it('does not let a Project Session manage Apple lifecycle events', async () => {
+    const reply = createReply()
+
+    await controller.listAppleLifecycleEvents({
+      params: { projectId: 'proj_123' },
+      headers: {},
+      user: {
+        kind: 'project_user',
+        sub: 'project-user-1',
+        projectId: 'proj_123',
+        authType: 'project_user',
+        role: 'authenticated',
+        provider: 'apple',
+      },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(401)
+    expect(listPendingAppleLifecycleEvents).not.toHaveBeenCalled()
+  })
+
+  it('validates Apple native credential fields before invoking the service', async () => {
+    const invalidBodies = [
+      {},
+      { authorizationCode: 'code', identityToken: 'token', rawNonce: 'short' },
+      { authorizationCode: ' '.repeat(2), identityToken: 'token', rawNonce: 'a'.repeat(43) },
+      { authorizationCode: 'code', identityToken: 'x'.repeat(16_385), rawNonce: 'a'.repeat(43) },
+      { authorizationCode: 'code', identityToken: 'token', rawNonce: `${'a'.repeat(42)}!` },
+    ]
+
+    for (const body of invalidBodies) {
+      const reply = createReply()
+      await controller.appleLogin(
+        { params: { projectId: 'proj_123' }, body } as never,
+        reply as never,
+      )
+      expect(reply.statusCode).toBe(400)
+    }
+    expect(appleLogin).not.toHaveBeenCalled()
+  })
+
+  it('sanitizes the optional Apple first-login profile', async () => {
+    vi.mocked(appleLogin).mockResolvedValue({
+      token: 'access_token',
+      refreshToken: 'refresh_token',
+      expiresIn: 3600,
+      expiresAt: '2026-08-28T08:00:00.000Z',
+      user: {
+        id: 'project-user',
+        email: null,
+        username: 'Ada Lovelace',
+        avatarUrl: null,
+        role: 'authenticated',
+      },
+    })
+    const reply = createReply()
+
+    await controller.appleLogin({
+      params: { projectId: 'proj_123' },
+      body: {
+        authorizationCode: 'authorization-code',
+        identityToken: 'identity-token',
+        rawNonce: 'a'.repeat(43),
+        profile: { givenName: '  Ada\u0000 ', familyName: ' Lovelace  ' },
+      },
+    } as never, reply as never)
+
+    expect(appleLogin).toHaveBeenCalledWith('proj_123', {
+      authorizationCode: 'authorization-code',
+      identityToken: 'identity-token',
+      rawNonce: 'a'.repeat(43),
+      profile: { givenName: 'Ada', familyName: 'Lovelace' },
+    })
+    expect(reply.payload).toEqual(expect.objectContaining({ success: true }))
+  })
+
+  it('rejects Apple silent login as an unsupported provider flow', async () => {
+    const reply = createReply()
+
+    await controller.providerSilentLogin({
+      params: { projectId: 'proj_123', provider: 'apple' },
+      body: { code: 'unused' },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(400)
+    expect(reply.payload).toEqual({
+      success: false,
+      error: { code: 'PROVIDER_FLOW_UNSUPPORTED', message: 'Apple silent login is not supported' },
+    })
+    expect(providerSilentLogin).not.toHaveBeenCalled()
+  })
+
+  it('rejects Apple revoke from a Project Session bound to another project', async () => {
+    const reply = createReply()
+
+    await controller.appleRevoke({
+      params: { projectId: 'proj_123' },
+      user: {
+        kind: 'project_user',
+        sub: 'user-1',
+        projectId: 'proj_other',
+        authType: 'project_user',
+        role: 'authenticated',
+        provider: 'apple',
+      },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(403)
   })
 
   it('validates code for wechat login', async () => {

@@ -8,6 +8,7 @@ import {
   DataAccessMutationLockedError,
   isDataAccessMigrationDeleteGuardError,
 } from '../data-access/data-access-mutation-lock.js';
+import { ProjectAuthLifecycleError } from '../project-auth/project-identity.repository.js';
 
 interface ProjectParams {
   projectId: string;
@@ -165,6 +166,12 @@ export async function deleteProject(
     }
     return reply.status(204).send();
   } catch (error) {
+    if (error instanceof ProjectAuthLifecycleError) {
+      return reply.status(409).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
     if (error instanceof DataAccessMutationLockedError || isDataAccessMigrationDeleteGuardError(error)) {
       return reply.status(409).send({
         success: false,

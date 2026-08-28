@@ -35,7 +35,12 @@ vi.mock('../../apps/api/src/lib/logger.js', () => ({
 }))
 
 vi.mock('../../apps/api/src/modules/data-access/data-access-mutation-lock.js', () => ({
-  withProjectDataAccessMutationLock: vi.fn(async (_projectId, callback) => callback()),
+  withProjectDataAccessMutationLock: vi.fn(async (_projectId, callback) => callback({ query: vi.fn() })),
+}))
+
+vi.mock('../../apps/api/src/modules/project-auth/project-identity.repository.js', () => ({
+  assertProjectAuthProjectDeletionAllowed: vi.fn(),
+  withProjectAuthProjectLock: vi.fn(async (_client, _projectId, callback) => callback()),
 }))
 
 import { query, queryOne } from '../../apps/api/src/db/index.js'
@@ -44,6 +49,7 @@ import * as environmentService from '../../apps/api/src/modules/environment/envi
 import * as dbCredentialsService from '../../apps/api/src/modules/project/db-credentials.service.js'
 import { getDefaultStorageAdapter } from '../../apps/api/src/adapters/storage/index.js'
 import * as mutationLock from '../../apps/api/src/modules/data-access/data-access-mutation-lock.js'
+import * as projectIdentityRepository from '../../apps/api/src/modules/project-auth/project-identity.repository.js'
 import {
   createProject,
   deleteProject,
@@ -57,6 +63,12 @@ const mockDropSchema = vi.mocked(schemaService.dropSchema)
 const mockListEnvironments = vi.mocked(environmentService.listEnvironments)
 const mockDropProjectDbUser = vi.mocked(dbCredentialsService.dropProjectDbUser)
 const mockGetDefaultStorageAdapter = vi.mocked(getDefaultStorageAdapter)
+const mockAssertProjectAuthProjectDeletionAllowed = vi.mocked(
+  projectIdentityRepository.assertProjectAuthProjectDeletionAllowed
+)
+const mockWithProjectAuthProjectLock = vi.mocked(
+  projectIdentityRepository.withProjectAuthProjectLock
+)
 
 function projectRow(dataAccessMode?: string) {
   return {
@@ -191,6 +203,25 @@ describe('Project Service', () => {
       expect.stringContaining('DELETE FROM druvia_projects'),
       expect.anything()
     )
+  })
+
+  it('runs the Apple decommission gate before any project deletion side effect', async () => {
+    const storage = mockGetDefaultStorageAdapter.mock.results[0]?.value ?? mockGetDefaultStorageAdapter()
+    mockQueryOne.mockResolvedValue(projectRow('explicit'))
+    mockAssertProjectAuthProjectDeletionAllowed.mockRejectedValueOnce(
+      new Error('PROVIDER_DECOMMISSION_REQUIRED')
+    )
+
+    await expect(deleteProject('proj_123')).rejects.toThrow('PROVIDER_DECOMMISSION_REQUIRED')
+
+    expect(mockAssertProjectAuthProjectDeletionAllowed).toHaveBeenCalledWith('proj_123')
+    expect(mockWithProjectAuthProjectLock).toHaveBeenCalledWith(
+      expect.anything(), 'proj_123', expect.any(Function)
+    )
+    expect(mockDropProjectDbUser).not.toHaveBeenCalled()
+    expect(mockListEnvironments).not.toHaveBeenCalled()
+    expect(mockDropSchema).not.toHaveBeenCalled()
+    expect(storage.list).not.toHaveBeenCalled()
   })
 
   it('checks the exclusive migration lock before loading destructive cleanup state', async () => {

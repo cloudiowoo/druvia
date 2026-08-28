@@ -3,6 +3,9 @@ import type { JwtPayload } from '../../middleware/auth.js';
 import * as authService from './auth-admin.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import { queryOne } from '../../db/index.js';
+import { ProjectAuthLifecycleError } from '../project-auth/project-identity.repository.js';
+import { SecretEncryptionConfigError } from '../../lib/secret-encryption.js';
+import { AppleProviderConfigError } from './apple-provider-config.js';
 
 // ============================================
 // Parameter/Query Types
@@ -108,11 +111,19 @@ export async function listProviders(
   // 合并支持的提供商和已配置的提供商
   const result = supportedProviders.map(sp => {
     const configured = providers.find(p => p.provider === sp.id);
+    const appleConfigComplete = sp.id !== 'apple' || Boolean(
+      configured?.clientId
+      && configured.hasCredentials
+      && configured.config.teamId
+      && configured.config.keyId
+      && Array.isArray(configured.config.allowedAudiences)
+      && configured.config.allowedAudiences.includes(configured.clientId)
+    );
     return {
       ...sp,
       enabled: configured?.enabled ?? false,
       configured: !!configured,
-      hasCredentials: !!configured?.clientId,
+      hasCredentials: Boolean(configured?.clientId && configured.hasCredentials && appleConfigComplete),
     };
   });
 
@@ -162,6 +173,18 @@ export async function createProvider(
     );
     return reply.status(201).send({ success: true, data: provider });
   } catch (error) {
+    if (error instanceof AppleProviderConfigError) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    if (error instanceof SecretEncryptionConfigError) {
+      return reply.status(503).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
     const err = error as Error;
     if (err.message.includes('duplicate key') || err.message.includes('unique constraint')) {
       return reply.status(409).send({
@@ -179,11 +202,28 @@ export async function updateProvider(
 ) {
   if (!(await verifyProjectAccess(request, reply))) return;
 
-  const provider = await authService.updateProvider(
-    request.params.projectId,
-    request.params.provider,
-    request.body
-  );
+  let provider;
+  try {
+    provider = await authService.updateProvider(
+      request.params.projectId,
+      request.params.provider,
+      request.body
+    );
+  } catch (error) {
+    if (error instanceof AppleProviderConfigError) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    if (error instanceof SecretEncryptionConfigError) {
+      return reply.status(503).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    throw error;
+  }
 
   if (!provider) {
     return reply.status(404).send({
@@ -201,10 +241,21 @@ export async function deleteProvider(
 ) {
   if (!(await verifyProjectAccess(request, reply))) return;
 
-  const deleted = await authService.deleteProvider(
-    request.params.projectId,
-    request.params.provider
-  );
+  let deleted: boolean;
+  try {
+    deleted = await authService.deleteProvider(
+      request.params.projectId,
+      request.params.provider
+    );
+  } catch (error) {
+    if (error instanceof ProjectAuthLifecycleError) {
+      return reply.status(409).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    throw error;
+  }
 
   if (!deleted) {
     return reply.status(404).send({
@@ -382,7 +433,22 @@ export async function deleteUser(
     });
   }
 
-  const deleted = await authService.deleteProjectUser(schemaName, request.params.userId);
+  let deleted: boolean;
+  try {
+    deleted = await authService.deleteProjectUser(
+      request.params.projectId,
+      schemaName,
+      request.params.userId,
+    );
+  } catch (error) {
+    if (error instanceof ProjectAuthLifecycleError) {
+      return reply.status(409).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    throw error;
+  }
 
   if (!deleted) {
     return reply.status(404).send({

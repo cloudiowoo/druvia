@@ -437,7 +437,7 @@ describe('AuthAdminService Integration', () => {
       `);
       const userId = insertResult.rows[0].id;
 
-      const deleted = await authService.deleteProjectUser(testSchemaName, userId);
+      const deleted = await authService.deleteProjectUser(testProjectId, testSchemaName, userId);
 
       expect(deleted).toBe(true);
       const user = await authService.getProjectUser(testSchemaName, userId);
@@ -445,7 +445,11 @@ describe('AuthAdminService Integration', () => {
     });
 
     it('should return false when deleting non-existent user', async () => {
-      const deleted = await authService.deleteProjectUser(testSchemaName, '00000000-0000-0000-0000-000000000000');
+      const deleted = await authService.deleteProjectUser(
+        testProjectId,
+        testSchemaName,
+        '00000000-0000-0000-0000-000000000000',
+      );
       expect(deleted).toBe(false);
     });
 

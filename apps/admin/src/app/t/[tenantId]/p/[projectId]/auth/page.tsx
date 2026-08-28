@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { AppleProviderConfigForm } from '@/components/auth/AppleProviderConfigForm';
 import {
   Table,
   TableBody,
@@ -53,6 +54,8 @@ import {
   Ban,
   CheckCircle2,
   Search,
+  Apple,
+  RefreshCw,
 } from 'lucide-react';
 
 // Provider icons
@@ -107,6 +110,24 @@ interface AuthConfig {
   allowSignup: boolean;
 }
 
+interface AppleIdentity {
+  id: number;
+  projectUserId: string;
+  provider: string;
+  audience: string | null;
+  status: 'active' | 'revoke_pending' | 'revoked' | 'deletion_pending';
+  subjectSummary: string;
+  updatedAt: string;
+  lastAuthenticatedAt: string;
+}
+
+interface AppleLifecycleEvent {
+  id: number;
+  type: string;
+  occurredAt: string;
+  projectUserId: string | null;
+}
+
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '-';
   return new Date(dateStr).toLocaleString('zh-CN');
@@ -127,10 +148,19 @@ export default function AuthPage() {
   const [providerConfig, setProviderConfig] = useState({
     clientId: '',
     clientSecret: '',
+    teamId: '',
+    keyId: '',
+    allowedAudiences: '',
     enabled: true,
   });
   const [savingProvider, setSavingProvider] = useState(false);
   const [providerConfigLoading, setProviderConfigLoading] = useState(false);
+  const [appleIdentities, setAppleIdentities] = useState<AppleIdentity[]>([]);
+  const [appleLifecycleEvents, setAppleLifecycleEvents] = useState<AppleLifecycleEvent[]>([]);
+  const [appleStateLoading, setAppleStateLoading] = useState(true);
+  const [retryingIdentityId, setRetryingIdentityId] = useState<number | null>(null);
+  const [acknowledgeTarget, setAcknowledgeTarget] = useState<AppleLifecycleEvent | null>(null);
+  const [acknowledgingEvent, setAcknowledgingEvent] = useState(false);
 
   // Users state
   const [users, setUsers] = useState<ProjectUser[]>([]);
@@ -180,10 +210,26 @@ export default function AuthPage() {
     setConfigLoading(false);
   }, [projectId]);
 
+  const fetchAppleState = useCallback(async () => {
+    setAppleStateLoading(true);
+    const [identitiesResult, eventsResult] = await Promise.all([
+      api.listAppleAuthIdentities(projectId),
+      api.listAppleLifecycleEvents(projectId),
+    ]);
+    if (identitiesResult.success && identitiesResult.data) {
+      setAppleIdentities(identitiesResult.data);
+    }
+    if (eventsResult.success && eventsResult.data) {
+      setAppleLifecycleEvents(eventsResult.data.items);
+    }
+    setAppleStateLoading(false);
+  }, [projectId]);
+
   useEffect(() => {
     fetchProviders();
     fetchConfig();
-  }, [fetchProviders, fetchConfig]);
+    fetchAppleState();
+  }, [fetchProviders, fetchConfig, fetchAppleState]);
 
   useEffect(() => {
     fetchUsers();
@@ -194,6 +240,9 @@ export default function AuthPage() {
     setProviderConfig({
       clientId: '',
       clientSecret: '',
+      teamId: '',
+      keyId: '',
+      allowedAudiences: '',
       enabled: provider.enabled,
     });
     setSelectedProviderDetail(null);
@@ -222,6 +271,11 @@ export default function AuthPage() {
         setProviderConfig({
           clientId: res.data.clientId || '',
           clientSecret: '',
+          teamId: typeof res.data.config.teamId === 'string' ? res.data.config.teamId : '',
+          keyId: typeof res.data.config.keyId === 'string' ? res.data.config.keyId : '',
+          allowedAudiences: Array.isArray(res.data.config.allowedAudiences)
+            ? res.data.config.allowedAudiences.filter((value): value is string => typeof value === 'string').join(', ')
+            : '',
           enabled: res.data.enabled,
         });
         return;
@@ -282,6 +336,16 @@ export default function AuthPage() {
         ...(selectedProviderDetail?.config || {}),
         type: 'miniprogram',
       };
+    } else if (selectedProvider.id === 'apple') {
+      data.config = {
+        teamId: providerConfig.teamId.trim(),
+        keyId: providerConfig.keyId.trim(),
+        allowedAudiences: providerConfig.allowedAudiences
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean),
+        flow: 'native',
+      };
     }
 
     let res;
@@ -328,6 +392,32 @@ export default function AuthPage() {
     setDeleteUserTarget(null);
   };
 
+  const handleRetryAppleRevoke = async (identityId: number) => {
+    setRetryingIdentityId(identityId);
+    const res = await api.retryAppleAuthRevoke(projectId, identityId);
+    setRetryingIdentityId(null);
+    if (res.success) {
+      await fetchAppleState();
+      toast({ title: 'Apple 授权已撤销' });
+    } else {
+      toast({ title: '撤销重试失败', description: res.error?.message, variant: 'destructive' });
+    }
+  };
+
+  const handleAcknowledgeAppleLifecycle = async () => {
+    if (!acknowledgeTarget) return;
+    setAcknowledgingEvent(true);
+    const res = await api.acknowledgeAppleLifecycleEvent(projectId, acknowledgeTarget.id);
+    setAcknowledgingEvent(false);
+    if (res.success) {
+      setAcknowledgeTarget(null);
+      await Promise.all([fetchAppleState(), fetchUsers()]);
+      toast({ title: '账号删除事件已处理' });
+    } else {
+      toast({ title: '事件处理失败', description: res.error?.message, variant: 'destructive' });
+    }
+  };
+
   // Config handlers
   const handleSaveConfig = async () => {
     setSavingConfig(true);
@@ -350,6 +440,7 @@ export default function AuthPage() {
   );
 
   const isWechatProvider = selectedProvider?.id === 'wechat';
+  const isAppleProvider = selectedProvider?.id === 'apple';
   const providerIdLabel = isWechatProvider ? '微信 AppID' : 'Client ID';
   const providerIdPlaceholder = isWechatProvider ? '输入微信小程序 AppID' : '输入 Client ID';
   const providerSecretLabel = isWechatProvider ? '微信 AppSecret' : 'Client Secret';
@@ -426,7 +517,13 @@ export default function AuthPage() {
                   </p>
                 </div>
               )}
-              <div className="space-y-2">
+              {isAppleProvider ? (
+                <AppleProviderConfigForm
+                  value={providerConfig}
+                  configured={Boolean(selectedProvider?.configured)}
+                  onChange={(value) => setProviderConfig({ ...providerConfig, ...value })}
+                />
+              ) : <><div className="space-y-2">
                 <Label htmlFor="client-id">{providerIdLabel}</Label>
                 <Input
                   id="client-id"
@@ -450,6 +547,7 @@ export default function AuthPage() {
                   </p>
                 )}
               </div>
+              </>}
               {isWechatProvider && (
                 <div className="space-y-2">
                   <Label>接入类型</Label>
@@ -461,9 +559,9 @@ export default function AuthPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <Label htmlFor="provider-enabled">启用此提供商</Label>
-                  {isWechatProvider && (
+                  {(isWechatProvider || isAppleProvider) && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      启用后，客户端可通过 `/api/v1/projects/:projectId/auth/wechat/login` 发起登录。
+                      启用后，客户端可使用项目认证入口发起登录。
                     </p>
                   )}
                 </div>
@@ -507,6 +605,27 @@ export default function AuthPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={!!acknowledgeTarget} onOpenChange={(open) => !open && setAcknowledgeTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认完成账号删除</AlertDialogTitle>
+            <AlertDialogDescription>
+              该操作会删除关联的项目用户、会话和 Apple identity，且无法恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={acknowledgingEvent}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleAcknowledgeAppleLifecycle}
+              disabled={acknowledgingEvent}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {acknowledgingEvent ? '处理中...' : '确认删除'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Tabs defaultValue="providers" className="space-y-4">
         <TabsList>
           <TabsTrigger value="providers" className="flex items-center gap-2">
@@ -544,7 +663,7 @@ export default function AuthPage() {
                     className="p-4 flex items-center justify-between hover:bg-muted/50"
                   >
                     <div className="flex items-center gap-3">
-                      <span className="text-2xl">{providerIcons[provider.id] || '🔐'}</span>
+                      <span className="text-2xl">{provider.id === 'apple' ? <Apple className="h-6 w-6" /> : providerIcons[provider.id] || '🔐'}</span>
                       <div>
                         <div className="font-medium">{provider.name}</div>
                         <div className="text-sm text-muted-foreground">
@@ -578,6 +697,72 @@ export default function AuthPage() {
                         disabled={provider.type === 'oauth' && !provider.configured}
                       />
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="border rounded-lg mt-4">
+            <div className="p-4 border-b bg-muted/50 flex items-center justify-between">
+              <div>
+                <h3 className="font-medium">Apple 身份状态</h3>
+                <p className="text-sm text-muted-foreground">处理撤销重试和待确认的账号删除事件</p>
+              </div>
+              <Button variant="outline" size="icon" onClick={fetchAppleState} disabled={appleStateLoading} title="刷新身份状态">
+                <RefreshCw className={`h-4 w-4 ${appleStateLoading ? 'animate-spin' : ''}`} />
+              </Button>
+            </div>
+            {appleStateLoading ? (
+              <div className="p-4 space-y-2">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : appleIdentities.length === 0 && appleLifecycleEvents.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">暂无 Apple 身份或待处理事件</div>
+            ) : (
+              <div className="divide-y">
+                {appleIdentities.map((identity) => (
+                  <div key={identity.id} className="p-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium break-all">{identity.projectUserId}</div>
+                      <div className="text-xs text-muted-foreground break-all">
+                        {identity.subjectSummary} · {identity.audience || '未记录 audience'} · {formatDate(identity.updatedAt)}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-muted-foreground">{
+                        identity.status === 'active' ? '有效'
+                          : identity.status === 'revoke_pending' ? '等待撤销'
+                            : identity.status === 'deletion_pending' ? '等待删除确认'
+                              : '已撤销'
+                      }</span>
+                      {identity.status === 'revoke_pending' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRetryAppleRevoke(identity.id)}
+                          disabled={retryingIdentityId === identity.id}
+                        >
+                          <RefreshCw className={`h-4 w-4 mr-2 ${retryingIdentityId === identity.id ? 'animate-spin' : ''}`} />
+                          重试撤销
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {appleLifecycleEvents.map((event) => (
+                  <div key={`event-${event.id}`} className="p-4 flex flex-wrap items-center justify-between gap-3 bg-amber-50/50">
+                    <div>
+                      <div className="font-medium">待处理账号删除</div>
+                      <div className="text-xs text-muted-foreground">
+                        {event.projectUserId || '未知项目用户'} · {formatDate(event.occurredAt)}
+                      </div>
+                    </div>
+                    <Button variant="destructive" size="sm" onClick={() => setAcknowledgeTarget(event)}>
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      确认已清理业务数据
+                    </Button>
                   </div>
                 ))}
               </div>

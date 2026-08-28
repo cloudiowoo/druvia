@@ -30,7 +30,7 @@ on:
       migration_to:
         description: Target migration ceiling
         required: true
-        default: '20'
+        default: '21'
       migration_requires_backup:
         description: Whether updater must take a database backup before apply
         required: true
@@ -186,6 +186,24 @@ jobs:
           tests/unit/admin/storage-bucket-access.test.ts
           tests/unit/release-pipeline.test.ts
 
+      - name: Verify Apple Project Auth provider
+        run: >-
+          pnpm vitest run
+          tests/unit/apple-auth-adapter.test.ts
+          tests/unit/apple-auth-lifecycle.test.ts
+          tests/unit/apple-auth-notification.test.ts
+          tests/unit/apple-auth-provider-config.test.ts
+          tests/unit/apple-project-auth-schema.test.ts
+          tests/unit/apple-project-auth.service.test.ts
+          tests/unit/project-auth-identity.test.ts
+          tests/unit/ratelimit-apple-auth.test.ts
+          tests/unit/secret-encryption.test.ts
+          tests/unit/project-auth.controller.test.ts
+          tests/unit/project-auth.service.test.ts
+          tests/unit/project-service.test.ts
+          tests/unit/admin/apple-auth-provider.test.tsx
+          tests/sdk/project-auth.test.ts
+
       - name: Verify Deno Worker types
         run: >-
           docker run --rm
@@ -322,7 +340,7 @@ jobs:
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
           DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'true' }}
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '20' }}
+          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '21' }}
           DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'true' }}
           DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
         run: node scripts/release/generate-manifest.mjs
@@ -344,7 +362,7 @@ jobs:
           DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
           DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'true' }}
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '20' }}
+          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '21' }}
           DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'true' }}
           DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
         run: node scripts/release/generate-manifest.mjs

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../apps/api/src/db/index.js', () => ({
   query: vi.fn(),
   queryOne: vi.fn(),
+  pool: { connect: vi.fn() },
 }))
 
 vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
@@ -17,6 +18,8 @@ vi.mock('../../apps/api/src/modules/auth-admin/auth-admin.service.js', () => ({
 
 vi.mock('../../apps/api/src/adapters/auth/index.js', () => ({
   createAuthAdapter: vi.fn(),
+  createAppleAuthAdapter: vi.fn(),
+  AppleAdapterError: class AppleAdapterError extends Error {},
 }))
 
 import { query, queryOne } from '../../apps/api/src/db/index.js'

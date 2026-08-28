@@ -46,6 +46,18 @@ export class DruviaProjectAuth {
     return this.silentLoginWithProvider('wechat', params)
   }
 
+  async appleLogin(params: {
+    authorizationCode: string
+    identityToken: string
+    rawNonce: string
+    profile?: {
+      givenName?: string
+      familyName?: string
+    }
+  }): Promise<DruviaResponse<ProjectSession>> {
+    return this.authRequest(`/projects/${this.projectId}/auth/apple/login`, params)
+  }
+
   async signInWithProvider(
     provider: string,
     params: {

@@ -184,6 +184,18 @@
   - Admin Tables 页面内的 `add/drop/rename column` 自动触发 `reload metadata`
   - 外部 SQL / migration 导致的 schema 漂移，由用户显式触发 `刷新数据结构`（内部执行 reload metadata）
 
+## Apple Project Auth identity 与生命周期
+
+- Sign in with Apple 作为一等 Project Auth provider 接入，不复用平台 OAuth，也不改变 WeChat/OIDC adapter 契约。
+- 权威映射位于平台表 `(project_id, provider, issuer, subject) -> project_user_id`；Apple subject 和 provider refresh token 不进入项目业务 Schema 或 Hasura actor claims。
+- Apple `.p8` 与 provider refresh token 使用独立 `SECRETS_ENCRYPTION_KEY` 加密。provider 禁用只阻止新登录，已有 session 的每日上游校验、撤销和 decommission 继续保留。
+- Druvia refresh token 绑定 identity 与 audience；Apple 上游校验在消费 Druvia token 前执行，暂时失败不消费 token，`invalid_grant` 则撤销 identity 和全部关联会话。
+- revoke 使用 `revoke_pending -> Apple revoke -> revoked` 两阶段状态；Apple notification 只信任固定 issuer/JWKS、allowlisted audience 和幂等 `jti`。`account-deleted` 先冻结会话并保留待处理事件，应用领域数据清理完成后才由管理员确认删除 Project User。
+- Apple 登录及 lifecycle mutation 与用户/provider/项目删除共享项目级 advisory lock，并固定 project lock 先于 identity/user lock。未完成 revoke 或 lifecycle action 时禁止破坏性删除。
+- lifecycle event list/ack 可由平台管理员或同项目 trusted backend key 调用；服务端 key 必须显式持有 `project_auth_lifecycle:manage`，该删除能力不属于默认 trusted key scopes。
+- migration `021_project_auth_identities` 是运行前置条件；GHCR 与自建 Registry 的 stable manifest 必须使用相同镜像 digest 对应构建，并将 migration ceiling 设置为至少 `21`。
+- 当前仅完成本地 mock Apple 协议和 Druvia 侧开发门禁；真实 Apple Developer 配置、真机登录、公网 notification 和 PITCHETCH actor 验收属于独立非生产验收，不据此宣称生产就绪。
+
 ## 项目删除策略
 
 - 项目删除是“全量清理”操作，不是单纯删除 `druvia_projects` 行。

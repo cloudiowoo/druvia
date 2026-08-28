@@ -61,6 +61,17 @@ describe('TrustedBackendKeysService Integration', () => {
     await pool.query('DELETE FROM druvia_api_keys WHERE project_id = $1', [testProjectId]);
   });
 
+  it('does not grant lifecycle management by default', async () => {
+    const result = await trustedBackendKeysService.createTrustedBackendKey(testProjectId, {
+      name: 'Default scopes',
+    });
+
+    expect(result.trustedBackendKey.scopes).toEqual([
+      'project_session:issue',
+      'storage_ticket:issue',
+    ]);
+  });
+
   it('creates a trusted backend key with a dedicated prefix and metadata', async () => {
     const result = await trustedBackendKeysService.createTrustedBackendKey(testProjectId, {
       name: 'H5 Backend',

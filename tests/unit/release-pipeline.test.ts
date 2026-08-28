@@ -169,15 +169,15 @@ describe('release workflow', () => {
     expect(workflow).toContain('docker/docker-compose.release.yml');
   });
 
-  it('marks migration 020 as the safe default for tag and manual releases', () => {
+  it('marks migration 021 as the safe default for tag and manual releases', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
     expect(workflow).toContain("migration_required:\n        description: Whether this release requires database migrations\n        required: true\n        default: 'true'");
     expect(workflow).toContain("migration_from:\n        description: Current migration floor\n        required: true\n        default: '18'");
-    expect(workflow).toContain("migration_to:\n        description: Target migration ceiling\n        required: true\n        default: '20'");
+    expect(workflow).toContain("migration_to:\n        description: Target migration ceiling\n        required: true\n        default: '21'");
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: \$\{\{ inputs\.migration_required \|\| 'true' \}\}/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_FROM: \$\{\{ inputs\.migration_from \|\| '18' \}\}/g)).toHaveLength(2);
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: \$\{\{ inputs\.migration_to \|\| '20' \}\}/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: \$\{\{ inputs\.migration_to \|\| '21' \}\}/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRES_BACKUP: \$\{\{ inputs\.migration_requires_backup \|\| 'true' \}\}/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REVERSIBLE: \$\{\{ inputs\.migration_reversible \|\| 'false' \}\}/g)).toHaveLength(2);
   });

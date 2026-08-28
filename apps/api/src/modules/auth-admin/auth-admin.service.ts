@@ -1,6 +1,17 @@
 import { query, queryOne, pool } from '../../db/index.js';
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
-import { config } from '../../config/index.js';
+import { decryptSecret, encryptSecret } from '../../lib/secret-encryption.js';
+import {
+  acquireProjectAuthProjectLock,
+  assertProjectAuthUserDeletionAllowed,
+  assertAppleProviderDeletionAllowed,
+  cleanupTerminalProjectAuthUserState,
+  withProjectAuthProjectLock,
+} from '../project-auth/project-identity.repository.js';
+import {
+  AppleProviderConfigError,
+  validateAppleProjectAuthSchema,
+  validateAppleProviderConfiguration,
+} from './apple-provider-config.js';
 
 // ============================================
 // Types
@@ -40,6 +51,7 @@ export interface AuthProvider {
   clientId: string | null;
   // clientSecret 不返回给前端
   config: Record<string, unknown>;
+  hasCredentials: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -107,6 +119,7 @@ function toProvider(row: ProviderRow): AuthProvider {
     enabled: row.enabled,
     clientId: row.client_id,
     config: row.config || {},
+    hasCredentials: Boolean(row.client_secret_encrypted),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -121,38 +134,6 @@ function toAuthConfig(row: AuthConfigRow): AuthConfig {
     requireEmailVerification: row.require_email_verification,
     allowSignup: row.allow_signup,
   };
-}
-
-// 获取加密密钥（32 bytes for AES-256）
-function getEncryptionKey(): Buffer {
-  const key = process.env.SECRETS_ENCRYPTION_KEY || config.jwt.secret;
-  if (!key) {
-    throw new Error('SECRETS_ENCRYPTION_KEY or JWT_SECRET must be set');
-  }
-  // 使用 SHA-256 确保密钥长度正确
-  return createHash('sha256').update(key).digest();
-}
-
-// AES-256-GCM 加密
-function encrypt(text: string): string {
-  const key = getEncryptionKey();
-  const iv = randomBytes(16);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const authTag = cipher.getAuthTag();
-  return iv.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted;
-}
-
-// AES-256-GCM 解密
-function decrypt(encrypted: string): string {
-  const key = getEncryptionKey();
-  const [ivHex, authTagHex, encryptedText] = encrypted.split(':');
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
-  decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
-  let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
 }
 
 // ============================================
@@ -175,8 +156,56 @@ export async function getProvider(projectId: string, provider: string): Promise<
   return row ? toProvider(row) : null;
 }
 
-export async function createProvider(projectId: string, input: CreateProviderInput): Promise<AuthProvider> {
-  const clientSecretEncrypted = input.clientSecret ? encrypt(input.clientSecret) : null;
+async function assertAppleProjectSchemaCompatible(projectId: string): Promise<void> {
+  const project = await queryOne<{ schema_name: string | null }>(
+    'SELECT schema_name FROM druvia_projects WHERE project_id = $1',
+    [projectId],
+  );
+  if (!project?.schema_name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(project.schema_name)) {
+    throw new AppleProviderConfigError(
+      'APPLE_PROJECT_SCHEMA_INCOMPATIBLE',
+      'Project schema is required before enabling Apple Auth',
+    );
+  }
+  const columns = await query<{ column_name: string; is_nullable: string }>(
+    `SELECT column_name, is_nullable
+     FROM information_schema.columns
+     WHERE table_schema = $1 AND table_name = 'users'`,
+    [project.schema_name],
+  );
+  validateAppleProjectAuthSchema(columns);
+}
+
+async function withAppleProviderMutationLock<T>(
+  projectId: string,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    return await withProjectAuthProjectLock(client, projectId, callback);
+  } finally {
+    client.release();
+  }
+}
+
+async function createProviderUnlocked(
+  projectId: string,
+  input: CreateProviderInput,
+): Promise<AuthProvider> {
+  let providerConfig = input.config || {};
+  if (input.provider === 'apple') {
+    providerConfig = await validateAppleProviderConfiguration({
+      clientId: input.clientId ?? '',
+      privateKeyPem: input.clientSecret ?? '',
+      config: providerConfig,
+    });
+    if (input.enabled ?? true) {
+      await assertAppleProjectSchemaCompatible(projectId);
+    }
+  }
+  const clientSecretEncrypted = input.clientSecret
+    ? encryptSecret(input.clientSecret, { requireDedicatedKey: input.provider === 'apple' })
+    : null;
 
   const row = await queryOne<ProviderRow>(
     `INSERT INTO druvia_project_auth_providers (project_id, provider, enabled, client_id, client_secret_encrypted, config)
@@ -188,7 +217,7 @@ export async function createProvider(projectId: string, input: CreateProviderInp
       input.enabled ?? true,
       input.clientId || null,
       clientSecretEncrypted,
-      input.config || {},
+      providerConfig,
     ]
   );
 
@@ -199,30 +228,68 @@ export async function createProvider(projectId: string, input: CreateProviderInp
   return toProvider(row);
 }
 
-export async function updateProvider(
+export async function createProvider(
+  projectId: string,
+  input: CreateProviderInput,
+): Promise<AuthProvider> {
+  if (input.provider === 'apple') {
+    return withAppleProviderMutationLock(
+      projectId,
+      () => createProviderUnlocked(projectId, input),
+    );
+  }
+  return createProviderUnlocked(projectId, input);
+}
+
+async function updateProviderUnlocked(
   projectId: string,
   provider: string,
   input: UpdateProviderInput
 ): Promise<AuthProvider | null> {
+  let normalizedInput = input;
+  if (provider === 'apple') {
+    if (input.clientSecret === '') {
+      throw new AppleProviderConfigError(
+        'APPLE_PRIVATE_KEY_INVALID',
+        'Apple private key cannot be cleared; decommission and remove the provider instead',
+      );
+    }
+    const existing = await getProvider(projectId, provider);
+    if (!existing) return null;
+    const privateKeyPem = input.clientSecret
+      || await getProviderSecret(projectId, provider, { requireDedicatedKey: true })
+      || '';
+    const config = await validateAppleProviderConfiguration({
+      clientId: input.clientId ?? existing.clientId ?? '',
+      privateKeyPem,
+      config: input.config ?? existing.config,
+    });
+    normalizedInput = { ...input, config };
+    if (input.enabled ?? existing.enabled) {
+      await assertAppleProjectSchemaCompatible(projectId);
+    }
+  }
   const setClauses: string[] = [];
   const values: unknown[] = [];
   let paramIndex = 3;
 
-  if (input.enabled !== undefined) {
+  if (normalizedInput.enabled !== undefined) {
     setClauses.push(`enabled = $${paramIndex++}`);
-    values.push(input.enabled);
+    values.push(normalizedInput.enabled);
   }
-  if (input.clientId !== undefined) {
+  if (normalizedInput.clientId !== undefined) {
     setClauses.push(`client_id = $${paramIndex++}`);
-    values.push(input.clientId);
+    values.push(normalizedInput.clientId);
   }
-  if (input.clientSecret !== undefined) {
+  if (normalizedInput.clientSecret !== undefined) {
     setClauses.push(`client_secret_encrypted = $${paramIndex++}`);
-    values.push(input.clientSecret ? encrypt(input.clientSecret) : null);
+    values.push(normalizedInput.clientSecret
+      ? encryptSecret(normalizedInput.clientSecret, { requireDedicatedKey: provider === 'apple' })
+      : null);
   }
-  if (input.config !== undefined) {
+  if (normalizedInput.config !== undefined) {
     setClauses.push(`config = $${paramIndex++}`);
-    values.push(input.config);
+    values.push(normalizedInput.config);
   }
 
   if (setClauses.length === 0) {
@@ -238,22 +305,60 @@ export async function updateProvider(
   return row ? toProvider(row) : null;
 }
 
+export async function updateProvider(
+  projectId: string,
+  provider: string,
+  input: UpdateProviderInput,
+): Promise<AuthProvider | null> {
+  if (provider === 'apple') {
+    return withAppleProviderMutationLock(
+      projectId,
+      () => updateProviderUnlocked(projectId, provider, input),
+    );
+  }
+  return updateProviderUnlocked(projectId, provider, input);
+}
+
 export async function deleteProvider(projectId: string, provider: string): Promise<boolean> {
-  const rows = await query<{ id: number }>(
-    'DELETE FROM druvia_project_auth_providers WHERE project_id = $1 AND provider = $2 RETURNING id',
-    [projectId, provider]
-  );
-  return rows.length > 0;
+  if (provider !== 'apple') {
+    const rows = await query<{ id: number }>(
+      'DELETE FROM druvia_project_auth_providers WHERE project_id = $1 AND provider = $2 RETURNING id',
+      [projectId, provider]
+    );
+    return rows.length > 0;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await acquireProjectAuthProjectLock(client, projectId);
+    await assertAppleProviderDeletionAllowed(projectId);
+    const result = await client.query<{ id: number }>(
+      'DELETE FROM druvia_project_auth_providers WHERE project_id = $1 AND provider = $2 RETURNING id',
+      [projectId, provider],
+    );
+    await client.query('COMMIT');
+    return result.rows.length > 0;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // 获取解密后的 client_secret（内部使用）
-export async function getProviderSecret(projectId: string, provider: string): Promise<string | null> {
+export async function getProviderSecret(
+  projectId: string,
+  provider: string,
+  options: { requireDedicatedKey?: boolean } = {},
+): Promise<string | null> {
   const row = await queryOne<{ client_secret_encrypted: string | null }>(
     'SELECT client_secret_encrypted FROM druvia_project_auth_providers WHERE project_id = $1 AND provider = $2',
     [projectId, provider]
   );
   if (!row?.client_secret_encrypted) return null;
-  return decrypt(row.client_secret_encrypted);
+  return decryptSecret(row.client_secret_encrypted, options);
 }
 
 // ============================================
@@ -453,14 +558,34 @@ export async function updateProjectUser(
   return row ? toProjectUser(row) : null;
 }
 
-export async function deleteProjectUser(schemaName: string, userId: string): Promise<boolean> {
+export async function deleteProjectUser(
+  projectId: string,
+  schemaName: string,
+  userId: string,
+): Promise<boolean> {
   validateSchemaName(schemaName);
-
-  const rows = await query<{ id: string }>(
-    `DELETE FROM ${schemaName}.users WHERE id = $1 RETURNING id`,
-    [userId]
-  );
-  return rows.length > 0;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await acquireProjectAuthProjectLock(client, projectId);
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`project-auth-user:${projectId}:${userId}`],
+    );
+    await assertProjectAuthUserDeletionAllowed(client, projectId, userId);
+    await cleanupTerminalProjectAuthUserState(client, projectId, userId);
+    const result = await client.query<{ id: string }>(
+      `DELETE FROM ${schemaName}.users WHERE id = $1 RETURNING id`,
+      [userId],
+    );
+    await client.query('COMMIT');
+    return result.rows.length > 0;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // ============================================
@@ -474,6 +599,7 @@ export const SUPPORTED_PROVIDERS = [
   { id: 'microsoft', name: 'Microsoft', type: 'oauth' },
   { id: 'discord', name: 'Discord', type: 'oauth' },
   { id: 'wechat', name: '微信', type: 'oauth' },
+  { id: 'apple', name: 'Sign in with Apple', type: 'oauth' },
   { id: 'dingtalk', name: '钉钉', type: 'oauth' },
   { id: 'feishu', name: '飞书', type: 'oauth' },
 ] as const;

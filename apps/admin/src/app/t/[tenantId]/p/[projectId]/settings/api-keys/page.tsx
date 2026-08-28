@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -49,6 +49,11 @@ const TRUSTED_BACKEND_SCOPE_OPTIONS: Array<{ value: TrustedBackendKeyScope; labe
     label: 'Storage Ticket',
     description: '允许签发受限的 storage upload/remove ticket',
   },
+  {
+    value: 'project_auth_lifecycle:manage',
+    label: '认证生命周期管理',
+    description: '允许读取并确认认证生命周期事件，确认操作可能停用或删除项目用户',
+  },
 ];
 
 export default function ApiKeysPage() {
@@ -75,11 +80,7 @@ export default function ApiKeysPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deletingTrustedId, setDeletingTrustedId] = useState<number | null>(null);
 
-  useEffect(() => {
-    fetchKeys();
-  }, [projectId]);
-
-  async function fetchKeys() {
+  const fetchKeys = useCallback(async () => {
     setLoading(true);
     const [apiKeysRes, trustedKeysRes] = await Promise.all([
       api.listApiKeys(projectId),
@@ -92,7 +93,11 @@ export default function ApiKeysPage() {
       setTrustedKeys(trustedKeysRes.data);
     }
     setLoading(false);
-  }
+  }, [projectId]);
+
+  useEffect(() => {
+    void fetchKeys();
+  }, [fetchKeys]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -128,7 +133,10 @@ export default function ApiKeysPage() {
       setNewTrustedKey(res.data);
       setTrustedKeys((prev) => [res.data!.trustedBackendKey, ...prev]);
       setNewTrustedKeyName('');
-      setTrustedKeyScopes(['project_session:issue', 'storage_ticket:issue']);
+      setTrustedKeyScopes([
+        'project_session:issue',
+        'storage_ticket:issue',
+      ]);
       setShowTrustedCreateForm(false);
     }
     setCreatingTrustedKey(false);

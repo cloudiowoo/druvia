@@ -22,6 +22,9 @@
 - 匿名 `apikey` 能力必须是显式允许，不要扩散成默认放开。
 - 新建或同步 Hasura permissions 时，禁止默认生成无行过滤的写权限；任何匿名写入都必须有明确业务理由和测试。
 - 修改认证请求头时，要联动检查 SDK、MCP Server、Admin server routes 和 nginx 代理是否使用同一契约。
+- Apple Project Auth 使用平台级 identity binding：Apple subject 只能存在于 `druvia_project_auth_identities`，不得写入项目业务 `users.provider_id`、email 或日志。
+- Apple `.p8` 与 provider refresh token 必须使用独立 `SECRETS_ENCRYPTION_KEY` 加密；缺失或无效时 Apple 配置和运行必须失败，不得回退 `JWT_SECRET`。禁用 provider 只阻止新登录，已有 refresh 校验与 revoke 仍需可用。
+- Apple 登录、refresh、revoke、notification、用户/provider/项目删除必须遵守 project lock 先于 identity/user lock 的顺序；有 active/pending identity、provider token 或待处理 lifecycle event 时不得直接删除用户、provider 或项目。
 - 公开项目 GraphQL 路由 `/api/v1/projects/:projectId/graphql` 只接受同项目 `project_user` 或 `apikey`：
   - `platform_user` 必须返回 `PROJECT_ACTOR_REQUIRED`，不能恢复为 Hasura admin passthrough
   - 客户端 `x-hasura-*` 头和角色声明不能进入执行上下文
@@ -70,6 +73,7 @@
 - 上传类函数若未做调用者鉴权，不应依赖平台层匿名放行。
 - `druvia_projects.settings` 更新虽已改为 JSONB 顶层 merge，但 `rateLimits` 等嵌套对象仍不是深合并；路由和前端都不能误判。
 - migration `020_storage_project_user_access` 必须先于包含直接 Storage actor cutover 的 API/Admin 启动；升级前必须审计旧逻辑名和 Local 大小写物理 key 冲突。
+- migration `021_project_auth_identities` 必须先于包含 Apple Project Auth 的 API/Admin 启动；release manifest migration ceiling 不得低于 `21`。
 - migration CLI 只能在迁移 SQL 同时存在最外层 `BEGIN` 与 `COMMIT` 时剥离包装；孤立事务边界必须保留并由 PostgreSQL 报错。
 
 ## 参考入口

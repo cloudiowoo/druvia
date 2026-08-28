@@ -249,6 +249,31 @@ async function bootstrap(): Promise<void> {
         AND table_name = 'druvia_storage_objects'
         AND column_name = 'owner_project_user_id'
     ) as exists`,
+    21: `SELECT EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'druvia_project_auth_identities'
+    ) AND EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'druvia_project_auth_provider_tokens'
+    ) AND EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'druvia_project_auth_events'
+    ) AND EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'druvia_project_refresh_tokens'
+        AND column_name = 'identity_id'
+    ) AND EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'druvia_project_refresh_tokens'
+        AND column_name = 'provider_audience'
+    ) AND EXISTS (
+      SELECT 1 FROM information_schema.table_constraints
+      WHERE table_schema = 'public'
+        AND table_name = 'druvia_project_refresh_tokens'
+        AND constraint_name = 'druvia_project_refresh_tokens_apple_identity_check'
+    ) as exists`,
   };
 
   const result = await client.query(`

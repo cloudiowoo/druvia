@@ -53,6 +53,43 @@ describe('DruviaProjectAuth', () => {
     )
   })
 
+  it('appleLogin sends the native credential to the dedicated endpoint and stores the session', async () => {
+    const fetch = createMockFetch({
+      success: true,
+      data: {
+        token: 'apple-project-access-token',
+        refreshToken: 'apple-project-refresh-token',
+        expiresIn: 3600,
+        expiresAt: '2026-08-28T08:00:00.000Z',
+        user: { id: 'usr_apple_1', email: null, role: 'authenticated' },
+      },
+    })
+    const storage = createMockStorage()
+    const auth = new DruviaProjectAuth('/api/v1', projectId, fetch, storage)
+
+    const result = await auth.appleLogin({
+      authorizationCode: 'authorization-code',
+      identityToken: 'identity-token',
+      rawNonce: 'a'.repeat(43),
+      profile: { givenName: 'Ada', familyName: 'Lovelace' },
+    })
+
+    expect(result.error).toBeNull()
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/v1/projects/${projectId}/auth/apple/login`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          authorizationCode: 'authorization-code',
+          identityToken: 'identity-token',
+          rawNonce: 'a'.repeat(43),
+          profile: { givenName: 'Ada', familyName: 'Lovelace' },
+        }),
+      }),
+    )
+    expect(storage.setItem).toHaveBeenCalledWith(projectSessionKey, expect.any(String))
+  })
+
   it('getSession and getUser read from local project session storage', async () => {
     const fetch = createMockFetch({})
     const storage = createMockStorage()

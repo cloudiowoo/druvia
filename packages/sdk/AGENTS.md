@@ -33,6 +33,7 @@
 - Realtime URL 解析必须由 SDK 共享实现同时覆盖显式 override 与 token 响应；不得依赖全局 `URL`，并须兼容没有 `URL` 或只有受限 HTTP(S) `URL` 的小程序运行时，同时继续拒绝 credentials、query、fragment 和无效 authority，不得要求应用侧 URL monkeypatch。hostname 只接受 ASCII（含调用方预先转换的 punycode）；不在 SDK 内隐式转换 Unicode IDN。
 - `unsubscribe()` / `removeChannel()` 必须终止自动重连；只有调用方再次显式 `subscribe()` 才能启动新连接。
 - SDK 认证头或 session 选择顺序变化时，必须用 API 端真实中间件契约验证，不能只做客户端单测。
+- Apple 原生登录只通过 `projectAuth.appleLogin()` 发送一次性 authorization code、identity token、raw nonce 和首次登录 profile；SDK 不接收或保存 Apple `.p8`、client secret、provider refresh token 或 subject。成功后继续复用现有 Project Session storage/refresh/logout 契约。
 - SDK prerelease 发包必须显式带 dist-tag：
   - 例如 `0.1.0-beta.3` 应使用 `npm publish --tag beta`
   - 不要把 beta 版本直接当作默认 `latest` 发布

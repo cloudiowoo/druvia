@@ -1079,7 +1079,7 @@ PostgreSQL 备份不包含 `docker/storage_data` 的对象文件，也不包含 
   - API/Admin/Worker/Updater 健康检查
   - taro-app 核心 smoke test
   - 镜像回滚和必要的数据库人工恢复演练
-- migration `018 -> 020` 包含权限模式、迁移状态和 Storage owner/preset 变更；旧部署升级前必须重新核对当前数据库版本、manifest 范围和备份要求，不能只依据默认 workflow 输入。
+- migration `018 -> 021` 包含权限模式、迁移状态、Storage owner/preset 和 Project Auth identity 变更；旧部署升级前必须重新核对当前数据库版本、manifest 范围、`SECRETS_ENCRYPTION_KEY` 和备份要求，不能只依据默认 workflow 输入。
 - 正式生产只使用 `DRUVIA_UPDATE_CHANNEL=stable` 和通过上述验收的 manifest；镜像实际引用必须为 digest。
 - updater 保持被动通知和人工 apply。Actions 完成、镜像推送或 release 创建都不是生产升级授权。
 - 当前 production manifest 示例使用 GitHub `releases/latest/download`。release workflow 尚未将 beta/nightly 完整隔离为不会影响该入口的 prerelease 路径，因此隔离完成前不得让 beta/nightly 覆盖生产跟随的 latest Release。
@@ -1124,3 +1124,33 @@ PostgreSQL 备份不包含 `docker/storage_data` 的对象文件，也不包含 
 - 长期架构决策变化：更新 `docs/agent/design-decisions.md`
 - 新模块局部规则变化：更新对应子目录 `AGENTS.md`
 - 完整设计或实施过程：新增 `docs/plans/YYYY-MM-DD-*.md`
+
+## Apple Project Auth 开发与运维
+
+### 启用前置条件
+
+- 先执行 `pnpm migrate up`，并用 `pnpm migrate status` 确认当前版本至少为 `021`。
+- 使用 `openssl rand -hex 32` 为 API 生成独立的 64 位十六进制 `SECRETS_ENCRYPTION_KEY`；local/prod/release 必须恢复同一部署原有 key，不能用 `JWT_SECRET` 替代。
+- 已有部署切换该 key 前，必须迁移或通过管理界面重新保存所有 Auth provider client secret 与 Function Secrets。直接新增不同 key 并重启会使旧密文不可解密；完成重存前，对应登录和 Function 会暂时失败。
+- 项目默认 Schema 必须已有 `users.id`；如存在 `users.provider_id`，该列必须允许 `NULL`。建议 email 允许 `NULL`。
+- 在 Admin 认证页配置 Team ID、Key ID、主 Bundle ID、允许 audience 和 ES256 PKCS8 `.p8`。私钥只提交给 Druvia API，不进入应用、镜像、release manifest 或 Git。
+
+### 应用集成契约
+
+- 原生登录：`POST /api/v1/projects/:projectId/auth/apple/login`，请求包含 `authorizationCode`、`identityToken`、`rawNonce`，首次授权可附 `profile.givenName/familyName`。
+- SDK：调用 `client.projectAuth.appleLogin(...)`；成功后沿用 Project Session 的 access/refresh、`refresh()` 和 `logout()`，应用不保存 Apple provider refresh token。
+- 用户撤销：同项目 Apple Project Session 调用 `POST /api/v1/projects/:projectId/auth/apple/revoke`。暂时失败保留 `revoke_pending`，管理员可在认证页重试。
+- Server notification：`POST /api/v1/projects/:projectId/auth/apple/notifications`，不接受 Druvia JWT/API key，只接受 Apple 签名 payload。真实验收前必须配置公网 TLS 地址。
+- `account-deleted` 先进入待处理状态。应用服务完成领域数据删除后，管理员在认证页确认；确认动作会删除 Project User、session、provider token 和 identity。
+- 应用服务也可使用同项目 trusted backend key 调用 lifecycle event list/ack；必须显式授予 `project_auth_lifecycle:manage`，该高风险 scope 不在 trusted key 默认权限中，不能下发到客户端。
+- 可重试错误：`PROVIDER_RATE_LIMITED`、`PROVIDER_UNAVAILABLE`。需要重新授权：`PROVIDER_REAUTH_REQUIRED`。配置/Schema 问题由管理员处理，不由客户端循环重试。
+
+### Decommission 与恢复
+
+1. 先禁用 Apple provider，停止新登录；禁用不会阻断已有 refresh 校验和 revoke。
+2. 在认证页逐项处理 `revoke_pending` 和 `deletion_pending`，直到没有 active/pending identity、provider token 或 lifecycle event。
+3. 再删除 provider、Project User 或项目。服务端删除门禁会拒绝跳过撤销的操作。
+4. 数据库恢复必须同时恢复原 `SECRETS_ENCRYPTION_KEY`。key 丢失时停止 Apple 操作并从 secrets storage 恢复，不得重置密文。
+5. 生产备份恢复到非生产环境后，先隔离外网 notification、禁用 Apple provider，并替换为非生产 Apple 配置。
+
+Apple App transfer 的 transfer identifier、relay email 迁移不属于普通重复登录。发生 Team/App 转移时必须单独冻结窗口、按 Apple 转移流程迁移 identity；不得通过删除 identity 后重新登录制造新的 Project User。

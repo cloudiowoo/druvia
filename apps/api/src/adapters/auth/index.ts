@@ -5,6 +5,14 @@ import { OIDCAdapter } from './oidc.adapter.js';
 export * from './interface.js';
 export { WeChatAdapter } from './wechat.adapter.js';
 export { OIDCAdapter } from './oidc.adapter.js';
+export { createAppleAuthAdapter, AppleAdapterError } from './apple.adapter.js';
+export type {
+  AppleAuthAdapter,
+  AppleAuthenticationResult,
+  AppleConfig,
+  AppleNativeCredential,
+  AppleVerifiedUser,
+} from './interface.js';
 
 export function createAuthAdapter(providerConfig: AuthProviderConfig): AuthAdapter {
   switch (providerConfig.provider) {

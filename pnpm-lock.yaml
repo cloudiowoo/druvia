@@ -29,6 +29,9 @@ importers:
       graphql-ws:
         specifier: ^6.0.7
         version: 6.0.7(graphql@16.13.1)(ws@8.20.0)
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
       jsdom:
         specifier: ^26.1.0
         version: 26.1.0
@@ -279,6 +282,9 @@ importers:
       ioredis:
         specifier: ^5.9.3
         version: 5.9.3
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
       jsonwebtoken:
         specifier: ^9.0.3
         version: 9.0.3
@@ -4296,8 +4302,8 @@ packages:
     resolution: {integrity: sha512-/imKNG4EbWNrVjoNC/1H5/9GFy+tqjGBHCaSsN+P2RnPqjsLmv6UD3Ej+Kj8nBWaRAwyk7kK5ZUc+OEatnTR3A==}
     hasBin: true
 
-  jose@6.2.0:
-    resolution: {integrity: sha512-xsfE1TcSCbUdo6U07tR0mvhg0flGxU8tPLbF03mirl2ukGQENhUg4ubGYQnhVH0b5stLlPM+WOqDkEl1R1y5sQ==}
+  jose@6.2.10:
+    resolution: {integrity: sha512-iiW7J9qRFlGxvCOIBDBDxFePQSn7ZMAnrYGhrrOo6siO/MIqwfyilLR27pkfDgUk+raLuzADS8A3S/KLBisc0g==}
 
   js-base64@3.7.8:
     resolution: {integrity: sha512-hNngCeKxIUQiEUN3GPJOkz4wF/YvdUdbNL9hsBcMQTkKzboD7T/q3OYOuuPZLUE6dBxSGpwhk5mwuDud7JVAow==}
@@ -7282,7 +7288,7 @@ snapshots:
       express: 5.2.1
       express-rate-limit: 8.3.0(express@5.2.1)
       hono: 4.12.5
-      jose: 6.2.0
+      jose: 6.2.10
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
@@ -11037,7 +11043,7 @@ snapshots:
 
   jiti@1.21.7: {}
 
-  jose@6.2.0: {}
+  jose@6.2.10: {}
 
   js-base64@3.7.8: {}
 

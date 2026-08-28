@@ -15,6 +15,10 @@ import { validateAlias } from '../../lib/validation.js';
 import { createApiLogger } from '../../lib/logger.js';
 import { getDefaultStorageAdapter, type StorageAdapter } from '../../adapters/storage/index.js';
 import { withProjectDataAccessMutationLock } from '../data-access/data-access-mutation-lock.js';
+import {
+  assertProjectAuthProjectDeletionAllowed,
+  withProjectAuthProjectLock,
+} from '../project-auth/project-identity.repository.js';
 
 const logger = createApiLogger({ module: 'project' });
 
@@ -151,7 +155,11 @@ export async function updateProject(projectId: string, input: UpdateProjectInput
 export async function deleteProject(projectId: string): Promise<boolean> {
   return withProjectDataAccessMutationLock(
     projectId,
-    () => deleteProjectUnlocked(projectId),
+    (client) => withProjectAuthProjectLock(
+      client,
+      projectId,
+      () => deleteProjectUnlocked(projectId),
+    ),
     { globalMode: 'exclusive' }
   );
 }
@@ -164,6 +172,8 @@ export async function deleteProjectUnlocked(projectId: string): Promise<boolean>
   }
 
   try {
+    await assertProjectAuthProjectDeletionAllowed(projectId);
+
     // 1. 先删除项目数据库用户，避免后续失败时出现“项目仍在但 schema 已被删掉”的半删除状态
     await dbCredentialsService.dropProjectDbUser(projectId);
 

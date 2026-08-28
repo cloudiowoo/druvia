@@ -136,6 +136,52 @@ export const authRateLimiter = createRateLimiter({
   keyPrefix: 'ratelimit:auth',
 });
 
+function createAppleProjectRateLimiter(input: {
+  keyPrefix: string;
+  maxRequests: number;
+  windowSeconds: number;
+}) {
+  return async function appleProjectRateLimiter(request: FastifyRequest, reply: FastifyReply) {
+    const projectId = (request.params as { projectId?: string })?.projectId ?? 'unknown';
+    const actor = request.user?.kind === 'project_user'
+      ? `user:${request.user.sub}`
+      : `ip:${request.ip}`;
+    const key = `${input.keyPrefix}:${projectId}:${actor}`;
+    try {
+      const current = await redis.incr(key);
+      if (current === 1) await redis.expire(key, input.windowSeconds);
+      const ttl = await redis.ttl(key);
+      setRateLimitHeaders(reply, input.maxRequests, current, ttl, current > input.maxRequests);
+      if (current > input.maxRequests) {
+        return reply.status(429).send({
+          success: false,
+          error: { code: 'PROVIDER_RATE_LIMITED', message: 'Apple authentication rate limit exceeded' },
+        });
+      }
+    } catch (error) {
+      logger.error('Apple auth rate limiter error', { requestId: request.id, projectId }, error);
+    }
+  };
+}
+
+export const appleLoginRateLimiter = createAppleProjectRateLimiter({
+  keyPrefix: 'ratelimit:apple-login',
+  maxRequests: 20,
+  windowSeconds: 15 * 60,
+});
+
+export const appleRevokeRateLimiter = createAppleProjectRateLimiter({
+  keyPrefix: 'ratelimit:apple-revoke',
+  maxRequests: 10,
+  windowSeconds: 15 * 60,
+});
+
+export const appleNotificationRateLimiter = createAppleProjectRateLimiter({
+  keyPrefix: 'ratelimit:apple-notification',
+  maxRequests: 120,
+  windowSeconds: 60,
+});
+
 // File upload rate limiter
 export const uploadRateLimiter = createRateLimiter({
   windowMs: 60 * 1000,
