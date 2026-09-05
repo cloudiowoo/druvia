@@ -110,6 +110,9 @@
   - Node 服务可以复用共享 helper
   - Deno Worker 允许保持本地实现，只需对齐字段与错误序列化约定
 - API 以 Fastify logger 为锚点，不额外引入重量级日志框架。
+- Node 服务的共享错误序列化必须对 message 和 stack 统一清理常见凭据格式，包括
+  Bearer/Basic、敏感键值和 URL userinfo；结构化 context 仍只允许放入明确的非秘密字段，
+  不能依赖文本脱敏替代调用方的数据最小化。
 - Deno Worker 日志必须携带可信执行上下文：
   - `projectId`
   - `functionName`
@@ -137,6 +140,9 @@
   - 匿名客户端仅提供 select 开关，不生成匿名写权限
   - 只替换当前项目两个 scoped role 的权限；旧 `user / anonymous` 及其他 role 均保留
   - scoped role 中出现非精确受支持形态时按 custom 只读处理，不允许 UI 覆盖
+  - permission columns 按操作区分：select 使用全部可读列，insert/update 使用各自可写列；PostgreSQL `GENERATED ALWAYS` 与 `IDENTITY ALWAYS` 只读，`IDENTITY BY DEFAULT` 保持可写
+  - owner insert 的所有者列必须可由 Hasura preset 写入；不可写 owner 列在生成 metadata 前按无效策略拒绝
+  - Data Access migration v2 snapshot 持久化操作级列能力；v1 未应用 preview 必须重新生成，v1 已应用记录继续按旧 digest 语义支持恢复和回滚
 - Batch 2A 最初只完成 scoped permission 物化；Batch 3A/3B 已分别切换 explicit 项目的 HTTP 与 WebSocket actor，Batch 4 已提供已有项目的受控激活路径。
 - 表级数据访问 Batch 2B 的项目概览固定为默认生产 schema 的只读治理视图：
   - API 用一次 PostgreSQL 清单查询和一次默认 source metadata 导出组成项目快照，不逐表调用管理接口

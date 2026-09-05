@@ -8,9 +8,11 @@ import { getDataAccessInventory } from './data-access-inventory.js'
 import { resolveDataScopeRole } from './data-scope-role.js'
 import { materializeTableDataAccessPolicy } from './data-access-policy.js'
 import { applyHasuraMetadataCommands } from './hasura-metadata-bulk.js'
+import { getStoredColumnCapabilities } from './data-access-column-capabilities.js'
 import {
   buildProjectMigrationPlan,
   buildProjectMigrationSnapshot,
+  digestProjectMigrationSnapshot,
   digestMigrationValue,
   toPublicMigrationReport,
 } from './data-access-migration-plan.js'
@@ -150,7 +152,7 @@ export function createDataAccessMigrationService(deps: DataAccessMigrationServic
         projectId,
         sourceSnapshot: snapshot,
         migrationPlan: plan,
-        sourceDigest: digestMigrationValue(snapshot),
+        sourceDigest: digestProjectMigrationSnapshot(snapshot, plan.version),
         hasDestructiveChanges: plan.destructiveChanges.length > 0,
         createdBy,
       })
@@ -168,7 +170,7 @@ export function createDataAccessMigrationService(deps: DataAccessMigrationServic
       const project = await requireProject(projectId)
       validateApply(record, project, input)
       const current = await deps.snapshotProject(project)
-      if (digestMigrationValue(current) !== record.sourceDigest) {
+      if (digestProjectMigrationSnapshot(current, record.migrationPlan.version) !== record.sourceDigest) {
         throw new DataAccessMigrationConflictError('Migration preview is stale', 'DATA_ACCESS_MIGRATION_DRIFT')
       }
 
@@ -202,7 +204,8 @@ export function createDataAccessMigrationService(deps: DataAccessMigrationServic
         const now = deps.now()
         record = await deps.repository.transitionMigration(migrationId, ['applying'], {
           status: 'applied', phase: 'completed', recoveryTarget: null,
-          appliedSnapshot, appliedDigest: digestMigrationValue(appliedSnapshot),
+          appliedSnapshot,
+          appliedDigest: digestProjectMigrationSnapshot(appliedSnapshot, record.migrationPlan.version),
           appliedAt: now, completedAt: now, error: null,
         })
         return report(record)
@@ -271,7 +274,7 @@ export function createDataAccessMigrationService(deps: DataAccessMigrationServic
         throw new DataAccessMigrationConflictError('Rollback is unavailable')
       }
       const current = await deps.snapshotProject(project)
-      if (digestMigrationValue(current) !== record.appliedDigest) {
+      if (digestProjectMigrationSnapshot(current, record.migrationPlan.version) !== record.appliedDigest) {
         throw new DataAccessMigrationConflictError('Applied data access metadata has changed', 'DATA_ACCESS_MIGRATION_DRIFT')
       }
       const rollbackPreviewDigest = digestMigrationValue({
@@ -297,7 +300,7 @@ export function createDataAccessMigrationService(deps: DataAccessMigrationServic
         throw new DataAccessMigrationConflictError('Rollback confirmation is stale')
       }
       const current = await deps.snapshotProject(project)
-      if (digestMigrationValue(current) !== record.appliedDigest) {
+      if (digestProjectMigrationSnapshot(current, record.migrationPlan.version) !== record.appliedDigest) {
         throw new DataAccessMigrationConflictError('Applied data access metadata has changed', 'DATA_ACCESS_MIGRATION_DRIFT')
       }
       record = await deps.repository.transitionMigration(migrationId, ['applied'], {
@@ -314,7 +317,9 @@ export function createDataAccessMigrationService(deps: DataAccessMigrationServic
         await ensureMode(projectId, 'compatibility')
         record = await phase(record, 'verify_recovery_target')
         const restored = await deps.snapshotProject(await requireProject(projectId))
-        if (digestMigrationValue(restored) !== record.sourceDigest) throw new Error('Rollback target digest mismatch')
+        if (digestProjectMigrationSnapshot(restored, record.migrationPlan.version) !== record.sourceDigest) {
+          throw new Error('Rollback target digest mismatch')
+        }
         await deps.verifyRuntime(restored, record.migrationPlan, 'compatibility')
         record = await deps.repository.transitionMigration(migrationId, ['rolling_back'], {
           status: 'rolled_back', phase: 'completed', recoveryTarget: null,
@@ -389,7 +394,9 @@ export function createDataAccessMigrationService(deps: DataAccessMigrationServic
     await ensureMode(record.projectId, mode)
     record = await phase(record, 'verify_recovery_target')
     const restored = await deps.snapshotProject(await requireProject(record.projectId))
-    if (digestMigrationValue(restored) !== expectedDigest) throw new Error('Recovery target digest mismatch')
+    if (digestProjectMigrationSnapshot(restored, record.migrationPlan.version) !== expectedDigest) {
+      throw new Error('Recovery target digest mismatch')
+    }
     await deps.verifyRuntime(restored, record.migrationPlan, mode)
     return record
   }
@@ -431,6 +438,9 @@ function validateApply(
 ): void {
   if (record.status !== 'preview_ready' || project.dataAccessMode !== 'compatibility') {
     throw new DataAccessMigrationConflictError('Migration cannot be applied in its current state')
+  }
+  if (record.migrationPlan.version !== 2) {
+    throw new DataAccessMigrationConflictError('Migration preview must be regenerated')
   }
   if (record.migrationPlan.blockers.length > 0) {
     throw new DataAccessMigrationConflictError('Migration plan contains blockers')
@@ -515,7 +525,10 @@ function buildTargetSnapshot(
     tables: current.tables.map((table) => {
       const target = plan.targetPolicies.find((item) => item.tableName === table.tableName)
       if (!target) return table
-      const managed = materializeTableDataAccessPolicy(target.policy, { roles, columns: table.columns })
+      const managed = materializeTableDataAccessPolicy(target.policy, {
+        roles,
+        capabilities: getStoredColumnCapabilities(table),
+      })
       return {
         ...table,
         permissions: [

@@ -57,11 +57,24 @@ function safeJsonStringify(value: unknown): string {
   }
 }
 
+const SENSITIVE_ASSIGNMENT = new RegExp(
+  '((?:["\']?)(?:authorization|api[_-]?key|apikey|admin[_-]?secret|x-hasura-admin-secret|password|secret|token|refresh[_-]?token|access[_-]?token|id[_-]?token|identity[_-]?token|authorization[_-]?code|raw[_-]?nonce|provider[_-]?refresh[_-]?token)(?:["\']?)\\s*[:=]\\s*)'
+    + '(?:"[^"\\r\\n]*"|\'[^\'\\r\\n]*\'|(?:Basic|Bearer)\\s+[^\\s,;}]+|[^\\s,;}]+)',
+  'gi'
+);
+
+export function redactSensitiveText(value: string): string {
+  return value
+    .replace(/\b(Basic|Bearer)\s+[^\s,;}]+/gi, '$1 [REDACTED]')
+    .replace(SENSITIVE_ASSIGNMENT, '$1[REDACTED]')
+    .replace(/(https?:\/\/)[^/\s:@]+:[^/@\s]+@/gi, '$1[REDACTED]@');
+}
+
 export function serializeError(error: unknown): SerializedError {
   if (error instanceof Error) {
     const serialized: SerializedError = {
       name: error.name || 'Error',
-      message: error.message || 'Unknown error',
+      message: redactSensitiveText(error.message || 'Unknown error'),
     };
 
     const code = Reflect.get(error, 'code');
@@ -69,7 +82,7 @@ export function serializeError(error: unknown): SerializedError {
       serialized.code = code;
     }
     if (typeof error.stack === 'string' && error.stack.length > 0) {
-      serialized.stack = error.stack;
+      serialized.stack = redactSensitiveText(error.stack);
     }
     return serialized;
   }
@@ -78,13 +91,15 @@ export function serializeError(error: unknown): SerializedError {
     return {
       name: typeof error.name === 'string' ? error.name : 'Error',
       ...(typeof error.code === 'string' ? { code: error.code } : {}),
-      message: typeof error.message === 'string' ? error.message : safeJsonStringify(error),
+      message: redactSensitiveText(
+        typeof error.message === 'string' ? error.message : safeJsonStringify(error)
+      ),
     };
   }
 
   return {
     name: 'Error',
-    message: typeof error === 'string' ? error : String(error),
+    message: redactSensitiveText(typeof error === 'string' ? error : String(error)),
   };
 }
 

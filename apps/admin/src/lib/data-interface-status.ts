@@ -1,5 +1,6 @@
 export interface DataInterfaceStatusInput {
   tracked: boolean
+  runtimeAvailability?: 'available' | 'environment_identity_required'
   hasAuthenticatedRead?: boolean
   hasAnonymousRead?: boolean
 }
@@ -21,6 +22,7 @@ export interface DataInterfaceSyncFeedback {
 
 export function getDataInterfaceLabel(status: DataInterfaceStatusInput): string {
   if (!status.tracked) return '未接入'
+  if (status.runtimeAvailability === 'environment_identity_required') return '环境访问暂不可用'
   if (status.hasAuthenticatedRead) return '可用'
   if (status.hasAnonymousRead) return '匿名可用'
   return '待配置访问'

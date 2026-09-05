@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createStructuredLogEntry,
+  redactSensitiveText,
   serializeError,
   type StructuredLogLevel,
 } from '../../packages/shared/src/logging/index.js';
@@ -49,6 +50,26 @@ describe('shared logging helpers', () => {
       name: 'Error',
       message: '[unserializable object]',
     });
+  });
+
+  it.each([
+    'authorization: Bearer bearer-secret-marker',
+    'authorization: Basic basic-secret-marker',
+    '{"token":"json-secret-marker"}',
+    'x-hasura-admin-secret=hasura-secret-marker',
+    'password: password-secret-marker',
+    'https://registry-user:registry-secret-marker@example.com/v2/',
+  ])('redacts credentials from serialized errors: %s', (message) => {
+    const serialized = serializeError(new Error(message));
+
+    expect(JSON.stringify(serialized)).not.toContain('secret-marker');
+    expect(serialized.message).toContain('[REDACTED]');
+    expect(serialized.stack).toContain('[REDACTED]');
+  });
+
+  it('redacts sensitive text without changing ordinary Hasura diagnostics', () => {
+    expect(redactSensitiveText('Column "observed_at" is not insertable'))
+      .toBe('Column "observed_at" is not insertable');
   });
 
   it('creates structured log entries with context and error payload', () => {

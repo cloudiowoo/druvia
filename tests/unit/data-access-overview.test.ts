@@ -8,6 +8,11 @@ const roles = {
   anonymous: 'druvia_v1_s_scope_anon',
 }
 const columns = ['id', 'owner_id', 'title']
+const columnInventory = {
+  columns,
+  insertableColumns: columns,
+  updateableColumns: columns,
+}
 
 function table(
   name: string,
@@ -27,13 +32,13 @@ describe('project data access overview aggregation', () => {
       runtimeMode: 'explicit',
       roles,
       inventory: [
-        { tableName: 'untracked', columns, realtimeEnabled: false },
-        { tableName: 'outbox', columns, realtimeEnabled: true },
-        { tableName: 'orders', columns, realtimeEnabled: false },
-        { tableName: 'legacy_only', columns, realtimeEnabled: false },
-        { tableName: 'events', columns, realtimeEnabled: true },
-        { tableName: 'drafts', columns, realtimeEnabled: false },
-        { tableName: 'custom_rules', columns, realtimeEnabled: false },
+        { tableName: 'untracked', ...columnInventory, realtimeEnabled: false },
+        { tableName: 'outbox', ...columnInventory, realtimeEnabled: true },
+        { tableName: 'orders', ...columnInventory, realtimeEnabled: false },
+        { tableName: 'legacy_only', ...columnInventory, realtimeEnabled: false },
+        { tableName: 'events', ...columnInventory, realtimeEnabled: true },
+        { tableName: 'drafts', ...columnInventory, realtimeEnabled: false },
+        { tableName: 'custom_rules', ...columnInventory, realtimeEnabled: false },
       ],
       tableMetadata: [
         table('orders', {
@@ -172,7 +177,7 @@ describe('project data access overview aggregation', () => {
       schemaName,
       runtimeMode: 'compatibility',
       roles,
-      inventory: [{ tableName: 'public_posts', columns, realtimeEnabled: true }],
+      inventory: [{ tableName: 'public_posts', ...columnInventory, realtimeEnabled: true }],
       tableMetadata: [table('public_posts', {
         select_permissions: [{
           role: 'anonymous',
@@ -196,7 +201,7 @@ describe('project data access overview aggregation', () => {
       schemaName,
       runtimeMode: 'compatibility',
       roles,
-      inventory: [{ tableName: 'mixed_rules', columns, realtimeEnabled: true }],
+      inventory: [{ tableName: 'mixed_rules', ...columnInventory, realtimeEnabled: true }],
       tableMetadata: [table('mixed_rules', {
         select_permissions: [{
           role: roles.authenticated,
@@ -217,13 +222,50 @@ describe('project data access overview aggregation', () => {
     expect(result.summary.configuredTables).toBe(1)
   })
 
+  it('reports generated-excluded write permissions as managed read-write access', () => {
+    const writableColumns = ['id', 'owner_id', 'title']
+    const readableColumns = [...writableColumns, 'observed_at']
+    const result = buildProjectDataAccessOverview({
+      projectId,
+      schemaName,
+      runtimeMode: 'explicit',
+      roles,
+      inventory: [{
+        tableName: 'observations',
+        columns: readableColumns,
+        insertableColumns: writableColumns,
+        updateableColumns: writableColumns,
+        realtimeEnabled: false,
+      }],
+      tableMetadata: [table('observations', {
+        select_permissions: [{
+          role: roles.authenticated,
+          permission: { columns: readableColumns, filter: {} },
+        }],
+        insert_permissions: [{
+          role: roles.authenticated,
+          permission: { columns: writableColumns, check: {} },
+        }],
+        update_permissions: [{
+          role: roles.authenticated,
+          permission: { columns: writableColumns, filter: {}, check: null },
+        }],
+      })],
+    })
+
+    expect(result.tables[0]).toMatchObject({
+      authenticatedAccess: 'read_write',
+      reviewRequired: false,
+    })
+  })
+
   it('counts supported anonymous read when anonymous writes require review', () => {
     const result = buildProjectDataAccessOverview({
       projectId,
       schemaName,
       runtimeMode: 'compatibility',
       roles,
-      inventory: [{ tableName: 'mixed_anonymous', columns, realtimeEnabled: true }],
+      inventory: [{ tableName: 'mixed_anonymous', ...columnInventory, realtimeEnabled: true }],
       tableMetadata: [table('mixed_anonymous', {
         select_permissions: [{
           role: roles.anonymous,

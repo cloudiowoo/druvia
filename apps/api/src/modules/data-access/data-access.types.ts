@@ -23,6 +23,12 @@ export interface DataAccessRoleNames {
   anonymous: string
 }
 
+export interface DataAccessColumnCapabilities {
+  readableColumns: string[]
+  insertableColumns: string[]
+  updateableColumns: string[]
+}
+
 export interface MaterializedDataPermission {
   role: string
   operation: DataAccessOperation

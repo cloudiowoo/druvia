@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { inspectTableDataAccessMetadata } from '../../apps/api/src/modules/data-access/data-access-inspection.js'
 
 const columns = ['id', 'owner_id', 'title']
+const capabilities = {
+  readableColumns: columns,
+  insertableColumns: columns,
+  updateableColumns: columns,
+}
+const generatedColumnCapabilities = {
+  readableColumns: ['id', 'owner_id', 'title', 'observed_at'],
+  insertableColumns: ['id', 'owner_id', 'title'],
+  updateableColumns: ['id', 'owner_id', 'title'],
+}
 const roles = {
   authenticated: 'druvia_v1_s_scope_user',
   anonymous: 'druvia_v1_s_scope_anon',
@@ -29,7 +39,7 @@ describe('data access metadata inspection', () => {
           set: { owner_id: 'X-Hasura-User-Id' },
         },
       }],
-    }, roles, columns)
+    }, roles, capabilities)
 
     expect(result.authenticatedState).toBe('managed')
     expect(result.anonymousState).toBe('managed')
@@ -61,12 +71,41 @@ describe('data access metadata inspection', () => {
           permission: { columns: '*', filter: {} },
         },
       ],
-    }, roles, columns)
+    }, roles, capabilities)
 
     expect(result.authenticatedState).toBe('managed')
     expect(result.anonymousState).toBe('managed')
     expect(result.policy.authenticated).toMatchObject({ select: 'owner', ownerColumn: 'owner_id' })
     expect(result.policy.anonymous.select).toBe(true)
+  })
+
+  it('recognizes generated-excluded write permissions as managed', () => {
+    const result = inspectTableDataAccessMetadata({
+      table: { schema: 'dru_test', name: 'observations' },
+      select_permissions: [{
+        role: roles.authenticated,
+        permission: { columns: generatedColumnCapabilities.readableColumns, filter: {} },
+      }],
+      insert_permissions: [{
+        role: roles.authenticated,
+        permission: { columns: generatedColumnCapabilities.insertableColumns, check: {} },
+      }],
+      update_permissions: [{
+        role: roles.authenticated,
+        permission: {
+          columns: generatedColumnCapabilities.updateableColumns,
+          filter: {},
+          check: null,
+        },
+      }],
+    }, roles, generatedColumnCapabilities)
+
+    expect(result.authenticatedState).toBe('managed')
+    expect(result.policy.authenticated).toMatchObject({
+      select: 'all',
+      insert: 'all',
+      update: 'all',
+    })
   })
 
   it('marks anonymous writes custom without changing authenticated state', () => {
@@ -80,7 +119,7 @@ describe('data access metadata inspection', () => {
         role: roles.anonymous,
         permission: { columns, check: {} },
       }],
-    }, roles, columns)
+    }, roles, capabilities)
 
     expect(result.authenticatedState).toBe('managed')
     expect(result.anonymousState).toBe('custom')
@@ -108,7 +147,7 @@ describe('data access metadata inspection', () => {
         role: roles.authenticated,
         permission: { filter: { id: { _eq: 'X-Hasura-User-Id' } } },
       }],
-    }, roles, columns)
+    }, roles, capabilities)
 
     expect(result.authenticatedState).toBe('custom')
     expect(result.anonymousState).toBe('managed')
@@ -140,7 +179,7 @@ describe('data access metadata inspection', () => {
           set: { title: 'forced' },
         },
       }],
-    }, roles, columns)
+    }, roles, capabilities)
 
     expect(result.authenticatedState).toBe('custom')
   })

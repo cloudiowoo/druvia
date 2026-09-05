@@ -1,11 +1,13 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as tableService from './table.service.js';
 import * as schemaService from '../schema/schema.service.js';
+import * as projectService from '../project/project.service.js';
 import type { TableDefinition, ColumnDefinition, ForeignKeyDetail } from './table.service.js';
 import {
   DataAccessMutationLockedError,
   withSchemaDataAccessMutationLock,
 } from '../data-access/data-access-mutation-lock.js';
+import { resolveDataScopeRole } from '../data-access/data-scope-role.js';
 
 interface SchemaParams {
   schemaName: string;
@@ -474,9 +476,31 @@ export async function getHasuraStatus(
   reply: FastifyReply
 ) {
   const { schemaName } = request.params;
+  const projectId = request.projectAccess?.projectId;
 
   try {
-    const status = await tableService.getHasuraStatus(schemaName);
+    const project = projectId ? await projectService.getProjectById(projectId) : null;
+    if (projectId && !project) {
+      throw new Error('Project not found');
+    }
+
+    const isDefaultSchema = !project || schemaName === project.schemaName;
+    const runtimeAvailability = isDefaultSchema
+      ? 'available' as const
+      : 'environment_identity_required' as const;
+    const expectedRoles = !isDefaultSchema
+      ? undefined
+      : project?.dataAccessMode === 'explicit'
+        ? {
+            authenticated: resolveDataScopeRole({ projectId: project.projectId, actor: 'authenticated' }),
+            anonymous: resolveDataScopeRole({ projectId: project.projectId, actor: 'anonymous' }),
+          }
+        : { authenticated: 'user', anonymous: 'anonymous' };
+    const status = await tableService.getHasuraStatus(
+      schemaName,
+      expectedRoles,
+      runtimeAvailability
+    );
     return reply.send({ success: true, data: status });
   } catch (error) {
     const err = error as Error;

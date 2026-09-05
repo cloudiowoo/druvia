@@ -1,6 +1,7 @@
 import { createClosedTableDataAccessPolicy } from './data-access-policy.js'
 import type {
   AuthenticatedAccessMode,
+  DataAccessColumnCapabilities,
   DataAccessOperation,
   DataAccessRoleNames,
   TableDataAccessInput,
@@ -33,7 +34,7 @@ export interface InspectedTableDataAccess {
 export function inspectTableDataAccessMetadata(
   tableMetadata: HasuraTableMetadata | null,
   roles: DataAccessRoleNames,
-  columns: string[]
+  capabilities: DataAccessColumnCapabilities
 ): InspectedTableDataAccess {
   const policy = createClosedTableDataAccessPolicy()
   if (!tableMetadata) {
@@ -73,7 +74,7 @@ export function inspectTableDataAccessMetadata(
       const mode = parseAuthenticatedPermission(
         operation,
         authenticatedEntries[0].permission,
-        columns
+        capabilities
       )
       if (!mode) {
         authenticatedCustom = true
@@ -92,7 +93,7 @@ export function inspectTableDataAccessMetadata(
       const anonymous = anonymousEntries[0]
       if (
         operation !== 'select'
-        || !isAllSelectPermission(anonymous.permission, columns)
+        || !isAllSelectPermission(anonymous.permission, capabilities.readableColumns)
       ) {
         anonymousCustom = true
       } else {
@@ -121,31 +122,37 @@ function getPermissionEntries(
 function parseAuthenticatedPermission(
   operation: DataAccessOperation,
   permission: Record<string, unknown>,
-  columns: string[]
+  capabilities: DataAccessColumnCapabilities
 ): { mode: Exclude<AuthenticatedAccessMode, 'none'>; ownerColumn: string | null } | null {
-  if (isAllPermission(operation, permission, columns)) {
+  if (isAllPermission(operation, permission, capabilities)) {
     return { mode: 'all', ownerColumn: null }
   }
 
   const rule = operation === 'insert' ? permission.check : permission.filter
   const ownerColumn = parseOwnerRule(rule)
-  if (!ownerColumn || !columns.includes(ownerColumn)) return null
-  const writableColumns = columns.filter((column) => column !== ownerColumn)
+  if (!ownerColumn || !capabilities.readableColumns.includes(ownerColumn)) return null
 
   switch (operation) {
     case 'select':
       if (!hasOnlyKeys(permission, ['columns', 'filter', 'allow_aggregations'])) return null
-      if (!selectColumnsMatch(permission.columns, columns)) return null
+      if (!selectColumnsMatch(permission.columns, capabilities.readableColumns)) return null
       if (!isAggregationsDisabled(permission.allow_aggregations)) return null
       break
     case 'insert':
       if (!hasOnlyKeys(permission, ['columns', 'check', 'set'])) return null
-      if (!columnsMatch(permission.columns, writableColumns)) return null
+      if (!capabilities.insertableColumns.includes(ownerColumn)) return null
+      if (!columnsMatch(
+        permission.columns,
+        capabilities.insertableColumns.filter((column) => column !== ownerColumn)
+      )) return null
       if (!deepEqual(permission.set, { [ownerColumn]: USER_ID_SESSION_VARIABLE })) return null
       break
     case 'update':
       if (!hasOnlyKeys(permission, ['columns', 'filter', 'check', 'set'])) return null
-      if (!columnsMatch(permission.columns, writableColumns)) return null
+      if (!columnsMatch(
+        permission.columns,
+        capabilities.updateableColumns.filter((column) => column !== ownerColumn)
+      )) return null
       if (!deepEqual(permission.check, rule)) return null
       if (!isEmptyOrMissingObject(permission.set)) return null
       break
@@ -160,19 +167,19 @@ function parseAuthenticatedPermission(
 function isAllPermission(
   operation: DataAccessOperation,
   permission: Record<string, unknown>,
-  columns: string[]
+  capabilities: DataAccessColumnCapabilities
 ): boolean {
   switch (operation) {
     case 'select':
-      return isAllSelectPermission(permission, columns)
+      return isAllSelectPermission(permission, capabilities.readableColumns)
     case 'insert':
       return hasOnlyKeys(permission, ['columns', 'check', 'set'])
-        && columnsMatch(permission.columns, columns)
+        && columnsMatch(permission.columns, capabilities.insertableColumns)
         && isEmptyObject(permission.check)
         && isEmptyOrMissingObject(permission.set)
     case 'update':
       return hasOnlyKeys(permission, ['columns', 'filter', 'check', 'set'])
-        && columnsMatch(permission.columns, columns)
+        && columnsMatch(permission.columns, capabilities.updateableColumns)
         && isEmptyObject(permission.filter)
         && isEmptyOrMissingObject(permission.check)
         && isEmptyOrMissingObject(permission.set)

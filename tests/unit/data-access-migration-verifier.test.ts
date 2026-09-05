@@ -27,7 +27,7 @@ const policy = {
   anonymous: { select: false },
 }
 const plan: ProjectDataAccessMigrationPlan = {
-  version: 1, projectId, schemaName: 'dru_1',
+  version: 2, projectId, schemaName: 'dru_1',
   targetPolicies: [{ tableName: 'orders', source: 'legacy_default', inferredOperations: [{ actor: 'authenticated', operation: 'select' }], policy }],
   legacyDrops: [{ tableName: 'orders', role: 'user', operation: 'select' }],
   blockers: [], destructiveChanges: [],
@@ -36,6 +36,7 @@ const sourceSnapshot: ProjectDataAccessMigrationSnapshot = {
   projectId, schemaName: 'dru_1', runtimeMode: 'compatibility', sourceGraphqlNaming: null,
   tables: [{
     tableName: 'orders', columns: ['id'], realtimeEnabled: true,
+    insertableColumns: ['id'], updateableColumns: ['id'],
     graphqlNaming: { customName: null, customRootFields: {} }, inventoryStatus: 'managed_table',
     permissions: [{ role: 'user', operation: 'select', permission: { columns: ['id'], filter: {} } }],
   }],
@@ -154,6 +155,58 @@ describe('data access migration verifier', () => {
     }
     expect(() => verifyMigrationMetadata({ currentSnapshot: prepared, sourceSnapshot, plan, roles, stage: 'prepared' }))
       .not.toThrow()
+  })
+
+  it('verifies generated-excluded write metadata with snapshot capabilities', () => {
+    const writePolicy = {
+      authenticated: {
+        select: 'all' as const,
+        insert: 'all' as const,
+        update: 'all' as const,
+        delete: 'none' as const,
+        ownerColumn: null,
+      },
+      anonymous: { select: false },
+    }
+    const generatedPlan: ProjectDataAccessMigrationPlan = {
+      version: 2,
+      projectId,
+      schemaName: 'dru_1',
+      targetPolicies: [{
+        tableName: 'observations',
+        source: 'closed',
+        inferredOperations: [],
+        policy: writePolicy,
+      }],
+      legacyDrops: [],
+      blockers: [],
+      destructiveChanges: [],
+    }
+    const generatedSnapshot: ProjectDataAccessMigrationSnapshot = {
+      ...sourceSnapshot,
+      tables: [{
+        tableName: 'observations',
+        columns: ['id', 'observed_at'],
+        insertableColumns: ['id'],
+        updateableColumns: ['id'],
+        realtimeEnabled: false,
+        graphqlNaming: { customName: null, customRootFields: {} },
+        inventoryStatus: 'managed_table',
+        permissions: [
+          { role: roles.authenticated, operation: 'select', permission: { columns: ['id', 'observed_at'], filter: {} } },
+          { role: roles.authenticated, operation: 'insert', permission: { columns: ['id'], check: {} } },
+          { role: roles.authenticated, operation: 'update', permission: { columns: ['id'], filter: {}, check: null } },
+        ],
+      }],
+    }
+
+    expect(() => verifyMigrationMetadata({
+      currentSnapshot: generatedSnapshot,
+      sourceSnapshot: { ...generatedSnapshot, tables: [{ ...generatedSnapshot.tables[0], permissions: [] }] },
+      plan: generatedPlan,
+      roles,
+      stage: 'legacy_removed',
+    })).not.toThrow()
   })
 
   it('uses internal admin-secret HTTP introspection with server-derived actor headers', async () => {

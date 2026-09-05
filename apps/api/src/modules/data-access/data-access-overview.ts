@@ -1,6 +1,7 @@
 import { inspectTableDataAccessMetadata, type HasuraTableMetadata } from './data-access-inspection.js'
 import type { ProjectDataAccessMode } from '@druvia/shared'
 import type { DataAccessInventoryTable } from './data-access-inventory.js'
+import { getInventoryColumnCapabilities } from './data-access-column-capabilities.js'
 import type {
   AnonymousAccessStatus,
   AuthenticatedAccessStatus,
@@ -61,7 +62,11 @@ function buildTableOverview(
   hasSupportedPermission: boolean
   hasAnonymousRead: boolean
 } {
-  const inspected = inspectTableDataAccessMetadata(metadata ?? null, roles, inventory.columns)
+  const inspected = inspectTableDataAccessMetadata(
+    metadata ?? null,
+    roles,
+    getInventoryColumnCapabilities(inventory)
+  )
   const hasAuthenticatedRead = inspected.policy.authenticated.select !== 'none'
   const hasAuthenticatedWrite = ['insert', 'update', 'delete'].some(
     (operation) => inspected.policy.authenticated[

@@ -53,7 +53,7 @@ export async function getProjectDataAccessOverview(
     const overview = await getProjectDataAccessOverviewState(request.params.projectId)
     return reply.send({ success: true, data: overview })
   } catch (error) {
-    return sendDataAccessError(error, reply)
+    return sendDataAccessError(error, reply, request)
   }
 }
 
@@ -70,7 +70,7 @@ export async function getTableDataAccess(
     )
     return reply.send({ success: true, data: state })
   } catch (error) {
-    return sendDataAccessError(error, reply)
+    return sendDataAccessError(error, reply, request)
   }
 }
 
@@ -103,7 +103,7 @@ export async function updateTableDataAccess(
         error: { code: 'INVALID_DATA_ACCESS_POLICY', message: error.message },
       })
     }
-    return sendDataAccessError(error, reply)
+    return sendDataAccessError(error, reply, request)
   }
 }
 
@@ -333,7 +333,11 @@ function sendMigrationError(error: unknown, reply: FastifyReply) {
   })
 }
 
-function sendDataAccessError(error: unknown, reply: FastifyReply) {
+function sendDataAccessError(
+  error: unknown,
+  reply: FastifyReply,
+  request?: FastifyRequest
+) {
   if (error instanceof DataAccessMutationLockedError) {
     return reply.status(409).send({
       success: false,
@@ -353,6 +357,16 @@ function sendDataAccessError(error: unknown, reply: FastifyReply) {
     })
   }
   if (error instanceof DataAccessUpstreamError) {
+    const requestParams = isRecord(request?.params) ? request.params : {}
+    request?.log?.error({
+      requestId: request.id,
+      projectId: error.projectId ?? stringValue(requestParams.projectId),
+      schemaName: error.schemaName,
+      tableName: error.tableName ?? stringValue(requestParams.tableName),
+      operation: error.operation,
+      upstreamCode: error.upstreamCode,
+      upstreamMessage: error.upstreamMessage,
+    }, 'Data access upstream request failed')
     return reply.status(502).send({
       success: false,
       error: {
@@ -365,4 +379,8 @@ function sendDataAccessError(error: unknown, reply: FastifyReply) {
     success: false,
     error: { code: 'DATA_ACCESS_FAILED', message: 'Unable to manage data access' },
   })
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
 }

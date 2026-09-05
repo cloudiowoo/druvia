@@ -450,7 +450,7 @@ class ApiClient {
   async getHasuraStatus(schemaName: string) {
     return this.request<Record<string, {
       tracked: boolean;
-      selectRoles: string[];
+      runtimeAvailability: 'available' | 'environment_identity_required';
       hasAuthenticatedRead: boolean;
       hasAnonymousRead: boolean;
     }>>('GET', `/api/v1/schemas/${schemaName}/hasura/status`);

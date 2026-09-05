@@ -3,12 +3,16 @@ import { query, queryOne } from '../../db/index.js'
 export interface DataAccessInventoryTable {
   tableName: string
   columns: string[]
+  insertableColumns: string[]
+  updateableColumns: string[]
   realtimeEnabled: boolean
 }
 
 interface InventoryRow {
   table_name: string
   columns: string[]
+  insertable_columns: string[]
+  updateable_columns: string[]
   realtime_enabled: boolean
 }
 
@@ -43,6 +47,18 @@ export async function getDataAccessInventory(
   const rows = await query<InventoryRow>(
     `SELECT t.table_name,
             array_agg(c.column_name::text ORDER BY c.ordinal_position) AS columns,
+            COALESCE(
+              array_agg(c.column_name::text ORDER BY c.ordinal_position)
+                FILTER (WHERE c.is_generated = 'NEVER'
+                  AND c.identity_generation IS DISTINCT FROM 'ALWAYS'),
+              ARRAY[]::text[]
+            ) AS insertable_columns,
+            COALESCE(
+              array_agg(c.column_name::text ORDER BY c.ordinal_position)
+                FILTER (WHERE c.is_generated = 'NEVER'
+                  AND c.identity_generation IS DISTINCT FROM 'ALWAYS'),
+              ARRAY[]::text[]
+            ) AS updateable_columns,
             ${realtimeExpression} AS realtime_enabled
      FROM information_schema.tables t
      JOIN information_schema.columns c
@@ -59,6 +75,8 @@ export async function getDataAccessInventory(
   return rows.map((row) => ({
     tableName: row.table_name,
     columns: row.columns,
+    insertableColumns: row.insertable_columns,
+    updateableColumns: row.updateable_columns,
     realtimeEnabled: row.realtime_enabled,
   }))
 }

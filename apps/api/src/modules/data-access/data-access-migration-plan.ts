@@ -31,6 +31,17 @@ export function digestMigrationValue(value: unknown): string {
     .digest('hex')
 }
 
+export function digestProjectMigrationSnapshot(
+  snapshot: ProjectDataAccessMigrationSnapshot,
+  version: ProjectDataAccessMigrationPlan['version'] = 2
+): string {
+  if (version === 2) return digestMigrationValue(snapshot)
+  return digestMigrationValue({
+    ...snapshot,
+    tables: snapshot.tables.map(({ insertableColumns: _insert, updateableColumns: _update, ...table }) => table),
+  })
+}
+
 export function buildProjectMigrationSnapshot(
   input: BuildProjectMigrationSnapshotInput
 ): ProjectDataAccessMigrationSnapshot {
@@ -50,6 +61,8 @@ export function buildProjectMigrationSnapshot(
     tables.push({
       tableName: item.tableName,
       columns: sortedUnique(item.columns),
+      insertableColumns: sortedUnique(item.insertableColumns),
+      updateableColumns: sortedUnique(item.updateableColumns),
       realtimeEnabled: item.realtimeEnabled,
       graphqlNaming: { customName: null, customRootFields: {} },
       inventoryStatus: 'managed_table',
@@ -124,7 +137,7 @@ export function buildProjectMigrationPlan(
   }
 
   return {
-    version: 1,
+    version: 2,
     projectId: snapshot.projectId,
     schemaName: snapshot.schemaName,
     targetPolicies: targetPolicies.sort((a, b) => a.tableName.localeCompare(b.tableName)),
@@ -155,7 +168,9 @@ export function toPublicMigrationReport(record: MigrationReportRecord): ProjectD
         ? 'current_explicit'
         : null,
     appliedAt: record.appliedAt,
-    canApply: record.status === 'preview_ready' && record.plan.blockers.length === 0,
+    canApply: record.plan.version === 2
+      && record.status === 'preview_ready'
+      && record.plan.blockers.length === 0,
     canRollback: record.status === 'applied',
     summary: {
       totalTables: managedTables.length,
@@ -195,6 +210,8 @@ function normalizeTableSnapshot(
   return {
     tableName,
     columns,
+    insertableColumns: sortedUnique(inventory?.insertableColumns ?? columns),
+    updateableColumns: sortedUnique(inventory?.updateableColumns ?? columns),
     realtimeEnabled: inventory?.realtimeEnabled ?? false,
     graphqlNaming: {
       customName: typeof configuration.custom_name === 'string' ? configuration.custom_name : null,

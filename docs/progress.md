@@ -23,6 +23,7 @@
 
 ## Recent Milestones
 
+- Data Access 已在本地支持 PostgreSQL generated/identity 列：select、insert、update 使用独立列能力，owner preset、inspection、overview 与 migration v2 共用同一契约；v1 preview/rollback 兼容边界已固定，Hasura 502 增加脱敏定位日志。真实 PostgreSQL 17 + Hasura v2.48 已验证 Generated Always、Identity Always、Identity By Default 的策略写入和回读；PITCHETCH 已重新配置相关业务表。表列表状态现按项目当前 compatibility/explicit 模式检查唯一运行时角色集合，不再暴露物理 Hasura role；非默认环境在 actor 身份未实现前显示为暂不可用。尚待应用侧运行完整验收脚本。
 - 项目成员与管理授权切片已完成本地实现：migration `022` 新增项目成员关系；平台 `admin` 收紧为登录身份；数据库当前 `super_admin`、workspace owner 和固定项目角色统一映射 capability；tenant/project/schema/backup 与项目模块路由完成资源级授权；Admin 增加成员管理和只读界面门禁。普通 PostgreSQL 与活动 PostGIS 本地库均已应用 022，PITCHETCH 用户已通过正式 API 在活动 PostGIS 库授予 `database_admin`，跨 Taro 项目及 owner-only 能力运行态验证为 403。生产 release/OTA 尚未执行。
 - Apple Project Auth Druvia 侧开发切片已完成本地实现：migration `021`、平台 identity binding、原生登录、identity-bound refresh、两阶段 revoke、Apple server notification、Admin 配置与 lifecycle 管理、SDK helper、独立密钥加密和双 Registry release ceiling 已落地。mock Apple 与数据库集成定向回归通过；PITCHETCH 当前没有 Apple Developer Program 付费团队身份，真实 provider 配置、原生实现、真机和公网 notification 验收暂缓，因此不标记生产就绪。
 - 本地数据库已支持并行普通 PostgreSQL 与 PostGIS：普通库继续使用默认 `postgres_data`，PostGIS 隔离到 `postgres_postgis_data`，API/Hasura 可通过显式目标切换进行应用适配验证；生产、release 和 OTA 仍保持单库部署
@@ -100,6 +101,8 @@
   - storage ticket 上传审计写入 `druvia_storage_objects.metadata`
 - 平台日志 Phase 1 已落地第一批基础能力：
   - `packages/shared` 新增结构化日志契约与错误序列化 helper
+  - Node 错误序列化已统一清理 message/stack 中的 Bearer/Basic、敏感键值与 URL userinfo；
+    调用方仍不得把凭据直接写入结构化 context
   - API 首批高价值模块已接入结构化 stdout/stderr
   - Deno Worker 已输出执行级日志，并为函数内 `console.*` 注入统一结构化包装
   - MCP Server 已覆盖启动、鉴权失败、fatal 等关键日志事件

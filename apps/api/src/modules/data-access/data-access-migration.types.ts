@@ -37,6 +37,8 @@ export interface MigrationPermissionSnapshot {
 export interface MigrationTableSnapshot {
   tableName: string
   columns: string[]
+  insertableColumns?: string[]
+  updateableColumns?: string[]
   realtimeEnabled: boolean
   graphqlNaming: {
     customName: string | null
@@ -103,7 +105,7 @@ export interface MigrationTargetPolicy {
 }
 
 export interface ProjectDataAccessMigrationPlan {
-  version: 1
+  version: 1 | 2
   projectId: string
   schemaName: string
   targetPolicies: MigrationTargetPolicy[]
@@ -121,7 +123,13 @@ export interface BuildProjectMigrationSnapshotInput {
   schemaName: string
   runtimeMode: ProjectDataAccessMode
   roles: DataAccessRoleNames
-  inventory: Array<{ tableName: string; columns: string[]; realtimeEnabled: boolean }>
+  inventory: Array<{
+    tableName: string
+    columns: string[]
+    insertableColumns: string[]
+    updateableColumns: string[]
+    realtimeEnabled: boolean
+  }>
   source: Record<string, unknown>
   metadata: Record<string, unknown>
 }

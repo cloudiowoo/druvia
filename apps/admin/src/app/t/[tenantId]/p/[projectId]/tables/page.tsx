@@ -37,7 +37,7 @@ interface TableInfo {
 
 type DataInterfaceStatus = Record<string, {
   tracked: boolean;
-  selectRoles: string[];
+  runtimeAvailability: 'available' | 'environment_identity_required';
   hasAuthenticatedRead: boolean;
   hasAnonymousRead: boolean;
 }>;

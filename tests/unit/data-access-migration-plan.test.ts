@@ -3,6 +3,7 @@ import {
   buildProjectMigrationPlan,
   buildProjectMigrationSnapshot,
   canonicalizeMigrationValue,
+  digestProjectMigrationSnapshot,
   digestMigrationValue,
   toPublicMigrationReport,
 } from '../../apps/api/src/modules/data-access/data-access-migration-plan.js'
@@ -12,6 +13,11 @@ const roles = {
   authenticated: 'druvia_v1_s_a_user',
   anonymous: 'druvia_v1_s_a_anon',
 }
+const inventoryColumns = (columns: string[]) => ({
+  columns,
+  insertableColumns: columns,
+  updateableColumns: columns,
+})
 
 function source() {
   return {
@@ -39,14 +45,14 @@ describe('data access migration snapshot and plan', () => {
       schemaName: 'dru_a',
       runtimeMode: 'compatibility' as const,
       roles,
-      inventory: [{ tableName: 'orders', columns: ['title', 'id'], realtimeEnabled: true }],
+      inventory: [{ tableName: 'orders', ...inventoryColumns(['title', 'id']), realtimeEnabled: true }],
       source: source(),
       metadata: {},
     }
     const first = buildProjectMigrationSnapshot(input)
     const reordered = buildProjectMigrationSnapshot({
       ...input,
-      inventory: [{ tableName: 'orders', columns: ['id', 'title'], realtimeEnabled: true }],
+      inventory: [{ tableName: 'orders', ...inventoryColumns(['id', 'title']), realtimeEnabled: true }],
       source: {
         ...source(),
         tables: [{
@@ -57,7 +63,8 @@ describe('data access migration snapshot and plan', () => {
     })
 
     expect(first.tables[0]).toMatchObject({
-      tableName: 'orders', columns: ['id', 'title'], realtimeEnabled: true, inventoryStatus: 'managed_table',
+      tableName: 'orders', columns: ['id', 'title'], insertableColumns: ['id', 'title'],
+      updateableColumns: ['id', 'title'], realtimeEnabled: true, inventoryStatus: 'managed_table',
     })
     expect(first.tables[0].permissions[0].permission.columns).toBe('*')
     expect(first.unsupportedApiBindings).toEqual([{ kind: 'function', objectName: 'dru_a.search', role: 'user' }])
@@ -77,7 +84,7 @@ describe('data access migration snapshot and plan', () => {
       schemaName: 'dru_a',
       runtimeMode: 'compatibility',
       roles,
-      inventory: [{ tableName: 'orders', columns: ['id', 'title'], realtimeEnabled: false }],
+      inventory: [{ tableName: 'orders', ...inventoryColumns(['id', 'title']), realtimeEnabled: false }],
       source: metadata,
       metadata: {},
     })
@@ -96,7 +103,7 @@ describe('data access migration snapshot and plan', () => {
       schemaName: 'dru_a',
       runtimeMode: 'compatibility',
       roles,
-      inventory: [{ tableName: 'orders', columns: ['id', 'title'], realtimeEnabled: false }],
+      inventory: [{ tableName: 'orders', ...inventoryColumns(['id', 'title']), realtimeEnabled: false }],
       source: source(),
       metadata: {
         actions: [{ name: 'publishOrder', permissions: [{ role: roles.authenticated }] }],
@@ -121,7 +128,7 @@ describe('data access migration snapshot and plan', () => {
       schemaName: 'dru_a',
       runtimeMode: 'compatibility',
       roles,
-      inventory: [{ tableName: 'orders', columns: ['id', 'title'], realtimeEnabled: false }],
+      inventory: [{ tableName: 'orders', ...inventoryColumns(['id', 'title']), realtimeEnabled: false }],
       source: source(),
       metadata: {},
     })
@@ -137,5 +144,81 @@ describe('data access migration snapshot and plan', () => {
     expect(report.summary.blockerCount).toBe(1)
     expect(JSON.stringify(report)).not.toContain(roles.authenticated)
     expect(JSON.stringify(report)).not.toContain('permissions')
+  })
+
+  it('does not advertise a stored version 1 preview as applyable', () => {
+    const report = toPublicMigrationReport({
+      migrationId: 'mig_v1',
+      projectId,
+      status: 'preview_ready',
+      phase: 'preview',
+      sourceDigest: 'source-digest',
+      appliedDigest: null,
+      recoveryTarget: null,
+      appliedAt: null,
+      rollbackPreviewDigest: null,
+      error: null,
+      plan: {
+        version: 1,
+        projectId,
+        schemaName: 'dru_a',
+        targetPolicies: [],
+        legacyDrops: [],
+        blockers: [],
+        destructiveChanges: [],
+      },
+    })
+
+    expect(report.canApply).toBe(false)
+  })
+
+  it('stores operation-specific column capabilities in version 2 plans', () => {
+    const snapshot = buildProjectMigrationSnapshot({
+      projectId,
+      schemaName: 'dru_a',
+      runtimeMode: 'compatibility',
+      roles,
+      inventory: [{
+        tableName: 'observations',
+        columns: ['id', 'observed_at'],
+        insertableColumns: ['id'],
+        updateableColumns: ['id'],
+        realtimeEnabled: false,
+      }],
+      source: { name: 'default', tables: [] },
+      metadata: {},
+    })
+
+    expect(snapshot.tables[0]).toMatchObject({
+      columns: ['id', 'observed_at'],
+      insertableColumns: ['id'],
+      updateableColumns: ['id'],
+    })
+    expect(buildProjectMigrationPlan(snapshot, roles).version).toBe(2)
+  })
+
+  it('keeps version 1 snapshot digests compatible with stored records', () => {
+    const snapshot = buildProjectMigrationSnapshot({
+      projectId,
+      schemaName: 'dru_a',
+      runtimeMode: 'compatibility',
+      roles,
+      inventory: [{
+        tableName: 'orders',
+        ...inventoryColumns(['id', 'title']),
+        realtimeEnabled: false,
+      }],
+      source: source(),
+      metadata: {},
+    })
+    const legacyShape = {
+      ...snapshot,
+      tables: snapshot.tables.map(({ insertableColumns: _insert, updateableColumns: _update, ...table }) => table),
+    }
+
+    expect(digestProjectMigrationSnapshot(snapshot, 1))
+      .toBe(digestMigrationValue(legacyShape))
+    expect(digestProjectMigrationSnapshot(snapshot, 2))
+      .not.toBe(digestMigrationValue(legacyShape))
   })
 })

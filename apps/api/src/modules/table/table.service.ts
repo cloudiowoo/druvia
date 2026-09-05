@@ -41,6 +41,9 @@ export interface TableMetadata {
     nullable: boolean;
     defaultValue: string | null;
     isPrimaryKey: boolean;
+    isGenerated: boolean;
+    isIdentity: boolean;
+    identityGeneration: 'ALWAYS' | 'BY DEFAULT' | null;
   }>;
   rowCount: number;
   sizeBytes: number;
@@ -51,9 +54,11 @@ export interface DataAccessRoleNames {
   anonymous?: string;
 }
 
+export type TableRuntimeAvailability = 'available' | 'environment_identity_required';
+
 export interface TableDataAccessStatus {
   tracked: boolean;
-  selectRoles: string[];
+  runtimeAvailability: TableRuntimeAvailability;
   hasAuthenticatedRead: boolean;
   hasAnonymousRead: boolean;
 }
@@ -264,8 +269,12 @@ export async function getTableMetadata(
     data_type: string;
     is_nullable: string;
     column_default: string | null;
+    is_generated: string;
+    is_identity: string;
+    identity_generation: string | null;
   }>(
-    `SELECT column_name, data_type, is_nullable, column_default
+    `SELECT column_name, data_type, is_nullable, column_default,
+            is_generated, is_identity, identity_generation
      FROM information_schema.columns
      WHERE table_schema = $1 AND table_name = $2
      ORDER BY ordinal_position`,
@@ -301,6 +310,12 @@ export async function getTableMetadata(
       nullable: col.is_nullable === 'YES',
       defaultValue: col.column_default,
       isPrimaryKey: pkColumns.has(col.column_name),
+      isGenerated: col.is_generated === 'ALWAYS',
+      isIdentity: col.is_identity === 'YES',
+      identityGeneration: col.identity_generation === 'ALWAYS'
+        || col.identity_generation === 'BY DEFAULT'
+        ? col.identity_generation
+        : null,
     })),
     rowCount: parseInt(statsResult?.row_count || '0', 10),
     sizeBytes: parseInt(statsResult?.size_bytes || '0', 10),
@@ -671,10 +686,10 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
     if (staleNames.length > 0) {
       // Use replace_metadata to remove stale tables (pg_untrack_table fails when references exist)
       const metadata = await hasuraMetadataRequest('export_metadata', {}) as Record<string, unknown> & {
-        sources?: Array<{ tables?: Array<{ table: { schema: string; name: string } }> }>;
+        sources?: Array<{ name: string; tables?: Array<{ table: { schema: string; name: string } }> }>;
       };
       const staleSet = new Set(staleNames);
-      const source = metadata.sources?.[0];
+      const source = metadata.sources?.find(item => item.name === 'default');
       if (source?.tables) {
         // Remove stale tables
         source.tables = source.tables.filter(
@@ -704,14 +719,21 @@ export async function trackAllTablesInHasura(schemaName: string): Promise<{
 // Get Hasura permission status for all tables in schema
 export async function getHasuraStatus(
   schemaName: string,
-  scopedRoles: DataAccessRoleNames = {}
+  expectedRoles: DataAccessRoleNames = { authenticated: 'user', anonymous: 'anonymous' },
+  runtimeAvailability: TableRuntimeAvailability = 'available'
 ): Promise<Record<string, TableDataAccessStatus>> {
   const metadata = await hasuraMetadataRequest('export_metadata', {}) as {
-    sources?: Array<{ tables?: Array<{ table: { schema: string; name: string }; select_permissions?: Array<{ role: string }> }> }>;
+    sources?: Array<{
+      name: string;
+      tables?: Array<{
+        table: { schema: string; name: string };
+        select_permissions?: Array<{ role: string }>;
+      }>;
+    }>;
   };
 
   const result: Record<string, TableDataAccessStatus> = {};
-  const source = metadata.sources?.[0];
+  const source = metadata.sources?.find(item => item.name === 'default');
   if (!source?.tables) return result;
 
   for (const t of source.tables) {
@@ -719,11 +741,13 @@ export async function getHasuraStatus(
       const selectRoles = t.select_permissions?.map(p => p.role) ?? [];
       result[t.table.name] = {
         tracked: true,
-        selectRoles,
-        hasAuthenticatedRead: selectRoles.includes('user')
-          || (!!scopedRoles.authenticated && selectRoles.includes(scopedRoles.authenticated)),
-        hasAnonymousRead: selectRoles.includes('anonymous')
-          || (!!scopedRoles.anonymous && selectRoles.includes(scopedRoles.anonymous)),
+        runtimeAvailability,
+        hasAuthenticatedRead: runtimeAvailability === 'available'
+          && !!expectedRoles.authenticated
+          && selectRoles.includes(expectedRoles.authenticated),
+        hasAnonymousRead: runtimeAvailability === 'available'
+          && !!expectedRoles.anonymous
+          && selectRoles.includes(expectedRoles.anonymous),
       };
     }
   }

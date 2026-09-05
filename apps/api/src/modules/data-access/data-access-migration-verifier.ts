@@ -14,6 +14,7 @@ import type {
   ProjectDataAccessMigrationPlan,
   ProjectDataAccessMigrationSnapshot,
 } from './data-access-migration.types.js'
+import { getStoredColumnCapabilities } from './data-access-column-capabilities.js'
 
 const VERIFICATION_TIMEOUT_MS = 5_000
 const SCHEMA_PROBE = `query DruviaMigrationSchemaProbe {
@@ -56,7 +57,7 @@ export function verifyMigrationMetadata(input: {
       ...legacyPermissions,
       ...materializeTableDataAccessPolicy(target.policy, {
         roles: input.roles,
-        columns: currentTable.columns,
+        capabilities: getStoredColumnCapabilities(currentTable),
       }),
     ].map((permission) => ({ tableName: currentTable.tableName, ...permission }))
   }).sort(compareVerificationPermission)
@@ -80,7 +81,7 @@ export function verifyMigrationMetadata(input: {
     if (!current) throw new DataAccessMigrationVerificationError(`Tracked table is missing: ${target.tableName}`)
     const expected = materializeTableDataAccessPolicy(target.policy, {
       roles: input.roles,
-      columns: current.columns,
+      capabilities: getStoredColumnCapabilities(current),
     })
     for (const permission of expected) {
       const matches = current.permissions.filter((item) => (
@@ -145,7 +146,16 @@ function equalPermissionValue(left: Record<string, unknown>, right: Record<strin
 function normalizePermissionForVerification(permission: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...permission }
   if (normalized.allow_aggregations === false) delete normalized.allow_aggregations
+  if (normalized.check === null || isEmptyRecord(normalized.check)) delete normalized.check
+  if (normalized.set === null || isEmptyRecord(normalized.set)) delete normalized.set
   return normalized
+}
+
+function isEmptyRecord(value: unknown): boolean {
+  return !!value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.keys(value).length === 0
 }
 
 export async function verifyMigrationHttpVisibility(input: {

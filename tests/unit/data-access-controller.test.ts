@@ -242,17 +242,37 @@ describe('data access controller', () => {
   })
 
   it('maps upstream failures to a sanitized 502 response', async () => {
-    vi.mocked(service.getTableDataAccess).mockRejectedValueOnce(
-      new service.DataAccessUpstreamError('secret=server-value')
+    const upstreamError = Object.assign(
+      new service.DataAccessUpstreamError('Data access metadata update failed'),
+      {
+        operation: 'update_permissions',
+        upstreamCode: 'permission-error',
+        upstreamMessage: 'Column "observed_at" is not insertable',
+      }
     )
+    vi.mocked(service.getTableDataAccess).mockRejectedValueOnce(upstreamError)
     const reply = createReply()
+    const log = { error: vi.fn() }
     await controller.getTableDataAccess({
+      id: 'req-123',
       params: { projectId: 'proj_123', tableName: 'orders' },
       user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+      log,
     } as never, reply as never)
 
     expect(reply.statusCode).toBe(502)
     expect(JSON.stringify(reply.payload)).not.toContain('server-value')
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'req-123',
+        projectId: 'proj_123',
+        tableName: 'orders',
+        operation: 'update_permissions',
+        upstreamCode: 'permission-error',
+        upstreamMessage: 'Column "observed_at" is not insertable',
+      }),
+      'Data access upstream request failed'
+    )
   })
 
   it('sanitizes unexpected update failures as 500 responses', async () => {

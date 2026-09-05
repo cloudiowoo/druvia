@@ -15,6 +15,8 @@ function table(
   return {
     tableName: 'orders',
     columns,
+    insertableColumns: columns,
+    updateableColumns: columns,
     realtimeEnabled: false,
     graphqlNaming: { customName: null, customRootFields: {} },
     inventoryStatus: 'managed_table',
@@ -113,5 +115,31 @@ describe('data access legacy migration inspection', () => {
     expect(result.policy.anonymous.select).toBe(false)
     expect(result.inferredOperations).toEqual([])
     expect(result.legacyDrops).toHaveLength(2)
+  })
+
+  it('recognizes generated-excluded scoped and legacy write permissions', () => {
+    const readableColumns = [...columns, 'observed_at']
+    const result = inspectMigrationTable(table([
+      {
+        role: roles.authenticated,
+        operation: 'insert',
+        permission: { columns, check: {} },
+      },
+      {
+        role: 'user',
+        operation: 'update',
+        permission: { columns, filter: {}, check: null },
+      },
+    ], {
+      columns: readableColumns,
+      insertableColumns: columns,
+      updateableColumns: columns,
+    }), roles)
+
+    expect(result.blockers).toEqual([])
+    expect(result.policy.authenticated).toMatchObject({
+      insert: 'all',
+      update: 'all',
+    })
   })
 })

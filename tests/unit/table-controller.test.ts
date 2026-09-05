@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../apps/api/src/modules/table/table.service.js', () => ({
+  getHasuraStatus: vi.fn(),
   trackTableInHasura: vi.fn(),
+}))
+
+vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
+  getProjectById: vi.fn(),
 }))
 
 vi.mock('../../apps/api/src/modules/data-access/data-access-mutation-lock.js', () => ({
@@ -13,10 +18,12 @@ vi.mock('../../apps/api/src/modules/data-access/data-access-mutation-lock.js', (
 
 import * as tableController from '../../apps/api/src/modules/table/table.controller.js'
 import * as tableService from '../../apps/api/src/modules/table/table.service.js'
+import * as projectService from '../../apps/api/src/modules/project/project.service.js'
 import {
   DataAccessMutationLockedError,
   withSchemaDataAccessMutationLock,
 } from '../../apps/api/src/modules/data-access/data-access-mutation-lock.js'
+import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
 
 type ReplyStub = {
   status: ReturnType<typeof vi.fn>
@@ -46,6 +53,11 @@ function createReply(): ReplyStub {
 describe('Table Controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(projectService.getProjectById).mockResolvedValue({
+      projectId: 'proj_YlWn_0Yswm3TLPww',
+      schemaName: 'dru_default_pitchetch',
+      dataAccessMode: 'explicit',
+    } as never)
   })
 
   it('returns a gateway failure when the data interface cannot track a table', async () => {
@@ -85,5 +97,68 @@ describe('Table Controller', () => {
       error: expect.objectContaining({ code: 'DATA_ACCESS_MIGRATION_IN_PROGRESS' }),
     }))
     expect(tableService.trackTableInHasura).not.toHaveBeenCalled()
+  })
+
+  it('checks Hasura status with the authorized project scoped roles', async () => {
+    vi.mocked(tableService.getHasuraStatus).mockResolvedValue({})
+    const reply = createReply()
+
+    await tableController.getHasuraStatus({
+      params: { schemaName: 'dru_default_pitchetch' },
+      projectAccess: { projectId: 'proj_YlWn_0Yswm3TLPww' },
+    } as never, reply as never)
+
+    expect(tableService.getHasuraStatus).toHaveBeenCalledWith(
+      'dru_default_pitchetch',
+      {
+        authenticated: resolveDataScopeRole({
+          projectId: 'proj_YlWn_0Yswm3TLPww',
+          actor: 'authenticated',
+        }),
+        anonymous: resolveDataScopeRole({
+          projectId: 'proj_YlWn_0Yswm3TLPww',
+          actor: 'anonymous',
+        }),
+      },
+      'available'
+    )
+    expect(reply.payload).toEqual({ success: true, data: {} })
+  })
+
+  it('checks compatibility projects with legacy application roles only', async () => {
+    vi.mocked(projectService.getProjectById).mockResolvedValue({
+      projectId: 'proj_legacy',
+      schemaName: 'dru_default_legacy',
+      dataAccessMode: 'compatibility',
+    } as never)
+    vi.mocked(tableService.getHasuraStatus).mockResolvedValue({})
+    const reply = createReply()
+
+    await tableController.getHasuraStatus({
+      params: { schemaName: 'dru_default_legacy' },
+      projectAccess: { projectId: 'proj_legacy' },
+    } as never, reply as never)
+
+    expect(tableService.getHasuraStatus).toHaveBeenCalledWith(
+      'dru_default_legacy',
+      { authenticated: 'user', anonymous: 'anonymous' },
+      'available'
+    )
+  })
+
+  it('marks non-default environment access unavailable without using production roles', async () => {
+    vi.mocked(tableService.getHasuraStatus).mockResolvedValue({})
+    const reply = createReply()
+
+    await tableController.getHasuraStatus({
+      params: { schemaName: 'dru_preview_pitchetch' },
+      projectAccess: { projectId: 'proj_YlWn_0Yswm3TLPww' },
+    } as never, reply as never)
+
+    expect(tableService.getHasuraStatus).toHaveBeenCalledWith(
+      'dru_preview_pitchetch',
+      undefined,
+      'environment_identity_required'
+    )
   })
 })

@@ -105,6 +105,21 @@ describe('data access migration service', () => {
     })).rejects.toBeInstanceOf(DataAccessMigrationConflictError)
   })
 
+  it('requires regenerating a version 1 preview before apply', async () => {
+    const preview = await harness.service.previewMigration(project.projectId, 'usr_1', {})
+    const record = harness.getRecord()
+    if (!record) throw new Error('missing preview record')
+    record.migrationPlan = { ...record.migrationPlan, version: 1 }
+
+    await expect(harness.service.applyMigration(project.projectId, preview.migrationId, {
+      sourceDigest: preview.sourceDigest,
+      confirmInferredPolicies: true,
+      confirmDestructiveChanges: true,
+      projectAlias: project.alias,
+    })).rejects.toThrow('Migration preview must be regenerated')
+    expect(harness.dependencies.applyPermissionCommands).not.toHaveBeenCalled()
+  })
+
   it('applies every persisted stage and stores one applied snapshot', async () => {
     const preview = await harness.service.previewMigration(project.projectId, 'usr_1', {})
     const report = await harness.service.applyMigration(project.projectId, preview.migrationId, {

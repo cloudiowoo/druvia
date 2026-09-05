@@ -92,6 +92,9 @@ describe('data access service', () => {
         nullable: false,
         defaultValue: null,
         isPrimaryKey: name === 'id',
+        isGenerated: false,
+        isIdentity: false,
+        identityGeneration: null,
       })),
       rowCount: 0,
       sizeBytes: 0,
@@ -100,6 +103,8 @@ describe('data access service', () => {
     vi.mocked(getDataAccessInventory).mockResolvedValue([{
       tableName,
       columns,
+      insertableColumns: columns,
+      updateableColumns: columns,
       realtimeEnabled: false,
     }])
     vi.mocked(hasuraMetadataRequest).mockResolvedValue(tableMetadata() as never)
@@ -326,6 +331,57 @@ describe('data access service', () => {
     expect(state.policy).toEqual(input)
   })
 
+  it('excludes generated columns from Hasura writes while keeping them readable', async () => {
+    const readableColumns = [...columns, 'observed_at']
+    vi.mocked(tableService.getTableMetadata).mockResolvedValueOnce({
+      schemaName,
+      tableName,
+      columns: readableColumns.map((name) => ({
+        name,
+        type: 'text',
+        nullable: false,
+        defaultValue: null,
+        isPrimaryKey: name === 'id',
+        isGenerated: name === 'observed_at',
+        isIdentity: false,
+        identityGeneration: null,
+      })),
+      rowCount: 0,
+      sizeBytes: 0,
+    })
+    vi.mocked(hasuraMetadataRequest)
+      .mockResolvedValueOnce(tableMetadata() as never)
+      .mockResolvedValueOnce({ message: 'success' } as never)
+
+    await updateTableDataAccess(projectId, tableName, {
+      authenticated: {
+        select: 'all',
+        insert: 'owner',
+        update: 'all',
+        delete: 'none',
+        ownerColumn: 'owner_id',
+      },
+      anonymous: { select: false },
+    })
+
+    const bulkCall = vi.mocked(hasuraMetadataRequest).mock.calls.find(
+      ([type]) => type === 'bulk_atomic'
+    )
+    const commands = bulkCall?.[1] as Array<{
+      type: string
+      args: { permission: { columns?: string[]; set?: Record<string, string> } }
+    }>
+    expect(commands.find((item) => item.type === 'pg_create_select_permission')
+      ?.args.permission.columns).toEqual(readableColumns)
+    expect(commands.find((item) => item.type === 'pg_create_insert_permission')
+      ?.args.permission).toMatchObject({
+        columns: ['id', 'title'],
+        set: { owner_id: 'X-Hasura-User-Id' },
+      })
+    expect(commands.find((item) => item.type === 'pg_create_update_permission')
+      ?.args.permission.columns).toEqual(columns)
+  })
+
   it('marks unsupported managed metadata as custom and refuses to overwrite it', async () => {
     vi.mocked(hasuraMetadataRequest).mockResolvedValue(tableMetadata({
       select_permissions: [{
@@ -406,13 +462,39 @@ describe('data access service', () => {
   it('normalizes metadata write failures as upstream errors', async () => {
     vi.mocked(hasuraMetadataRequest)
       .mockResolvedValueOnce(tableMetadata() as never)
-      .mockRejectedValueOnce(new Error('metadata secret detail'))
+      .mockRejectedValueOnce(new Error(
+        'Hasura metadata request failed: {"error":"Column \\"observed_at\\" is not insertable","code":"permission-error","path":"$.args"}'
+      ))
 
-    await expect(
-      updateTableDataAccess(projectId, tableName, {
+    const error = await updateTableDataAccess(projectId, tableName, {
         ...closedPolicy(),
         anonymous: { select: true },
       })
-    ).rejects.toBeInstanceOf(DataAccessUpstreamError)
+      .catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(DataAccessUpstreamError)
+    expect(error).toMatchObject({
+      operation: 'update_permissions',
+      projectId,
+      schemaName,
+      tableName,
+      upstreamCode: 'permission-error',
+      upstreamMessage: 'Column "observed_at" is not insertable',
+    })
+  })
+
+  it.each([
+    'Hasura failed: {"error":"authorization: Bearer bearer-secret-marker","code":"permission-error"}',
+    'Hasura failed: {"error":"{\\"token\\":\\"json-secret-marker\\"}","code":"permission-error"}',
+    'transport failed with password=password-secret-marker',
+  ])('redacts credentials from captured upstream diagnostics', (message) => {
+    const error = new DataAccessUpstreamError(
+      'Unable to update data access metadata',
+      { operation: 'update_permissions', projectId, schemaName, tableName },
+      new Error(message)
+    )
+
+    expect(error.upstreamMessage).toContain('[REDACTED]')
+    expect(error.upstreamMessage).not.toContain('secret-marker')
   })
 })

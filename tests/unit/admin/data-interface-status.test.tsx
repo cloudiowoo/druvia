@@ -24,6 +24,12 @@ describe('data interface status labels', () => {
       hasAuthenticatedRead: false,
       hasAnonymousRead: true,
     })).toBe('匿名可用')
+    expect(getDataInterfaceLabel({
+      tracked: true,
+      runtimeAvailability: 'environment_identity_required',
+      hasAuthenticatedRead: false,
+      hasAnonymousRead: false,
+    })).toBe('环境访问暂不可用')
   })
 
   it('describes realtime readiness independently from its switch', () => {

@@ -1,6 +1,7 @@
 import { createClosedTableDataAccessPolicy } from './data-access-policy.js'
 import { inspectTableDataAccessMetadata, type HasuraTableMetadata } from './data-access-inspection.js'
 import type { DataAccessRoleNames } from './data-access.types.js'
+import { getStoredColumnCapabilities } from './data-access-column-capabilities.js'
 import type {
   DataAccessMigrationBlocker,
   DataAccessMigrationDestructiveChange,
@@ -52,8 +53,9 @@ export function inspectMigrationTable(
     })
   }
 
+  const capabilities = getStoredColumnCapabilities(table)
   const scopedMetadata = toHasuraTableMetadata(table, scopedPermissions)
-  const scoped = inspectTableDataAccessMetadata(scopedMetadata, roles, table.columns)
+  const scoped = inspectTableDataAccessMetadata(scopedMetadata, roles, capabilities)
   const hasScopedAuthenticated = scopedPermissions.some((item) => item.role === roles.authenticated)
   const hasScopedAnonymous = scopedPermissions.some((item) => item.role === roles.anonymous)
   if (hasScopedAuthenticated && scoped.authenticatedState === 'custom') {
@@ -78,7 +80,12 @@ export function inspectMigrationTable(
     })
     if (duplicateKeys.has(`${legacy.role}:${legacy.operation}`)) continue
 
-    const classification = classifyHistoricalPermission(legacy.role, legacy.operation, legacy.permission, table.columns)
+    const classification = classifyHistoricalPermission(
+      legacy.role,
+      legacy.operation,
+      legacy.permission,
+      capabilities
+    )
     const actor = legacy.role === 'user' ? 'authenticated' : 'anonymous'
     if (!classification.recognized) {
       blockers.push({
@@ -152,7 +159,7 @@ function classifyHistoricalPermission(
   role: string,
   operation: DataAccessMigrationOperation,
   permission: Record<string, unknown>,
-  columns: string[]
+  capabilities: ReturnType<typeof getStoredColumnCapabilities>
 ): { recognized: boolean; removesAggregations: boolean } {
   const allowed = operation === 'select'
     ? ['columns', 'filter', 'allow_aggregations', 'backend_only']
@@ -163,7 +170,14 @@ function classifyHistoricalPermission(
         : ['filter', 'backend_only']
   if (Object.keys(permission).some((key) => !allowed.includes(key))) return { recognized: false, removesAggregations: false }
   if (permission.backend_only !== undefined && permission.backend_only !== false) return { recognized: false, removesAggregations: false }
-  if (operation !== 'delete' && !allColumns(permission.columns, columns)) return { recognized: false, removesAggregations: false }
+  const operationColumns = operation === 'select'
+    ? capabilities.readableColumns
+    : operation === 'insert'
+      ? capabilities.insertableColumns
+      : capabilities.updateableColumns
+  if (operation !== 'delete' && !allColumns(permission.columns, operationColumns)) {
+    return { recognized: false, removesAggregations: false }
+  }
   if (operation !== 'insert' && !emptyObject(permission.filter)) return { recognized: false, removesAggregations: false }
   if (operation === 'insert' && !emptyObject(permission.check)) return { recognized: false, removesAggregations: false }
   if (operation === 'update' && !emptyOrMissing(permission.check)) return { recognized: false, removesAggregations: false }

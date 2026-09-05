@@ -25,11 +25,15 @@ describe('data access inventory', () => {
       {
         table_name: 'orders',
         columns: ['id', 'owner_id', 'created_at'],
+        insertable_columns: ['id', 'owner_id'],
+        updateable_columns: ['id', 'owner_id'],
         realtime_enabled: true,
       },
       {
         table_name: 'profiles',
         columns: ['id', 'display_name'],
+        insertable_columns: ['display_name'],
+        updateable_columns: ['display_name'],
         realtime_enabled: false,
       },
     ])
@@ -40,11 +44,15 @@ describe('data access inventory', () => {
       {
         tableName: 'orders',
         columns: ['id', 'owner_id', 'created_at'],
+        insertableColumns: ['id', 'owner_id'],
+        updateableColumns: ['id', 'owner_id'],
         realtimeEnabled: true,
       },
       {
         tableName: 'profiles',
         columns: ['id', 'display_name'],
+        insertableColumns: ['display_name'],
+        updateableColumns: ['display_name'],
         realtimeEnabled: false,
       },
     ])
@@ -56,6 +64,8 @@ describe('data access inventory', () => {
     expect(sql).toContain('LEFT JOIN "dru_test"._meta_tables')
     expect(sql).toContain("t.table_name NOT LIKE '\\_%'")
     expect(sql).toContain('array_agg(c.column_name::text')
+    expect(sql).toContain("c.is_generated = 'NEVER'")
+    expect(sql).toContain("c.identity_generation IS DISTINCT FROM 'ALWAYS'")
     expect(sql).toContain('ORDER BY c.ordinal_position')
     expect(sql).toContain('ORDER BY t.table_name')
     expect(params).toEqual(['dru_test'])
@@ -69,6 +79,8 @@ describe('data access inventory', () => {
     vi.mocked(query).mockResolvedValue([{
       table_name: 'orders',
       columns: ['id'],
+      insertable_columns: ['id'],
+      updateable_columns: ['id'],
       realtime_enabled: false,
     }])
 

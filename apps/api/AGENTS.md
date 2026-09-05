@@ -23,6 +23,8 @@
 - 平台 `admin` 不自动拥有项目权限。`super_admin`、workspace owner、成员角色和用户 active 状态必须按数据库当前值解析；Project User/API Key 不得进入管理 RBAC。
 - 匿名 `apikey` 能力必须是显式允许，不要扩散成默认放开。
 - 新建或同步 Hasura permissions 时，禁止默认生成无行过滤的写权限；任何匿名写入都必须有明确业务理由和测试。
+- Hasura 表权限必须使用操作级列能力：select 使用全部可读列，insert/update 分别使用 PostgreSQL 实际可写列；`GENERATED ALWAYS` 与 `IDENTITY ALWAYS` 不得进入客户端写权限或 owner insert preset，materialization、inspection、overview 和 migration 必须共用同一能力集合。
+- schema 级 Hasura 状态接口必须从授权 guard 写入的 `request.projectAccess.projectId` 读取项目当前 `data_access_mode`：`compatibility` 只检查 `user / anonymous`，`explicit` 只检查项目 scoped roles，不得合并两套角色造成误报；非默认环境在环境 actor 身份未实现前必须明确返回运行时不可用，状态响应不得暴露物理 Hasura role。
 - 修改认证请求头时，要联动检查 SDK、MCP Server、Admin server routes 和 nginx 代理是否使用同一契约。
 - Apple Project Auth 使用平台级 identity binding：Apple subject 只能存在于 `druvia_project_auth_identities`，不得写入项目业务 `users.provider_id`、email 或日志。
 - Apple `.p8` 与 provider refresh token 必须使用独立 `SECRETS_ENCRYPTION_KEY` 加密；缺失或无效时 Apple 配置和运行必须失败，不得回退 `JWT_SECRET`。禁用 provider 只阻止新登录，已有 refresh 校验与 revoke 仍需可用。

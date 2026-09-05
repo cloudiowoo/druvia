@@ -11,6 +11,16 @@ const roles = {
 }
 
 const columns = ['id', 'owner_id', 'title', 'created_at']
+const capabilities = {
+  readableColumns: columns,
+  insertableColumns: columns,
+  updateableColumns: columns,
+}
+const generatedColumnCapabilities = {
+  readableColumns: ['id', 'owner_id', 'title', 'observed_at'],
+  insertableColumns: ['id', 'owner_id', 'title'],
+  updateableColumns: ['id', 'owner_id', 'title'],
+}
 
 function policy(overrides: Partial<TableDataAccessInput> = {}): TableDataAccessInput {
   return {
@@ -41,7 +51,7 @@ describe('table data access policy materializer', () => {
           ownerColumn: 'owner_id',
         },
       }),
-      { roles, columns }
+      { roles, capabilities }
     )
 
     const ownerFilter = { owner_id: { _eq: 'X-Hasura-User-Id' } }
@@ -88,7 +98,7 @@ describe('table data access policy materializer', () => {
           ownerColumn: null,
         },
       }),
-      { roles, columns }
+      { roles, capabilities }
     )
 
     expect(result.map((item) => item.operation)).toEqual([
@@ -111,7 +121,7 @@ describe('table data access policy materializer', () => {
   it('materializes anonymous read only and never anonymous writes', () => {
     const result = materializeTableDataAccessPolicy(
       policy({ anonymous: { select: true } }),
-      { roles, columns }
+      { roles, capabilities }
     )
 
     expect(result).toEqual([{
@@ -121,26 +131,66 @@ describe('table data access policy materializer', () => {
     }])
   })
 
+  it('keeps generated columns readable while excluding them from writes', () => {
+    const result = materializeTableDataAccessPolicy(
+      policy({
+        authenticated: {
+          select: 'all',
+          insert: 'all',
+          update: 'all',
+          delete: 'none',
+          ownerColumn: null,
+        },
+        anonymous: { select: true },
+      }),
+      { roles, capabilities: generatedColumnCapabilities }
+    )
+
+    expect(result.find((item) => item.operation === 'select')?.permission.columns)
+      .toEqual(generatedColumnCapabilities.readableColumns)
+    expect(result.find((item) => item.operation === 'insert')?.permission.columns)
+      .toEqual(generatedColumnCapabilities.insertableColumns)
+    expect(result.find((item) => item.operation === 'update')?.permission.columns)
+      .toEqual(generatedColumnCapabilities.updateableColumns)
+    expect(result.find((item) => item.role === roles.anonymous)?.permission.columns)
+      .toEqual(generatedColumnCapabilities.readableColumns)
+  })
+
+  it('rejects owner insert when the owner column cannot be preset', () => {
+    expect(() => materializeTableDataAccessPolicy(
+      policy({
+        authenticated: {
+          select: 'owner',
+          insert: 'owner',
+          update: 'none',
+          delete: 'none',
+          ownerColumn: 'observed_at',
+        },
+      }),
+      { roles, capabilities: generatedColumnCapabilities }
+    )).toThrow('Owner column is not insertable')
+  })
+
   it('emits no permissions for a closed policy', () => {
-    expect(materializeTableDataAccessPolicy(policy(), { roles, columns })).toEqual([])
+    expect(materializeTableDataAccessPolicy(policy(), { roles, capabilities })).toEqual([])
   })
 
   it('rejects owner mode without a valid owner column', () => {
     expect(() => validateTableDataAccessInput(
       policy({ authenticated: { select: 'owner', ownerColumn: null } }),
-      columns
+      capabilities
     )).toThrow('Owner column is required')
 
     expect(() => validateTableDataAccessInput(
       policy({ authenticated: { select: 'owner', ownerColumn: 'missing_id' } }),
-      columns
+      capabilities
     )).toThrow('Owner column does not exist')
   })
 
   it('rejects unsupported access modes at runtime', () => {
     expect(() => validateTableDataAccessInput(
       policy({ authenticated: { select: 'custom' as never } }),
-      columns
+      capabilities
     )).toThrow('Unsupported access mode')
   })
 })
