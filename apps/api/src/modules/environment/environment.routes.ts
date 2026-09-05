@@ -5,6 +5,7 @@ import type { JwtPayload } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import * as environmentService from './environment.service.js';
 import { DataAccessMutationLockedError } from '../data-access/data-access-mutation-lock.js';
+import { requireProjectCapability } from '../../lib/project-authorization.js';
 
 interface ProjectParams {
   projectId: string;
@@ -49,6 +50,7 @@ async function verifyProjectAccess(
 export async function environmentRoutes(app: FastifyInstance) {
   // All routes require authentication
   app.addHook('preHandler', authenticate);
+  app.addHook('preHandler', requireProjectCapability('environments:manage'));
 
   // List environments for a project
   app.get(
@@ -111,6 +113,12 @@ export async function environmentRoutes(app: FastifyInstance) {
           return reply.status(404).send({
             success: false,
             error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' },
+          });
+        }
+        if (error instanceof environmentService.EnvironmentSchemaConflictError) {
+          return reply.status(409).send({
+            success: false,
+            error: { code: error.code, message: 'Environment schema name is already in use' },
           });
         }
         return reply.status(500).send({

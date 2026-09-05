@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { generateProjectOpenApi } from './openapi.service.js';
 import { authenticate } from '../../middleware/auth.js';
-import { checkProjectAccess } from '../../lib/access.js';
+import { requireProjectCapability } from '../../lib/project-authorization.js';
 import { checkProjectGraphqlRateLimit, createRateLimiter } from '../../middleware/ratelimit.js';
 import { config } from '../../config/index.js';
 import { getProjectById } from '../project/project.service.js';
@@ -168,17 +168,7 @@ export async function openapiRoutes(fastify: FastifyInstance) {
     '/projects/:projectId/openapi',
     {
       preHandler: [
-        async (request: FastifyRequest, reply: FastifyReply) => {
-          const { projectId } = request.params as { projectId: string };
-          const userId = (request as any).user?.userId;
-          if (!userId) {
-            return reply.status(401).send({ error: 'Unauthorized' });
-          }
-          const hasAccess = await checkProjectAccess(userId, projectId);
-          if (!hasAccess) {
-            return reply.status(403).send({ error: 'Access denied' });
-          }
-        },
+        requireProjectCapability('database:read'),
         openapiRateLimiter,
       ],
     },

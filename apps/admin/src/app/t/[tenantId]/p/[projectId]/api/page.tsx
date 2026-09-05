@@ -9,6 +9,7 @@ import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
 import { getPublicApiBaseUrl } from '@/lib/public-env';
 import { buildProjectGraphqlEndpoint } from '@/lib/project-graphql';
+import { useProjectAccess } from '@/hooks/use-project-access';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Copy, Check, Eye, EyeOff, Database, RefreshCw, Trash2, Plus } from 'lucide-react';
 
@@ -54,6 +55,8 @@ export default function ProjectApiPage() {
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
   const { currentTenant, currentProject, currentEnv } = useAppStore();
+  const { can } = useProjectAccess();
+  const canManageDatabaseCredentials = can('database:credentials');
 
   // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
   const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
@@ -74,6 +77,11 @@ export default function ProjectApiPage() {
     : `${API_URL}/api/v1/schemas/<schema>`;
 
   useEffect(() => {
+    if (!canManageDatabaseCredentials) {
+      setDbInfo(null);
+      setDbCredentials(null);
+      return;
+    }
     const loadDbInfo = async () => {
       try {
         const res = await api.getProjectDbInfo(projectId);
@@ -85,7 +93,7 @@ export default function ProjectApiPage() {
       }
     };
     loadDbInfo();
-  }, [projectId]);
+  }, [projectId, canManageDatabaseCredentials]);
 
   const copyToClipboard = async (text: string, field: string) => {
     try {
@@ -225,7 +233,7 @@ export default function ProjectApiPage() {
             </div>
           </div>
 
-          {/* 数据库直连 */}
+          {canManageDatabaseCredentials && (
           <div className="bg-white rounded-lg border p-6">
             <div className="flex items-center gap-2 mb-4">
               <Database className="h-5 w-5 text-blue-600" />
@@ -350,6 +358,7 @@ export default function ProjectApiPage() {
               </div>
             )}
           </div>
+          )}
         </TabsContent>
 
         {/* GraphQL Tab */}

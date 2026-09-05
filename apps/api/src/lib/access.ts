@@ -5,8 +5,18 @@ export async function checkTenantAccess(userId: string, tenantId: string): Promi
     `SELECT EXISTS(
       SELECT 1
       FROM druvia_tenants t
+      JOIN druvia_users u ON u.user_id = $2 AND u.status = 'active'
       WHERE t.tenant_id = $1
-        AND t.owner_uid = (SELECT id FROM druvia_users WHERE user_id = $2)
+        AND (
+          u.role = 'super_admin'
+          OR t.owner_uid = u.id
+          OR EXISTS (
+            SELECT 1
+            FROM druvia_projects p
+            JOIN druvia_project_members pm ON pm.project_id = p.project_id
+            WHERE p.tenant_id = t.tenant_id AND pm.user_uid = u.id
+          )
+        )
     ) AS exists`,
     [tenantId, userId]
   );
@@ -15,14 +25,15 @@ export async function checkTenantAccess(userId: string, tenantId: string): Promi
 }
 
 export async function checkProjectAccess(userId: string, projectId: string): Promise<boolean> {
-  // 检查用户是否属于项目所属的租户
   const result = await queryOne<{ exists: boolean }>(
     `SELECT EXISTS(
       SELECT 1 FROM druvia_projects p
       JOIN druvia_tenants t ON t.tenant_id = p.tenant_id
-      WHERE p.project_id = $1 AND t.owner_uid = (
-        SELECT id FROM druvia_users WHERE user_id = $2
-      )
+      JOIN druvia_users u ON u.user_id = $2 AND u.status = 'active'
+      LEFT JOIN druvia_project_members pm
+        ON pm.project_id = p.project_id AND pm.user_uid = u.id
+      WHERE p.project_id = $1
+        AND (u.role = 'super_admin' OR t.owner_uid = u.id OR pm.id IS NOT NULL)
     ) as exists`,
     [projectId, userId]
   );
@@ -30,13 +41,14 @@ export async function checkProjectAccess(userId: string, projectId: string): Pro
 }
 
 export async function checkSchemaAccess(userId: string, schemaName: string): Promise<boolean> {
-  // 检查用户是否有权访问该 schema
-  // 支持项目基础 schema 和环境 schema
   const result = await queryOne<{ exists: boolean }>(
     `SELECT EXISTS(
       SELECT 1 FROM druvia_projects p
       JOIN druvia_tenants t ON t.tenant_id = p.tenant_id
-      WHERE t.owner_uid = (SELECT id FROM druvia_users WHERE user_id = $2)
+      JOIN druvia_users u ON u.user_id = $2 AND u.status = 'active'
+      LEFT JOIN druvia_project_members pm
+        ON pm.project_id = p.project_id AND pm.user_uid = u.id
+      WHERE (u.role = 'super_admin' OR t.owner_uid = u.id OR pm.id IS NOT NULL)
         AND (
           p.schema_name = $1
           OR EXISTS (

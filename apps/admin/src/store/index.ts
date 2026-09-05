@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { ProjectAccess } from '@druvia/shared';
 
 // Simplified types for admin context (subset of full types)
 export interface TenantContext {
@@ -38,12 +39,14 @@ interface AppState {
   currentProject: ProjectContext | null;
   currentUser: UserContext | null;
   currentEnv: EnvironmentContext | null;
+  currentProjectAccess: ProjectAccess | null;
 
   // Actions
   setCurrentTenant: (tenant: TenantContext | null) => void;
   setCurrentProject: (project: ProjectContext | null) => void;
   setCurrentUser: (user: UserContext | null) => void;
   setCurrentEnv: (env: EnvironmentContext | null) => void;
+  setCurrentProjectAccess: (access: ProjectAccess | null) => void;
   clearContext: () => void;
 }
 
@@ -54,12 +57,19 @@ export const useAppStore = create<AppState>()(
       currentProject: null,
       currentUser: null,
       currentEnv: null,
+      currentProjectAccess: null,
 
       setCurrentTenant: (tenant) =>
-        set({ currentTenant: tenant, currentProject: null, currentEnv: null }),
+        set({ currentTenant: tenant, currentProject: null, currentEnv: null, currentProjectAccess: null }),
 
       setCurrentProject: (project) =>
-        set({ currentProject: project, currentEnv: null }),
+        set((state) => ({
+          currentProject: project,
+          currentEnv: null,
+          currentProjectAccess: state.currentProject?.projectId === project?.projectId
+            ? state.currentProjectAccess
+            : null,
+        })),
 
       setCurrentUser: (user) =>
         set({ currentUser: user }),
@@ -67,8 +77,11 @@ export const useAppStore = create<AppState>()(
       setCurrentEnv: (env) =>
         set({ currentEnv: env }),
 
+      setCurrentProjectAccess: (access) =>
+        set({ currentProjectAccess: access }),
+
       clearContext: () =>
-        set({ currentTenant: null, currentProject: null, currentUser: null, currentEnv: null }),
+        set({ currentTenant: null, currentProject: null, currentUser: null, currentEnv: null, currentProjectAccess: null }),
     }),
     {
       name: 'druvia-admin-store',

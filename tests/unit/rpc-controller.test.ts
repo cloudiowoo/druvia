@@ -13,14 +13,14 @@ vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
   getProjectById: vi.fn(),
 }))
 
-vi.mock('../../apps/api/src/lib/access.js', () => ({
-  checkProjectAccess: vi.fn(),
+vi.mock('../../apps/api/src/lib/project-authorization.js', () => ({
+  assertProjectCapability: vi.fn(),
 }))
 
 import * as rpcController from '../../apps/api/src/modules/rpc/rpc.controller.js'
 import { callFunction } from '../../apps/api/src/modules/rpc/rpc.service.js'
 import { getProjectById } from '../../apps/api/src/modules/project/project.service.js'
-import { checkProjectAccess } from '../../apps/api/src/lib/access.js'
+import { assertProjectCapability } from '../../apps/api/src/lib/project-authorization.js'
 
 type ReplyStub = {
   status: ReturnType<typeof vi.fn>
@@ -91,7 +91,7 @@ describe('RPC Controller', () => {
         provider: 'trusted_backend',
       }
     )
-    expect(checkProjectAccess).not.toHaveBeenCalled()
+    expect(assertProjectCapability).not.toHaveBeenCalled()
     expect(reply.payload).toEqual({
       data: { ok: true },
       error: null,
@@ -122,7 +122,13 @@ describe('RPC Controller', () => {
   })
 
   it('passes an authorized Platform User as an explicit management actor', async () => {
-    vi.mocked(checkProjectAccess).mockResolvedValue(true)
+    vi.mocked(assertProjectCapability).mockResolvedValue({
+      projectId: 'proj_123',
+      role: 'database_admin',
+      capabilities: ['database:write'],
+      isWorkspaceOwner: false,
+      isSuperAdmin: false,
+    })
     vi.mocked(callFunction).mockResolvedValue({ ok: true })
     const reply = createReply()
 
@@ -137,7 +143,11 @@ describe('RPC Controller', () => {
       },
     } as never, reply as never)
 
-    expect(checkProjectAccess).toHaveBeenCalledWith('user_123', 'proj_123')
+    expect(assertProjectCapability).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user_123' }),
+      'proj_123',
+      'database:write',
+    )
     expect(callFunction).toHaveBeenCalledWith(
       'dru_default_taroapp',
       'get_profile',

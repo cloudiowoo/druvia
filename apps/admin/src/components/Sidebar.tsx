@@ -6,7 +6,13 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useAppStore } from '@/store';
 import { isMultiTenantEnabled, getDefaultTenantId } from '@/lib/tenant-config';
-import { buildGlobalNav, buildProjectNav, buildTenantNav, type NavIconKey } from './sidebar-nav';
+import {
+  buildGlobalNav,
+  buildProjectNav,
+  buildTenantNav,
+  filterPlatformNavigation,
+  type NavIconKey,
+} from './sidebar-nav';
 import {
   LayoutDashboard,
   Building2,
@@ -25,6 +31,7 @@ import {
   Code,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { filterProjectNavigation } from '@/lib/project-access';
 
 const navIcons: Record<NavIconKey, React.ReactNode> = {
   dashboard: <LayoutDashboard className="h-4 w-4" />,
@@ -45,7 +52,7 @@ const navIcons: Record<NavIconKey, React.ReactNode> = {
 export function Sidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
-  const { currentTenant, currentProject, setCurrentTenant, setCurrentProject } = useAppStore();
+  const { currentTenant, currentProject, currentProjectAccess, setCurrentTenant, setCurrentProject } = useAppStore();
 
   // Parse current context from URL
   const tenantMatch = pathname.match(/^\/t\/([^/]+)/);
@@ -64,7 +71,7 @@ export function Sidebar() {
   const defaultTenant = getDefaultTenantId();
 
   if (projectId && tenantId) {
-    navItems = buildProjectNav(tenantId, projectId);
+    navItems = filterProjectNavigation(buildProjectNav(tenantId, projectId), currentProjectAccess);
     contextTitle = currentProject?.name || '项目';
     contextSubtitle = multiTenant ? (currentTenant?.name ?? null) : null;
     backHref = `/t/${tenantId}`;
@@ -83,6 +90,8 @@ export function Sidebar() {
   } else {
     navItems = buildGlobalNav(multiTenant, defaultTenant);
   }
+
+  navItems = filterPlatformNavigation(navItems, user?.role === 'super_admin');
 
   const handleBack = () => {
     if (projectId) {

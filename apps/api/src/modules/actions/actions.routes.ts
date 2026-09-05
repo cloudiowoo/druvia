@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import * as controller from './actions.controller.js';
+import { authenticate } from '../../middleware/auth.js';
 import { verifyHasuraWebhook } from '../../middleware/hasura.js';
 
 export async function actionsRoutes(app: FastifyInstance) {
@@ -9,8 +10,8 @@ export async function actionsRoutes(app: FastifyInstance) {
   // Auth actions
   app.post('/actions/register', controller.actionRegister as never);
   app.post('/actions/login', controller.actionLogin as never);
-  app.post('/actions/me', controller.actionGetMe as never);
+  app.post('/actions/me', { preHandler: authenticate }, controller.actionGetMe as never);
 
   // Tenant actions
-  app.post('/actions/create-tenant', controller.actionCreateTenant as never);
+  app.post('/actions/create-tenant', { preHandler: authenticate }, controller.actionCreateTenant as never);
 }

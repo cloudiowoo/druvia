@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { callFunction, RpcError } from './rpc.service.js';
 import * as projectService from '../project/project.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
+import { assertProjectCapability, AuthorizationError } from '../../lib/project-authorization.js';
 import { isPlatformUser, isProjectUser } from '../../middleware/auth.js';
 import {
   resolvePlatformProjectActor,
@@ -48,11 +49,13 @@ async function verifyProjectAccess(
 
   let actor: ProjectActorContext;
   if (isPlatformUser(user)) {
-    const hasAccess = await checkProjectAccess(user.userId, projectId);
-    if (!hasAccess) {
-      reply.status(403).send({
+    try {
+      await assertProjectCapability(user, projectId, 'database:write');
+    } catch (error) {
+      if (!(error instanceof AuthorizationError)) throw error;
+      reply.status(error.statusCode).send({
         success: false,
-        error: { code: 'FORBIDDEN', message: 'No access to this project' },
+        error: { code: error.code, message: error.message },
       });
       return null;
     }

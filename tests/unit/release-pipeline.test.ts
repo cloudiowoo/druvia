@@ -31,7 +31,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '17',
-      DRUVIA_MIGRATION_TO: '18',
+      DRUVIA_MIGRATION_TO: '22',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
       DRUVIA_MIGRATION_REVERSIBLE: 'false',
     }, {
@@ -54,7 +54,7 @@ describe('release manifest generator', () => {
       migrations: {
         required: true,
         from: 17,
-        to: 18,
+        to: 22,
         requiresBackup: true,
         reversible: false,
       },
@@ -72,6 +72,41 @@ describe('release manifest generator', () => {
 
   it('rejects build metadata because release versions are also used as Docker tags', () => {
     expect(() => normalizeReleaseVersion('v0.2.0+build.1')).toThrow(/INVALID_RELEASE_VERSION/);
+  });
+
+  it('rejects release manifests that can skip migration 022 or its backup', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'druvia-release-'));
+    const composePath = join(dir, 'docker-compose.release.yml');
+    await writeFile(composePath, 'services:\n  api:\n    image: test\n', 'utf8');
+    const baseEnv = {
+      GITHUB_REF_NAME: 'v0.3.0',
+      GITHUB_REPOSITORY: 'druvia/druvia',
+      DRUVIA_API_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-api',
+      DRUVIA_ADMIN_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-admin',
+      DRUVIA_WORKER_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-worker',
+      DRUVIA_UPDATER_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-updater',
+      DRUVIA_API_IMAGE_DIGEST: digest('a'),
+      DRUVIA_ADMIN_IMAGE_DIGEST: digest('b'),
+      DRUVIA_WORKER_IMAGE_DIGEST: digest('c'),
+      DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
+      DRUVIA_MIGRATION_REQUIRED: 'true',
+      DRUVIA_MIGRATION_FROM: '18',
+      DRUVIA_MIGRATION_TO: '22',
+      DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
+    };
+
+    await expect(buildReleaseManifest({
+      ...baseEnv, DRUVIA_MIGRATION_REQUIRED: 'false',
+    }, { composePath })).rejects.toThrow(/UNSAFE_MIGRATION_CONTRACT/);
+    await expect(buildReleaseManifest({
+      ...baseEnv, DRUVIA_MIGRATION_TO: '21',
+    }, { composePath })).rejects.toThrow(/UNSAFE_MIGRATION_CONTRACT/);
+    await expect(buildReleaseManifest({
+      ...baseEnv, DRUVIA_MIGRATION_REQUIRES_BACKUP: 'false',
+    }, { composePath })).rejects.toThrow(/UNSAFE_MIGRATION_CONTRACT/);
+    await expect(buildReleaseManifest({
+      ...baseEnv, DRUVIA_MIGRATION_REVERSIBLE: 'true',
+    }, { composePath })).rejects.toThrow(/UNSAFE_MIGRATION_CONTRACT/);
   });
 });
 
@@ -169,17 +204,40 @@ describe('release workflow', () => {
     expect(workflow).toContain('docker/docker-compose.release.yml');
   });
 
-  it('marks migration 021 as the safe default for tag and manual releases', () => {
+  it('marks migration 022 as the safe default for tag and manual releases', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
-    expect(workflow).toContain("migration_required:\n        description: Whether this release requires database migrations\n        required: true\n        default: 'true'");
+    expect(workflow).not.toContain("\n      migration_required:");
     expect(workflow).toContain("migration_from:\n        description: Current migration floor\n        required: true\n        default: '18'");
-    expect(workflow).toContain("migration_to:\n        description: Target migration ceiling\n        required: true\n        default: '21'");
-    expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: \$\{\{ inputs\.migration_required \|\| 'true' \}\}/g)).toHaveLength(2);
+    expect(workflow).not.toContain("\n      migration_to:");
+    expect(workflow).not.toContain("\n      migration_requires_backup:");
+    expect(workflow).not.toContain("\n      migration_reversible:");
+    expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_FROM: \$\{\{ inputs\.migration_from \|\| '18' \}\}/g)).toHaveLength(2);
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: \$\{\{ inputs\.migration_to \|\| '21' \}\}/g)).toHaveLength(2);
-    expect(workflow.match(/DRUVIA_MIGRATION_REQUIRES_BACKUP: \$\{\{ inputs\.migration_requires_backup \|\| 'true' \}\}/g)).toHaveLength(2);
-    expect(workflow.match(/DRUVIA_MIGRATION_REVERSIBLE: \$\{\{ inputs\.migration_reversible \|\| 'false' \}\}/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: '22'/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_REVERSIBLE: 'false'/g)).toHaveLength(2);
+  });
+
+  it('gates release images on project membership authorization', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+    const gate = workflow.indexOf('name: Verify project membership authorization');
+    const firstImageBuild = workflow.indexOf('uses: docker/build-push-action');
+
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(firstImageBuild);
+    expect(workflow).toContain('tests/unit/project-members-schema.test.ts');
+    expect(workflow).toContain('tests/unit/project-authorization.test.ts');
+    expect(workflow).toContain('tests/unit/project-service.test.ts');
+    expect(workflow).toContain('tests/unit/project-members.service.test.ts');
+    expect(workflow).toContain('tests/unit/project-members.controller.test.ts');
+    expect(workflow).toContain('tests/unit/admin/project-access.test.ts');
+    expect(workflow).toContain('tests/unit/admin/project-members-ui.test.ts');
+    expect(workflow).toContain('tests/unit/admin/project-read-only-ui.test.ts');
+    expect(workflow).toContain('tests/unit/admin/project-api-page.test.tsx');
+    expect(workflow).toContain('tests/unit/admin/tenant-backups-page.test.tsx');
+    expect(workflow).toContain('tests/unit/admin/sidebar-nav.test.ts');
+    expect(workflow).toContain('tests/unit/backup-authorization.test.ts');
   });
 
   it('runs the Project Storage actor gate before release image builds', () => {

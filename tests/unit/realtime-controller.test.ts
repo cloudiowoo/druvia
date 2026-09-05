@@ -22,6 +22,14 @@ vi.mock('../../apps/api/src/lib/access.js', () => ({
   checkProjectAccess: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/lib/project-authorization.js', () => {
+  class AuthorizationError extends Error {}
+  return {
+    AuthorizationError,
+    assertProjectCapability: vi.fn(),
+  }
+})
+
 vi.mock('../../apps/api/src/middleware/ratelimit.js', () => ({
   checkRealtimeTokenRateLimit: rateLimitMock,
 }))
@@ -45,6 +53,7 @@ vi.mock('../../apps/api/src/lib/logger.js', () => ({
 
 import { query, queryOne } from '../../apps/api/src/db/index.js'
 import { checkProjectAccess } from '../../apps/api/src/lib/access.js'
+import { assertProjectCapability } from '../../apps/api/src/lib/project-authorization.js'
 import * as realtimeController from '../../apps/api/src/modules/realtime/realtime.controller.js'
 
 function createReply() {
@@ -65,6 +74,13 @@ describe('Realtime Controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(checkProjectAccess).mockResolvedValue(true)
+    vi.mocked(assertProjectCapability).mockResolvedValue({
+      projectId: 'proj_123',
+      role: 'owner',
+      capabilities: ['realtime:manage'],
+      isWorkspaceOwner: true,
+      isSuperAdmin: false,
+    })
     vi.mocked(queryOne).mockResolvedValue({
       schema_name: 'dru_test',
       data_access_mode: 'compatibility',

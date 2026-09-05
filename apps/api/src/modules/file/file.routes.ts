@@ -1,16 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import * as controller from './file.controller.js';
 import { authenticate } from '../../middleware/auth.js';
+import { requireTenantAccess } from '../../lib/project-authorization.js';
 
 export async function fileRoutes(app: FastifyInstance) {
   // All file routes require authentication
   app.addHook('preHandler', authenticate);
 
   // Upload file
-  app.post('/tenants/:tenantId/files', controller.uploadFile as never);
+  app.post('/tenants/:tenantId/files', { preHandler: requireTenantAccess({ ownerOnly: true }) }, controller.uploadFile as never);
 
   // List files
-  app.get('/tenants/:tenantId/files', controller.listFiles as never);
+  app.get('/tenants/:tenantId/files', { preHandler: requireTenantAccess({ ownerOnly: true }) }, controller.listFiles as never);
 
   // Get file by ID
   app.get('/files/:fileId', controller.getFile);

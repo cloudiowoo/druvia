@@ -2,8 +2,8 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as projectService from './project.service.js';
 import * as dbCredentialsService from './db-credentials.service.js';
 import type { CreateProjectInput, UpdateProjectInput } from '@druvia/shared';
-import { checkProjectAccess } from '../../lib/access.js';
 import { isPlatformUser } from '../../middleware/auth.js';
+import { assertProjectCapability, assertTenantAccess, AuthorizationError } from '../../lib/project-authorization.js';
 import {
   DataAccessMutationLockedError,
   isDataAccessMigrationDeleteGuardError,
@@ -29,34 +29,17 @@ async function verifyDeleteProjectAccess(
   request: FastifyRequest<{ Params: ProjectParams }>,
   reply: FastifyReply
 ): Promise<boolean> {
-  const user = request.user;
-  if (!user || !isPlatformUser(user)) {
-    reply.status(401).send({
+  try {
+    await assertProjectCapability(request.user, request.params.projectId, 'project:delete');
+    return true;
+  } catch (error) {
+    if (!(error instanceof AuthorizationError)) throw error;
+    reply.status(error.statusCode).send({
       success: false,
-      error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+      error: { code: error.code, message: error.message },
     });
     return false;
   }
-
-  const project = await projectService.getProjectById(request.params.projectId);
-  if (!project) {
-    reply.status(404).send({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Project not found' },
-    });
-    return false;
-  }
-
-  const hasAccess = await checkProjectAccess(user.userId, request.params.projectId);
-  if (!hasAccess) {
-    reply.status(403).send({
-      success: false,
-      error: { code: 'FORBIDDEN', message: 'No access to this project' },
-    });
-    return false;
-  }
-
-  return true;
 }
 
 export async function createProject(
@@ -75,6 +58,15 @@ export async function createProject(
       return reply.status(409).send({
         success: false,
         error: { code: 'CONFLICT', message: 'Project alias already exists in this tenant' },
+      });
+    }
+    if (err.code === 'PROJECT_SCHEMA_CONFLICT') {
+      return reply.status(409).send({
+        success: false,
+        error: {
+          code: 'PROJECT_SCHEMA_CONFLICT',
+          message: 'Project schema name is already in use',
+        },
       });
     }
     if (err.code === '23503' || err.message === 'Tenant not found') {
@@ -115,6 +107,17 @@ export async function getProjectByAlias(
       error: { code: 'NOT_FOUND', message: 'Project not found' },
     });
   }
+  try {
+    await assertProjectCapability(request.user, project.projectId, 'project:read');
+  } catch (error) {
+    if (error instanceof AuthorizationError) {
+      return reply.status(error.statusCode).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    throw error;
+  }
   return reply.send({ success: true, data: project });
 }
 
@@ -125,7 +128,16 @@ export async function listProjects(
   const limit = parseInt(request.query.limit || '50', 10);
   const offset = parseInt(request.query.offset || '0', 10);
 
-  const projects = await projectService.listProjects(request.params.tenantId, limit, offset);
+  if (!request.user || !isPlatformUser(request.user)) {
+    return reply.status(401).send({
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'Platform authentication required' },
+    });
+  }
+  await assertTenantAccess(request.user, request.params.tenantId);
+  const projects = await projectService.listAccessibleProjects(
+    request.params.tenantId, request.user, limit, offset,
+  );
 
   return reply.send({
     success: true,

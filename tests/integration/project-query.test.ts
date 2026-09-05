@@ -99,6 +99,30 @@ describe('ProjectQuery Integration', () => {
       ).rejects.toThrow('Only SELECT queries are allowed');
     });
 
+    it('should reject writes hidden inside a WITH query', async () => {
+      await expect(
+        projectService.executeQuery(
+          testProjectId,
+          'WITH removed AS (DELETE FROM test_items RETURNING *) SELECT * FROM removed'
+        )
+      ).rejects.toThrow();
+
+      const count = await pool.query(`SELECT COUNT(*)::int AS count FROM ${testSchemaName}.test_items`);
+      expect(count.rows[0].count).toBe(2);
+    });
+
+    it('should reject multiple statements before a write can run', async () => {
+      await expect(
+        projectService.executeQuery(
+          testProjectId,
+          'SELECT 1; DELETE FROM test_items'
+        )
+      ).rejects.toThrow();
+
+      const count = await pool.query(`SELECT COUNT(*)::int AS count FROM ${testSchemaName}.test_items`);
+      expect(count.rows[0].count).toBe(2);
+    });
+
     it('should throw error for non-existent project', async () => {
       await expect(
         projectService.executeQuery('proj_nonexistent', 'SELECT 1')

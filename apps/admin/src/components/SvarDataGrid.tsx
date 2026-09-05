@@ -102,6 +102,7 @@ interface SvarDataGridProps {
   primaryKeyColumn?: string;
   pageSize?: number;
   onError?: (error: Error) => void;
+  readOnly?: boolean;
 }
 
 // 表结构信息（包含默认值）
@@ -119,6 +120,7 @@ export function SvarDataGrid({
   primaryKeyColumn = 'id',
   pageSize = 50,
   onError,
+  readOnly = false,
 }: SvarDataGridProps) {
   const [data, setData] = useState<Record<string, unknown>[]>([]);
   const [columns, setColumns] = useState<ColumnInfo[]>([]);
@@ -202,7 +204,7 @@ export function SvarDataGrid({
       return {
         id: col.name,
         header: col.name,
-        editor: getEditor(col.type) || 'text', // 默认使用 text 编辑器
+        editor: readOnly ? undefined : (getEditor(col.type) || 'text'),
         width: col.name === primaryKeyColumn ? 80 : undefined,
         flexgrow: col.name !== primaryKeyColumn ? 1 : undefined,
         sort: true,
@@ -228,7 +230,7 @@ export function SvarDataGrid({
         }),
       };
     });
-  }, [columns, primaryKeyColumn]);
+  }, [columns, primaryKeyColumn, readOnly]);
 
   // 将数据中的日期字符串转换为适合编辑的格式
   // - 纯日期类型：转换为 Date 对象（给 datepicker 使用）
@@ -332,15 +334,15 @@ export function SvarDataGrid({
       {/* 工具栏 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={() => {
+          {!readOnly && <Button size="sm" onClick={() => {
             setEditingRecord(null);
             setFormMode('create');
             setFormDialogOpen(true);
           }}>
             <Plus className="h-4 w-4 mr-2" />
             新增行
-          </Button>
-          {selectedRows.length === 1 && (
+          </Button>}
+          {!readOnly && selectedRows.length === 1 && (
             <>
               <Button
                 size="sm"
@@ -364,7 +366,7 @@ export function SvarDataGrid({
               </Button>
             </>
           )}
-          {selectedRows.length > 1 && (
+          {!readOnly && selectedRows.length > 1 && (
             <Button size="sm" variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
               <Trash2 className="h-4 w-4 mr-2" />
               删除选中 ({selectedRows.length})
@@ -447,6 +449,7 @@ export function SvarDataGrid({
               }
             }}
             onUpdateCell={async (ev: Record<string, unknown>) => {
+              if (readOnly) return;
               // SVAR Grid 返回 { id, column, value } 格式
               try {
                 const rowId = ev.id;
@@ -528,7 +531,7 @@ export function SvarDataGrid({
       </div>
 
       {/* 删除确认对话框 - 批量删除 */}
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      {!readOnly && <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>
@@ -543,10 +546,10 @@ export function SvarDataGrid({
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
-      </AlertDialog>
+      </AlertDialog>}
 
       {/* 删除确认对话框 - 单行删除 */}
-      <AlertDialog open={deleteRowId !== null} onOpenChange={(open) => !open && setDeleteRowId(null)}>
+      {!readOnly && <AlertDialog open={deleteRowId !== null} onOpenChange={(open) => !open && setDeleteRowId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>
@@ -561,10 +564,10 @@ export function SvarDataGrid({
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
-      </AlertDialog>
+      </AlertDialog>}
 
       {/* 记录详情表单弹窗 */}
-      <RecordFormDialog
+      {!readOnly && <RecordFormDialog
         open={formDialogOpen}
         onOpenChange={setFormDialogOpen}
         schemaName={schemaName}
@@ -582,7 +585,7 @@ export function SvarDataGrid({
           }
           fetchData();
         }}
-      />
+      />}
     </div>
   );
 }

@@ -1,9 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { mockDbClient, mockPoolConnect } = vi.hoisted(() => {
+  const mockDbClient = {
+    query: vi.fn(),
+    release: vi.fn(),
+  }
+  return {
+    mockDbClient,
+    mockPoolConnect: vi.fn(),
+  }
+})
+
 vi.mock('../../apps/api/src/db/index.js', () => ({
   query: vi.fn(),
   queryOne: vi.fn(),
-  pool: {},
+  pool: { connect: mockPoolConnect },
 }))
 
 vi.mock('../../apps/api/src/modules/schema/schema.service.js', () => ({
@@ -53,6 +64,7 @@ import * as projectIdentityRepository from '../../apps/api/src/modules/project-a
 import {
   createProject,
   deleteProject,
+  executeQuery,
   getProjectById,
   updateProject,
 } from '../../apps/api/src/modules/project/project.service.js'
@@ -93,6 +105,7 @@ describe('Project Service', () => {
     mockListEnvironments.mockResolvedValue([])
     mockDropSchema.mockResolvedValue(undefined)
     mockDropProjectDbUser.mockResolvedValue(false)
+    mockPoolConnect.mockResolvedValue(mockDbClient)
     mockGetDefaultStorageAdapter.mockReturnValue({
       name: 'local',
       upload: vi.fn(),
@@ -103,6 +116,36 @@ describe('Project Service', () => {
       getSignedUrl: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
     })
+  })
+
+  it('executes viewer SQL as one statement inside a read-only transaction', async () => {
+    mockQueryOne.mockResolvedValueOnce(projectRow('explicit'))
+    mockDbClient.query.mockImplementation(async (statement: unknown) => {
+      const text = typeof statement === 'string'
+        ? statement
+        : (statement as { text: string }).text
+      if (text.startsWith("SELECT format('SET LOCAL search_path")) {
+        return { rows: [{ sql: 'SET LOCAL search_path TO dru_demo, public' }], fields: [], rowCount: 1 }
+      }
+      if (typeof statement === 'object' && text === 'WITH rows AS (SELECT 1 AS id) SELECT * FROM rows') {
+        return {
+          rows: [{ id: 1 }],
+          fields: [{ name: 'id', dataTypeID: 23 }],
+          rowCount: 1,
+        }
+      }
+      return { rows: [], fields: [], rowCount: 0 }
+    })
+
+    await executeQuery('proj_123', 'WITH rows AS (SELECT 1 AS id) SELECT * FROM rows')
+
+    expect(mockDbClient.query).toHaveBeenCalledWith('BEGIN READ ONLY')
+    expect(mockDbClient.query).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'WITH rows AS (SELECT 1 AS id) SELECT * FROM rows',
+      queryMode: 'extended',
+    }))
+    expect(mockDbClient.query).toHaveBeenCalledWith('COMMIT')
+    expect(mockDbClient.release).toHaveBeenCalledOnce()
   })
 
   it.each([
@@ -151,6 +194,41 @@ describe('Project Service', () => {
       expect.arrayContaining(['explicit'])
     )
     expect(project.dataAccessMode).toBe('explicit')
+  })
+
+  it('removes the pending project row when schema creation is rejected', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 1,
+        tenant_id: 'tenant_123',
+        alias: 'tenant-demo',
+        name: 'Tenant Demo',
+        owner_uid: 1,
+        plan: 'free',
+        settings: {},
+        status: 'active',
+        description: null,
+        storage_limit: 0,
+        project_limit: 10,
+        user_limit: 10,
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+      .mockResolvedValueOnce(projectRow('explicit'))
+    vi.mocked(schemaService.createProjectSchema).mockRejectedValueOnce(
+      Object.assign(new Error('schema conflict'), { code: 'PROJECT_SCHEMA_CONFLICT' }),
+    )
+
+    await expect(createProject({
+      tenantId: 'tenant_123',
+      alias: 'demo',
+      name: 'Demo',
+    })).rejects.toMatchObject({ code: 'PROJECT_SCHEMA_CONFLICT' })
+
+    expect(mockQuery).toHaveBeenCalledWith(
+      'DELETE FROM druvia_projects WHERE project_id = $1 AND schema_name IS NULL',
+      [expect.stringMatching(/^proj_/)],
+    )
   })
 
   it('merges settings at the top level when updating a project', async () => {

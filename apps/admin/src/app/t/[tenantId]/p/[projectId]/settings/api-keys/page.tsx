@@ -7,6 +7,7 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
 import type { TrustedBackendKeyScope } from '@/lib/api';
+import { useProjectAccess } from '@/hooks/use-project-access';
 
 interface ApiKey {
   id: number;
@@ -61,6 +62,8 @@ export default function ApiKeysPage() {
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
   const { currentTenant, currentProject } = useAppStore();
+  const { can } = useProjectAccess();
+  const canManageTrustedKeys = can('trusted_keys:manage');
 
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [trustedKeys, setTrustedKeys] = useState<TrustedBackendKey[]>([]);
@@ -84,7 +87,9 @@ export default function ApiKeysPage() {
     setLoading(true);
     const [apiKeysRes, trustedKeysRes] = await Promise.all([
       api.listApiKeys(projectId),
-      api.listTrustedBackendKeys(projectId),
+      canManageTrustedKeys
+        ? api.listTrustedBackendKeys(projectId)
+        : Promise.resolve({ success: true, data: [] as TrustedBackendKey[] }),
     ]);
     if (apiKeysRes.success && apiKeysRes.data) {
       setKeys(apiKeysRes.data);
@@ -93,7 +98,7 @@ export default function ApiKeysPage() {
       setTrustedKeys(trustedKeysRes.data);
     }
     setLoading(false);
-  }, [projectId]);
+  }, [canManageTrustedKeys, projectId]);
 
   useEffect(() => {
     void fetchKeys();
@@ -232,7 +237,7 @@ export default function ApiKeysPage() {
         </div>
       )}
 
-      {newTrustedKey && (
+      {canManageTrustedKeys && newTrustedKey && (
         <div className="card mb-6 border-blue-200 bg-blue-50">
           <div className="card-body">
             <h3 className="font-semibold text-blue-800 mb-2">Trusted Backend Key 创建成功</h3>
@@ -299,7 +304,7 @@ export default function ApiKeysPage() {
         </div>
       )}
 
-      {showTrustedCreateForm && (
+      {canManageTrustedKeys && showTrustedCreateForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="card w-full max-w-lg">
             <div className="card-header">
@@ -420,7 +425,7 @@ export default function ApiKeysPage() {
         </div>
       </div>
 
-      <div className="card mt-6">
+      {canManageTrustedKeys && <div className="card mt-6">
         <div className="card-header">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -488,7 +493,7 @@ export default function ApiKeysPage() {
             </table>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* MCP Usage Guide */}
       <div className="card mt-6">

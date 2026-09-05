@@ -10,6 +10,7 @@ import { SqlTabBar } from '@/components/SqlTabBar';
 import { SqlImportExport } from '@/components/SqlImportExport';
 import type { SchemaMetadata } from '@/components/SqlEditor';
 import { Trash2, Clock, Shield, AlertTriangle } from 'lucide-react';
+import { useProjectAccess } from '@/hooks/use-project-access';
 
 interface QueryHistory {
   sql: string;
@@ -24,6 +25,8 @@ export default function ProjectDatabasePage() {
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
   const { currentTenant, currentProject, currentEnv } = useAppStore();
+  const { can } = useProjectAccess();
+  const canWrite = can('database:write');
 
   // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
   const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
@@ -43,15 +46,22 @@ export default function ProjectDatabasePage() {
 
   // 加载 Schema 元数据（用于自动完成）
   useEffect(() => {
+    let cancelled = false;
     async function loadMetadata() {
-      if (!effectiveSchema) return;
+      if (!effectiveSchema) {
+        setSchemaMetadata(undefined);
+        return;
+      }
       const res = await api.getSchemaMetadata(effectiveSchema);
-      if (res.success && res.data) {
+      if (!cancelled && res.success && res.data) {
         setSchemaMetadata(res.data);
       }
     }
-    loadMetadata();
-  }, [currentProject?.schemaName]);
+    void loadMetadata();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveSchema]);
 
   const saveHistory = useCallback((sql: string, queryMode: 'query' | 'ddl') => {
     const newHistory = [
@@ -68,6 +78,9 @@ export default function ProjectDatabasePage() {
   };
 
   const handleExecute = useCallback(async (sql: string, queryMode: 'query' | 'ddl') => {
+    if (queryMode === 'ddl' && !canWrite) {
+      return { success: false, error: { code: 'FORBIDDEN', message: '当前项目角色没有写入权限' } };
+    }
     const res = queryMode === 'ddl'
       ? await api.executeDdl(projectId, sql)
       : await api.executeQuery(projectId, sql);
@@ -77,7 +90,7 @@ export default function ProjectDatabasePage() {
     }
 
     return res;
-  }, [projectId, saveHistory]);
+  }, [canWrite, projectId, saveHistory]);
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleString('zh-CN');
@@ -109,6 +122,7 @@ export default function ProjectDatabasePage() {
           </p>
           <SqlImportExport
             projectId={projectId}
+            canImport={canWrite}
             onImportComplete={() => {
               // 刷新 schema metadata
               if (effectiveSchema) {
@@ -138,7 +152,7 @@ export default function ProjectDatabasePage() {
               <Shield className="h-4 w-4" />
               只读查询
             </button>
-            <button
+            {canWrite && <button
               onClick={() => setMode('ddl')}
               className={`px-4 py-2 text-sm flex items-center gap-2 ${
                 mode === 'ddl'
@@ -148,7 +162,7 @@ export default function ProjectDatabasePage() {
             >
               <AlertTriangle className="h-4 w-4" />
               DDL/DML
-            </button>
+            </button>}
           </div>
           {mode === 'ddl' && (
             <span className="text-sm text-orange-600 flex items-center gap-1">

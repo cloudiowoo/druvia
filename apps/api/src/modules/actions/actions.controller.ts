@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as userService from '../user/user.service.js';
 import * as tenantService from '../tenant/tenant.service.js';
 import { signToken } from '../../middleware/auth.js';
+import { isPlatformUser } from '../../middleware/auth.js';
 
 // Hasura Action request format
 interface HasuraActionRequest<T> {
@@ -119,7 +120,7 @@ export async function actionCreateTenant(
 
   // Get user UID from session
   const userId = session['x-hasura-user-id'];
-  if (!userId) {
+  if (!userId || !request.user || !isPlatformUser(request.user) || request.user.userId !== userId) {
     return reply.status(401).send({
       message: 'Not authenticated',
       code: 'UNAUTHORIZED',
@@ -128,7 +129,7 @@ export async function actionCreateTenant(
 
   // Get user's numeric ID
   const user = await userService.getUserById(userId);
-  if (!user) {
+  if (!user || user.id !== request.user.uid || user.status !== 'active') {
     return reply.status(404).send({
       message: 'User not found',
       code: 'NOT_FOUND',
@@ -170,7 +171,7 @@ export async function actionGetMe(
   const session = request.body.session_variables;
   const userId = session['x-hasura-user-id'];
 
-  if (!userId) {
+  if (!userId || !request.user || !isPlatformUser(request.user) || request.user.userId !== userId) {
     return reply.status(401).send({
       message: 'Not authenticated',
       code: 'UNAUTHORIZED',
@@ -179,7 +180,7 @@ export async function actionGetMe(
 
   const user = await userService.getUserById(userId);
 
-  if (!user) {
+  if (!user || user.id !== request.user.uid || user.status !== 'active') {
     return reply.status(404).send({
       message: 'User not found',
       code: 'NOT_FOUND',

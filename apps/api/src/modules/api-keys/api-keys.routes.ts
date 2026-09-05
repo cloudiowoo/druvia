@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authenticate } from '../../middleware/auth.js';
 import type { JwtPayload } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
+import { requireProjectCapability } from '../../lib/project-authorization.js';
 import * as apiKeysService from './api-keys.service.js';
 
 interface CreateApiKeyBody {
@@ -65,6 +66,7 @@ export async function apiKeysRoutes(app: FastifyInstance) {
   // Protected routes - require authentication
   app.register(async (protectedApp) => {
     protectedApp.addHook('preHandler', authenticate);
+    protectedApp.addHook('preHandler', requireProjectCapability('api_keys:manage'));
 
     // List API keys for a project
     protectedApp.get(

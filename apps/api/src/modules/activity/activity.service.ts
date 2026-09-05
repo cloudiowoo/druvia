@@ -1,6 +1,7 @@
 // apps/api/src/modules/activity/activity.service.ts
 import { query, queryOne } from '../../db/index.js';
 import type { ActivityLog, ActivityAction } from '@druvia/shared';
+import type { PoolClient } from 'pg';
 
 interface ActivityRow {
   id: string;
@@ -29,14 +30,22 @@ export async function logActivity(
   action: ActivityAction,
   targetType?: string,
   targetId?: string,
-  details?: Record<string, unknown>
+  details?: Record<string, unknown>,
+  client?: PoolClient,
 ): Promise<ActivityLog> {
-  const row = await queryOne<ActivityRow>(
-    `INSERT INTO druvia_activity_logs (user_id, action, target_type, target_id, details)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING *`,
-    [userId, action, targetType || null, targetId || null, details ? JSON.stringify(details) : null]
-  );
+  const sql = `INSERT INTO druvia_activity_logs (user_id, action, target_type, target_id, details)
+               VALUES ($1, $2, $3, $4, $5)
+               RETURNING *`;
+  const params = [
+    userId,
+    action,
+    targetType || null,
+    targetId || null,
+    details ? JSON.stringify(details) : null,
+  ];
+  const row = client
+    ? (await client.query<ActivityRow>(sql, params)).rows[0] ?? null
+    : await queryOne<ActivityRow>(sql, params);
 
   if (!row) throw new Error('Failed to create activity log');
   return toActivityLog(row);

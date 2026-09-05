@@ -13,6 +13,15 @@ export interface ProjectEnvironment {
   createdAt: Date;
 }
 
+export class EnvironmentSchemaConflictError extends Error {
+  readonly code = 'ENVIRONMENT_SCHEMA_CONFLICT';
+
+  constructor(schemaName: string) {
+    super(`Schema ${schemaName} is already assigned or exists`);
+    this.name = 'EnvironmentSchemaConflictError';
+  }
+}
+
 export function resolveSchemaName(baseSchema: string, env?: string): string {
   if (!env || env === 'prod') {
     return baseSchema;
@@ -61,8 +70,26 @@ export async function createEnvironment(
     const baseSchema = projectResult.rows[0].schema_name;
     const newSchema = resolveSchemaName(baseSchema, envName);
 
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [newSchema]);
+    const conflictResult = await client.query<{
+      assigned: boolean;
+      schema_exists: boolean;
+    }>(
+      `SELECT
+         EXISTS (
+           SELECT 1 FROM druvia_projects WHERE schema_name = $1
+           UNION ALL
+           SELECT 1 FROM druvia_project_environments WHERE schema_name = $1
+         ) AS assigned,
+         EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1) AS schema_exists`,
+      [newSchema],
+    );
+    if (conflictResult.rows[0]?.assigned || conflictResult.rows[0]?.schema_exists) {
+      throw new EnvironmentSchemaConflictError(newSchema);
+    }
+
     // Clone schema structure (use pg-format for safe identifier interpolation)
-    await client.query(format('CREATE SCHEMA IF NOT EXISTS %I', newSchema));
+    await client.query(format('CREATE SCHEMA %I', newSchema));
 
     // Get all tables from base schema
     const tablesResult = await client.query(

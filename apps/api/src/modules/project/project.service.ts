@@ -1,4 +1,5 @@
 import { query, queryOne } from '../../db/index.js';
+import type { QueryConfig } from 'pg';
 import { generateProjectId } from '@druvia/shared';
 import type {
   Project,
@@ -19,6 +20,7 @@ import {
   assertProjectAuthProjectDeletionAllowed,
   withProjectAuthProjectLock,
 } from '../project-auth/project-identity.repository.js';
+import type { PlatformJwtUser } from '../../middleware/auth.js';
 
 const logger = createApiLogger({ module: 'project' });
 
@@ -83,12 +85,21 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
   }
 
   // 自动创建项目 Schema
-  const schemaName = await schemaService.createProjectSchema(
-    input.tenantId,
-    tenant.alias,
-    projectId,
-    input.alias
-  );
+  let schemaName: string;
+  try {
+    schemaName = await schemaService.createProjectSchema(
+      input.tenantId,
+      tenant.alias,
+      projectId,
+      input.alias
+    );
+  } catch (error) {
+    await query(
+      'DELETE FROM druvia_projects WHERE project_id = $1 AND schema_name IS NULL',
+      [projectId],
+    );
+    throw error;
+  }
 
   // 返回更新后的项目（包含 schema_name）
   return {
@@ -117,6 +128,29 @@ export async function listProjects(tenantId: string, limit = 50, offset = 0): Pr
   const rows = await query<ProjectRow>(
     'SELECT * FROM druvia_projects WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
     [tenantId, limit, offset]
+  );
+  return rows.map(toProject);
+}
+
+export async function listAccessibleProjects(
+  tenantId: string,
+  user: PlatformJwtUser,
+  limit = 50,
+  offset = 0,
+): Promise<Project[]> {
+  const rows = await query<ProjectRow>(
+    `SELECT p.*
+       FROM druvia_projects p
+       JOIN druvia_tenants t ON t.tenant_id = p.tenant_id
+       JOIN druvia_users u
+         ON u.id = $2 AND u.user_id = $3 AND u.status = 'active'
+       LEFT JOIN druvia_project_members pm
+         ON pm.project_id = p.project_id AND pm.user_uid = u.id
+      WHERE p.tenant_id = $1
+        AND (u.role = 'super_admin' OR t.owner_uid = u.id OR pm.id IS NOT NULL)
+      ORDER BY p.created_at DESC
+      LIMIT $4 OFFSET $5`,
+    [tenantId, user.uid, user.userId, limit, offset],
   );
   return rows.map(toProject);
 }
@@ -298,8 +332,21 @@ export async function executeQuery(projectId: string, sql: string): Promise<Quer
   // 设置 search_path 到项目 schema
   const client = await import('../../db/index.js').then(m => m.pool.connect());
   try {
-    await client.query(`SET search_path TO ${project.schemaName}, public`);
-    const result = await client.query(sql);
+    await client.query('BEGIN READ ONLY');
+    await client.query('SET LOCAL statement_timeout = 30000');
+    const setPathResult = await client.query<{ sql: string }>(
+      `SELECT format('SET LOCAL search_path TO %I, public', $1::text) AS sql`,
+      [project.schemaName],
+    );
+    await client.query(setPathResult.rows[0].sql);
+
+    // Extended protocol rejects multiple statements; READ ONLY blocks writable CTEs/functions.
+    const readOnlyQuery: QueryConfig & { queryMode: 'extended' } = {
+      text: sql,
+      queryMode: 'extended',
+    };
+    const result = await client.query<Record<string, unknown>>(readOnlyQuery);
+    await client.query('COMMIT');
 
     // 获取列信息
     const columns = result.fields.map(field => ({
@@ -312,9 +359,10 @@ export async function executeQuery(projectId: string, sql: string): Promise<Quer
       columns,
       rowCount: result.rowCount || 0,
     };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
   } finally {
-    // 重置 search_path，避免污染连接池中的其他连接
-    await client.query('RESET search_path').catch(() => {});
     client.release();
   }
 }

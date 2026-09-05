@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { isPlatformUser, isProjectUser } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
+import { assertProjectCapability, AuthorizationError } from '../../lib/project-authorization.js';
 import {
   ProjectAuthError,
   appleLogin as appleLoginService,
@@ -153,10 +154,13 @@ export async function retryAppleRevoke(
       error: { code: 'UNAUTHORIZED', message: 'Platform authentication required' },
     });
   }
-  if (!(await checkProjectAccess(request.user.userId, request.params.projectId))) {
-    return reply.status(403).send({
+  try {
+    await assertProjectCapability(request.user, request.params.projectId, 'auth:manage');
+  } catch (error) {
+    if (!(error instanceof AuthorizationError)) throw error;
+    return reply.status(error.statusCode).send({
       success: false,
-      error: { code: 'FORBIDDEN', message: 'No access to this project' },
+      error: { code: error.code, message: error.message },
     });
   }
   const identityId = Number(request.params.identityId);
@@ -226,10 +230,13 @@ async function requirePlatformProjectAccess(
     });
     return false;
   }
-  if (!(await checkProjectAccess(request.user.userId, request.params.projectId))) {
-    reply.status(403).send({
+  try {
+    await assertProjectCapability(request.user, request.params.projectId, 'auth:manage');
+  } catch (error) {
+    if (!(error instanceof AuthorizationError)) throw error;
+    reply.status(error.statusCode).send({
       success: false,
-      error: { code: 'FORBIDDEN', message: 'No access to this project' },
+      error: { code: error.code, message: error.message },
     });
     return false;
   }

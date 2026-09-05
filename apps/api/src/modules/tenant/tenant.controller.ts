@@ -1,8 +1,10 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { JwtPayload } from '../../middleware/auth.js';
 import * as tenantService from './tenant.service.js';
-import type { CreateTenantInput, UpdateTenantInput } from '@druvia/shared';
+import type { CreateTenantInput, Tenant, UpdateTenantInput } from '@druvia/shared';
 import { isDataAccessMigrationDeleteGuardError } from '../data-access/data-access-mutation-lock.js';
+import { assertTenantAccess, AuthorizationError } from '../../lib/project-authorization.js';
+import { isPlatformUser } from '../../middleware/auth.js';
 
 interface TenantParams {
   tenantId: string;
@@ -12,6 +14,20 @@ interface ListTenantsQuery {
   ownerUid?: string;
   limit?: string;
   offset?: string;
+}
+
+function presentTenant(tenant: Tenant, fullAccess: boolean) {
+  if (fullAccess) return tenant;
+  return {
+    tenantId: tenant.tenantId,
+    alias: tenant.alias,
+    name: tenant.name,
+    plan: tenant.plan,
+    status: tenant.status,
+    description: tenant.description,
+    createdAt: tenant.createdAt,
+    updatedAt: tenant.updatedAt,
+  };
 }
 
 export async function createTenant(
@@ -53,7 +69,8 @@ export async function getTenant(
       error: { code: 'NOT_FOUND', message: 'Tenant not found' },
     });
   }
-  return reply.send({ success: true, data: tenant });
+  const fullAccess = request.tenantAccess?.isWorkspaceOwner || request.tenantAccess?.isSuperAdmin;
+  return reply.send({ success: true, data: presentTenant(tenant, Boolean(fullAccess)) });
 }
 
 export async function getTenantByAlias(
@@ -67,18 +84,37 @@ export async function getTenantByAlias(
       error: { code: 'NOT_FOUND', message: 'Tenant not found' },
     });
   }
-  return reply.send({ success: true, data: tenant });
+  try {
+    const access = await assertTenantAccess(request.user, tenant.tenantId);
+    return reply.send({
+      success: true,
+      data: presentTenant(tenant, access.isWorkspaceOwner || access.isSuperAdmin),
+    });
+  } catch (error) {
+    if (error instanceof AuthorizationError) {
+      return reply.status(error.statusCode).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    throw error;
+  }
 }
 
 export async function listTenants(
   request: FastifyRequest<{ Querystring: ListTenantsQuery }>,
   reply: FastifyReply
 ) {
-  const ownerUid = request.query.ownerUid ? parseInt(request.query.ownerUid, 10) : undefined;
   const limit = parseInt(request.query.limit || '50', 10);
   const offset = parseInt(request.query.offset || '0', 10);
-
-  const tenants = await tenantService.listTenants(ownerUid, limit, offset);
+  if (!request.user || !isPlatformUser(request.user)) {
+    return reply.status(401).send({
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'Platform authentication required' },
+    });
+  }
+  const accessibleTenants = await tenantService.listAccessibleTenants(request.user, limit, offset);
+  const tenants = accessibleTenants.map(({ tenant, fullAccess }) => presentTenant(tenant, fullAccess));
 
   return reply.send({
     success: true,

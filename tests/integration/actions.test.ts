@@ -160,6 +160,7 @@ describe('Actions Integration', () => {
 
   describe('POST /actions/me', () => {
     let testUserId: string;
+    let testToken: string;
 
     beforeEach(async () => {
       const response = await app.inject({
@@ -171,13 +172,16 @@ describe('Actions Integration', () => {
           session_variables: {},
         },
       });
-      testUserId = JSON.parse(response.body).user_id;
+      const body = JSON.parse(response.body);
+      testUserId = body.user_id;
+      testToken = body.token;
     });
 
     it('should return current user info', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/actions/me',
+        headers: { authorization: `Bearer ${testToken}` },
         payload: {
           action: { name: 'me' },
           input: {},
@@ -212,6 +216,7 @@ describe('Actions Integration', () => {
 
   describe('POST /actions/create-tenant', () => {
     let testUserId: string;
+    let testToken: string;
 
     beforeEach(async () => {
       const response = await app.inject({
@@ -223,7 +228,9 @@ describe('Actions Integration', () => {
           session_variables: {},
         },
       });
-      testUserId = JSON.parse(response.body).user_id;
+      const body = JSON.parse(response.body);
+      testUserId = body.user_id;
+      testToken = body.token;
     });
 
     afterEach(async () => {
@@ -238,6 +245,7 @@ describe('Actions Integration', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/actions/create-tenant',
+        headers: { authorization: `Bearer ${testToken}` },
         payload: {
           action: { name: 'createTenant' },
           input: {

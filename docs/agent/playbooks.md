@@ -21,6 +21,20 @@
   - `pnpm migrate up`
 - migration CLI 从仓库根 `.env` 读取 `DB_HOST / DB_PORT / DB_USER / POSTGRES_PASSWORD / DB_NAME`。若目标容器不是该端口，先修正 Compose/env 契约；临时诊断可显式使用 `DB_PORT=<实际宿主端口> pnpm migrate status`，但不要长期依赖命令行覆盖掩盖环境漂移。
 
+## 项目成员授权与撤销
+
+前置条件：目标数据库已应用 migration `022`，目标用户是 active 平台用户。平台 `admin` 本身不提供项目权限；必须由 workspace owner 或数据库当前 `super_admin` 通过 Admin“项目设置 -> 项目成员”或正式成员 API 操作。
+
+日常授权顺序：
+
+1. 确认项目 ID、目标平台 user ID 和所需固定角色：`project_admin`、`database_admin` 或 `viewer`。
+2. 先用 `GET /api/v1/projects/:projectId/member-candidates?q=...` 核对 active 用户，再用 `POST /api/v1/projects/:projectId/members` 创建关系；不要手写 `druvia_project_members`。
+3. 用目标用户调用 `GET /api/v1/projects/:projectId/access`，核对服务端返回的 role/capabilities。
+4. 验证本项目允许动作、另一个项目 403，以及成员管理、Trusted Backend Key、数据库凭证和项目删除等 owner-only 动作 403。
+5. 检查 `druvia_activity_logs` 中对应的 `project_member.created`、`project_member.role_updated` 或 `project_member.removed` 记录。
+
+撤销使用 `DELETE /api/v1/projects/:projectId/members/:userId`。用户被停用后访问会立即失效，但 owner 仍可移除其成员关系。紧急恢复时先确认 workspace owner/super_admin 仍为 active，再通过成员 API 恢复；不得通过修改 JWT role 或直接开放 Hasura admin 权限绕过。`022 down` 前成员表必须为空，生产回滚默认保留 migration 022。
+
 ## 可选 PostGIS 部署
 
 `docker/docker-compose.postgis.yml` 是 local、prod、release 共用的可选 overlay，只替换 PostgreSQL 镜像并提供 `postgis-enable` 一次性任务。默认 Druvia 部署仍使用 `postgres:17-alpine`。OTA 不管理 PostgreSQL/PostGIS 镜像，也不会自动升级或回退数据库扩展。
@@ -1079,7 +1093,7 @@ PostgreSQL 备份不包含 `docker/storage_data` 的对象文件，也不包含 
   - API/Admin/Worker/Updater 健康检查
   - taro-app 核心 smoke test
   - 镜像回滚和必要的数据库人工恢复演练
-- migration `018 -> 021` 包含权限模式、迁移状态、Storage owner/preset 和 Project Auth identity 变更；旧部署升级前必须重新核对当前数据库版本、manifest 范围、`SECRETS_ENCRYPTION_KEY` 和备份要求，不能只依据默认 workflow 输入。
+- migration `018 -> 022` 包含权限模式、迁移状态、Storage owner/preset、Project Auth identity 和项目成员授权变更；旧部署升级前必须重新核对当前数据库版本、manifest 范围、`SECRETS_ENCRYPTION_KEY`、项目成员关系和备份要求，不能只依据默认 workflow 输入。
 - 正式生产只使用 `DRUVIA_UPDATE_CHANNEL=stable` 和通过上述验收的 manifest；镜像实际引用必须为 digest。
 - updater 保持被动通知和人工 apply。Actions 完成、镜像推送或 release 创建都不是生产升级授权。
 - 当前 production manifest 示例使用 GitHub `releases/latest/download`。release workflow 尚未将 beta/nightly 完整隔离为不会影响该入口的 prerelease 路径，因此隔离完成前不得让 beta/nightly 覆盖生产跟随的 latest Release。

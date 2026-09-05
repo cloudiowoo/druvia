@@ -1,5 +1,15 @@
 import { pool, query, queryOne, execute } from '../../db/index.js';
 import { generateSchemaName } from '../../lib/validation.js';
+import format from 'pg-format';
+
+export class ProjectSchemaConflictError extends Error {
+  readonly code = 'PROJECT_SCHEMA_CONFLICT';
+
+  constructor(schemaName: string) {
+    super(`Schema ${schemaName} is already assigned or exists`);
+    this.name = 'ProjectSchemaConflictError';
+  }
+}
 
 // Schema 命名规范: tenant_{alias} 或 t_{tenant}_{project}
 export function getTenantSchemaName(tenantAlias: string): string {
@@ -83,8 +93,27 @@ export async function createProjectSchema(
   try {
     await client.query('BEGIN');
 
-    // 创建 Schema
-    await client.query(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [schemaName]);
+    const conflictResult = await client.query<{
+      assigned: boolean;
+      schema_exists: boolean;
+    }>(
+      `SELECT
+         EXISTS (
+           SELECT 1 FROM druvia_projects WHERE schema_name = $1 AND project_id <> $2
+           UNION ALL
+           SELECT 1 FROM druvia_project_environments WHERE schema_name = $1
+           UNION ALL
+           SELECT 1 FROM druvia_schema_registry WHERE schema_name = $1
+         ) AS assigned,
+         EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1) AS schema_exists`,
+      [schemaName, projectId],
+    );
+    if (conflictResult.rows[0]?.assigned || conflictResult.rows[0]?.schema_exists) {
+      throw new ProjectSchemaConflictError(schemaName);
+    }
+
+    await client.query(format('CREATE SCHEMA %I', schemaName));
 
     // 创建元数据表
     await client.query(`
@@ -102,8 +131,7 @@ export async function createProjectSchema(
     // 注册到 Schema Registry
     await client.query(
       `INSERT INTO druvia_schema_registry (schema_name, tenant_id, project_id, schema_type)
-       VALUES ($1, $2, $3, 'project')
-       ON CONFLICT (schema_name) DO NOTHING`,
+       VALUES ($1, $2, $3, 'project')`,
       [schemaName, tenantId, projectId]
     );
 

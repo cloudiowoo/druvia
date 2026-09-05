@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify'
 import { authenticate } from '../../middleware/auth.js'
 import * as controller from './data-access.controller.js'
+import { requireProjectCapability } from '../../lib/project-authorization.js'
 
 export async function dataAccessRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate)
+  app.addHook('preHandler', requireProjectCapability('data_access:manage'))
 
   app.get(
     '/projects/:projectId/data-access/overview',

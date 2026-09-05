@@ -265,9 +265,12 @@ interface BuildTenantHealthInput {
 
 const WORKER_HEALTH_URL = process.env.DENO_WORKER_URL;
 
-export async function getTenantOverview(tenantId: string): Promise<TenantDashboardOverview> {
+export async function getTenantOverview(
+  tenantId: string,
+  projectIds?: string[],
+): Promise<TenantDashboardOverview> {
   const serviceStatus = await collectTenantServiceStatus();
-  const projectRows = await getTenantProjectHealth(tenantId, serviceStatus);
+  const projectRows = await getTenantProjectHealth(tenantId, serviceStatus, projectIds);
   const totalProjects = projectRows.length;
   const activeProjects = projectRows.filter((project) => project.status === 'active').length;
 
@@ -281,8 +284,9 @@ export async function getTenantOverview(tenantId: string): Promise<TenantDashboa
        ) AS covered_projects,
        COALESCE(SUM(size_bytes), 0) AS backup_usage_bytes
      FROM druvia_backups
-     WHERE tenant_id = $1`,
-    [tenantId]
+     WHERE tenant_id = $1
+       AND ($2::text[] IS NULL OR project_id = ANY($2::text[]))`,
+    [tenantId, projectIds ?? null]
   );
 
   const fileUsage = await queryOne<{ storage_usage_bytes: string }>(
@@ -293,14 +297,16 @@ export async function getTenantOverview(tenantId: string): Promise<TenantDashboa
          JOIN druvia_storage_buckets sb ON sb.bucket_id = so.bucket_id
          JOIN druvia_projects p ON p.project_id = sb.project_id
          WHERE p.tenant_id = $1
+           AND ($2::text[] IS NULL OR p.project_id = ANY($2::text[]))
        ), 0)
        + COALESCE((
          SELECT SUM(size_bytes)
          FROM druvia_files
          WHERE tenant_id = $1
+           AND ($2::text[] IS NULL OR project_id = ANY($2::text[]))
        ), 0)
      ) AS storage_usage_bytes`,
-    [tenantId]
+    [tenantId, projectIds ?? null]
   );
 
   const storageConfig = await queryOne<{ tenant_id: string }>(
@@ -311,12 +317,15 @@ export async function getTenantOverview(tenantId: string): Promise<TenantDashboa
     `SELECT COUNT(*) AS count
      FROM druvia_storage_buckets sb
      JOIN druvia_projects p ON p.project_id = sb.project_id
-     WHERE p.tenant_id = $1`,
-    [tenantId]
+     WHERE p.tenant_id = $1
+       AND ($2::text[] IS NULL OR p.project_id = ANY($2::text[]))`,
+    [tenantId, projectIds ?? null]
   );
   const legacyFileCount = await queryOne<{ count: string }>(
-    'SELECT COUNT(*) AS count FROM druvia_files WHERE tenant_id = $1',
-    [tenantId]
+    `SELECT COUNT(*) AS count FROM druvia_files
+      WHERE tenant_id = $1
+        AND ($2::text[] IS NULL OR project_id = ANY($2::text[]))`,
+    [tenantId, projectIds ?? null]
   );
 
   const storageConfigured = resolveTenantStorageConfigured({
@@ -383,7 +392,8 @@ export async function getTenantOverview(tenantId: string): Promise<TenantDashboa
 
 export async function getTenantProjectHealth(
   tenantId: string,
-  providedServiceStatus?: TenantDashboardServiceStatus
+  providedServiceStatus?: TenantDashboardServiceStatus,
+  projectIds?: string[],
 ): Promise<TenantDashboardProjectRow[]> {
   const serviceStatus = providedServiceStatus ?? await collectTenantServiceStatus();
   const storageConfig = await queryOne<{ tenant_id: string }>(
@@ -394,12 +404,15 @@ export async function getTenantProjectHealth(
     `SELECT COUNT(*) AS count
      FROM druvia_storage_buckets sb
      JOIN druvia_projects p ON p.project_id = sb.project_id
-     WHERE p.tenant_id = $1`,
-    [tenantId]
+     WHERE p.tenant_id = $1
+       AND ($2::text[] IS NULL OR p.project_id = ANY($2::text[]))`,
+    [tenantId, projectIds ?? null]
   );
   const legacyFileCount = await queryOne<{ count: string }>(
-    'SELECT COUNT(*) AS count FROM druvia_files WHERE tenant_id = $1',
-    [tenantId]
+    `SELECT COUNT(*) AS count FROM druvia_files
+      WHERE tenant_id = $1
+        AND ($2::text[] IS NULL OR project_id = ANY($2::text[]))`,
+    [tenantId, projectIds ?? null]
   );
 
   const rows = await query<TenantProjectHealthSourceRow>(
@@ -469,8 +482,9 @@ export async function getTenantProjectHealth(
        ) AS latest_function_log_at
      FROM druvia_projects p
      WHERE p.tenant_id = $1
+       AND ($2::text[] IS NULL OR p.project_id = ANY($2::text[]))
      ORDER BY p.created_at DESC`,
-    [tenantId]
+    [tenantId, projectIds ?? null]
   );
 
   const storageConfigured = resolveTenantStorageConfigured({
@@ -485,7 +499,8 @@ export async function getTenantProjectHealth(
 
 export async function getTenantTimeline(
   tenantId: string,
-  limit = 20
+  limit = 20,
+  projectIds?: string[],
 ): Promise<TenantDashboardTimelineEntry[]> {
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 50) : 20;
 
@@ -504,9 +519,10 @@ export async function getTenantTimeline(
        COALESCE(completed_at, created_at) AS event_at
      FROM druvia_backups
      WHERE tenant_id = $1
+       AND ($3::text[] IS NULL OR project_id = ANY($3::text[]))
      ORDER BY COALESCE(completed_at, created_at) DESC
      LIMIT $2`,
-    [tenantId, safeLimit]
+    [tenantId, safeLimit, projectIds ?? null]
   );
 
   const functionEvents = await query<{
@@ -528,9 +544,10 @@ export async function getTenantTimeline(
      JOIN druvia_functions fn ON fn.id = fl.function_id
      JOIN druvia_projects p ON p.project_id = fn.project_id
      WHERE p.tenant_id = $1
+       AND ($3::text[] IS NULL OR fn.project_id = ANY($3::text[]))
      ORDER BY fl.created_at DESC
      LIMIT $2`,
-    [tenantId, safeLimit]
+    [tenantId, safeLimit, projectIds ?? null]
   );
 
   const disabledProjects = await query<{
@@ -541,9 +558,10 @@ export async function getTenantTimeline(
     `SELECT project_id, name, updated_at
      FROM druvia_projects
      WHERE tenant_id = $1 AND status = 'disabled'
+       AND ($3::text[] IS NULL OR project_id = ANY($3::text[]))
      ORDER BY updated_at DESC
      LIMIT $2`,
-    [tenantId, safeLimit]
+    [tenantId, safeLimit, projectIds ?? null]
   );
 
   const timeline = [

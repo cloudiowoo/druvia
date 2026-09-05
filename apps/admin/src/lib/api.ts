@@ -1,6 +1,6 @@
 // Use relative path (empty string) for same-origin requests in production
 // Falls back to localhost:3001 for local development without Docker
-import type { DruviaUpdateStatus } from '@druvia/shared';
+import type { DruviaUpdateStatus, ProjectAccess, ProjectMemberRole, ProjectMemberView } from '@druvia/shared';
 import { createAdminServerLogger } from './server-logger';
 import type { TableDataAccessPolicy, TableDataAccessState } from './table-data-access';
 import type { ProjectDataAccessOverview } from './project-data-access-overview';
@@ -205,6 +205,17 @@ class ApiClient {
     };
   }
 
+  private notifyProjectForbidden(path: string, statusCode: number) {
+    if (statusCode !== 403 || this.isServerRuntime()) return;
+    const projectId = path.match(/^\/api\/v1\/projects\/([^/?]+)/)?.[1];
+    const isSchemaRoute = path.startsWith('/api/v1/schemas/');
+    if (!projectId && !isSchemaRoute) return;
+
+    window.dispatchEvent(new CustomEvent('druvia:project-forbidden', {
+      detail: { projectId },
+    }));
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -227,6 +238,7 @@ class ApiClient {
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
+      this.notifyProjectForbidden(path, response.status);
 
       // Handle 204 No Content (successful DELETE)
       if (response.status === 204) {
@@ -377,6 +389,37 @@ class ApiClient {
 
   async deleteProject(projectId: string) {
     return this.request<void>('DELETE', `/api/v1/projects/${projectId}`);
+  }
+
+  async getProjectAccess(projectId: string) {
+    return this.request<ProjectAccess>('GET', `/api/v1/projects/${projectId}/access`);
+  }
+
+  async listProjectMembers(projectId: string) {
+    return this.request<ProjectMemberView[]>('GET', `/api/v1/projects/${projectId}/members`);
+  }
+
+  async searchProjectMemberCandidates(projectId: string, query: string) {
+    const params = new URLSearchParams({ q: query });
+    return this.request<ProjectMemberView[]>(
+      'GET', `/api/v1/projects/${projectId}/member-candidates?${params}`,
+    );
+  }
+
+  async createProjectMember(projectId: string, userId: string, role: ProjectMemberRole) {
+    return this.request<ProjectMemberView>(
+      'POST', `/api/v1/projects/${projectId}/members`, { userId, role },
+    );
+  }
+
+  async updateProjectMember(projectId: string, userId: string, role: ProjectMemberRole) {
+    return this.request<ProjectMemberView>(
+      'PATCH', `/api/v1/projects/${projectId}/members/${userId}`, { role },
+    );
+  }
+
+  async deleteProjectMember(projectId: string, userId: string) {
+    return this.request<void>('DELETE', `/api/v1/projects/${projectId}/members/${userId}`);
   }
 
   async executeQuery(projectId: string, sql: string) {
@@ -665,6 +708,8 @@ class ApiClient {
   async listBackups(tenantId: string) {
     return this.request<Array<{
       backupId: string;
+      tenantId: string;
+      projectId: string | null;
       schemaName: string;
       status: string;
       sizeBytes: number;

@@ -2,6 +2,7 @@
 export * from './types/tenant.js';
 export * from './types/settings.js';
 export * from './types/activity.js';
+export * from './types/project-members.js';
 
 // Utils
 export * from './utils/id.js';

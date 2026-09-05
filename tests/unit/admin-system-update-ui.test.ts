@@ -11,7 +11,7 @@ describe('admin system update UI contract', () => {
     const apiClient = read('apps/admin/src/lib/api.ts');
 
     expect(packageJson).toContain('"@druvia/shared": "workspace:*"');
-    expect(apiClient).toContain("import type { DruviaUpdateStatus } from '@druvia/shared'");
+    expect(apiClient).toMatch(/import type \{[^}]*DruviaUpdateStatus[^}]*\} from '@druvia\/shared'/s);
     expect(apiClient).toContain('/api/v1/system/update/status');
     expect(apiClient).toContain('/api/v1/system/update/check');
     expect(apiClient).toContain('/api/v1/system/update/download');

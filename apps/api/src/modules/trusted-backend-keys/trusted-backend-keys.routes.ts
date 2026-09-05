@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { authenticate } from '../../middleware/auth.js';
 import type { JwtPayload } from '../../middleware/auth.js';
 import { checkProjectAccess } from '../../lib/access.js';
+import { requireProjectCapability } from '../../lib/project-authorization.js';
 import {
   createTrustedBackendKey,
   deleteTrustedBackendKey,
@@ -55,6 +56,7 @@ function isValidScopes(scopes: unknown): scopes is TrustedBackendKeyScope[] {
 export async function trustedBackendKeysRoutes(app: FastifyInstance) {
   app.register(async (protectedApp) => {
     protectedApp.addHook('preHandler', authenticate);
+    protectedApp.addHook('preHandler', requireProjectCapability('trusted_keys:manage'));
 
     protectedApp.get(
       '/projects/:projectId/trusted-backend-keys',

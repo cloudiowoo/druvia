@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 interface SqlImportExportProps {
   projectId: string;
   onImportComplete?: () => void;
+  canImport?: boolean;
 }
 
 interface ExportTable {
@@ -15,19 +16,19 @@ interface ExportTable {
   selected: boolean;
 }
 
-export function SqlImportExport({ projectId, onImportComplete }: SqlImportExportProps) {
+export function SqlImportExport({ projectId, onImportComplete, canImport = true }: SqlImportExportProps) {
   const [showImport, setShowImport] = useState(false);
   const [showExport, setShowExport] = useState(false);
 
   return (
     <div className="flex gap-2">
-      <button
+      {canImport && <button
         onClick={() => setShowImport(true)}
         className="btn btn-sm flex items-center gap-1"
       >
         <Upload className="h-4 w-4" />
         导入
-      </button>
+      </button>}
       <button
         onClick={() => setShowExport(true)}
         className="btn btn-sm flex items-center gap-1"
@@ -36,7 +37,7 @@ export function SqlImportExport({ projectId, onImportComplete }: SqlImportExport
         导出
       </button>
 
-      {showImport && (
+      {canImport && showImport && (
         <ImportDialog
           projectId={projectId}
           onClose={() => setShowImport(false)}
@@ -121,7 +122,7 @@ function ImportDialog({ projectId, onClose, onComplete }: ImportDialogProps) {
           errors: [res.error?.message || '导入失败'],
         });
       }
-    } catch (err) {
+    } catch {
       setResult({
         statementsExecuted: 0,
         errors: ['网络错误'],
@@ -342,7 +343,7 @@ function ExportDialog({ projectId, onClose }: ExportDialogProps) {
       URL.revokeObjectURL(url);
 
       onClose();
-    } catch (err) {
+    } catch {
       setExportError('导出失败，请重试');
     } finally {
       setExporting(false);

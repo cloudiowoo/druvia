@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 const SEMVER_PATTERN = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const CHANNELS = new Set(['stable', 'beta', 'nightly']);
+const REQUIRED_MIGRATION_TARGET = 22;
 
 function required(env, key) {
   const value = env[key];
@@ -86,8 +87,16 @@ export async function buildReleaseManifest(env = process.env, options = {}) {
 
   const from = parseInteger(env, 'DRUVIA_MIGRATION_FROM', 0);
   const to = parseInteger(env, 'DRUVIA_MIGRATION_TO', from);
+  const migrationRequired = parseBoolean(env, 'DRUVIA_MIGRATION_REQUIRED', false);
+  const requiresBackup = parseBoolean(env, 'DRUVIA_MIGRATION_REQUIRES_BACKUP', false);
+  const reversible = parseBoolean(env, 'DRUVIA_MIGRATION_REVERSIBLE', false);
   if (from > to) {
     throw new Error('INVALID_MIGRATION_RANGE');
+  }
+  if (!migrationRequired || to !== REQUIRED_MIGRATION_TARGET || !requiresBackup || reversible) {
+    throw new Error(
+      `UNSAFE_MIGRATION_CONTRACT: required=true, to=${REQUIRED_MIGRATION_TARGET}, requiresBackup=true, reversible=false`,
+    );
   }
 
   return {
@@ -109,11 +118,11 @@ export async function buildReleaseManifest(env = process.env, options = {}) {
       updater: buildImage(env, version, 'updater', 'DRUVIA_UPDATER'),
     },
     migrations: {
-      required: parseBoolean(env, 'DRUVIA_MIGRATION_REQUIRED', false),
+      required: migrationRequired,
       from,
       to,
-      requiresBackup: parseBoolean(env, 'DRUVIA_MIGRATION_REQUIRES_BACKUP', false),
-      reversible: parseBoolean(env, 'DRUVIA_MIGRATION_REVERSIBLE', false),
+      requiresBackup,
+      reversible,
     },
   };
 }

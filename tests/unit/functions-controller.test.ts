@@ -14,14 +14,14 @@ vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
   getProjectById: vi.fn(),
 }))
 
-vi.mock('../../apps/api/src/lib/access.js', () => ({
-  checkProjectAccess: vi.fn(),
+vi.mock('../../apps/api/src/lib/project-authorization.js', () => ({
+  assertProjectCapability: vi.fn(),
 }))
 
 import * as functionsController from '../../apps/api/src/modules/functions/functions.controller.js'
 import * as functionsService from '../../apps/api/src/modules/functions/functions.service.js'
 import * as projectService from '../../apps/api/src/modules/project/project.service.js'
-import * as access from '../../apps/api/src/lib/access.js'
+import { assertProjectCapability } from '../../apps/api/src/lib/project-authorization.js'
 
 type ReplyStub = {
   status: ReturnType<typeof vi.fn>
@@ -133,12 +133,18 @@ describe('Functions Controller', () => {
         provider: 'trusted_backend',
       }
     )
-    expect(access.checkProjectAccess).not.toHaveBeenCalled()
+    expect(assertProjectCapability).not.toHaveBeenCalled()
     expect(functionsService.getFunction).not.toHaveBeenCalled()
   })
 
   it('passes an explicitly authorized Platform User actor to the service', async () => {
-    vi.mocked(access.checkProjectAccess).mockResolvedValue(true)
+    vi.mocked(assertProjectCapability).mockResolvedValue({
+      projectId: 'proj_123',
+      role: 'project_admin',
+      capabilities: ['functions:manage'],
+      isWorkspaceOwner: false,
+      isSuperAdmin: false,
+    })
     const reply = createReply()
     const request = {
       params: { projectId: 'proj_123', name: 'upload-avatar' },
@@ -154,7 +160,11 @@ describe('Functions Controller', () => {
 
     await functionsController.invokeFunction(request as never, reply as never)
 
-    expect(access.checkProjectAccess).toHaveBeenCalledWith('user_123', 'proj_123')
+    expect(assertProjectCapability).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user_123' }),
+      'proj_123',
+      'functions:manage',
+    )
     expect(functionsService.invokeFunction).toHaveBeenCalledWith(
       'proj_123',
       'upload-avatar',
@@ -270,6 +280,6 @@ describe('Functions Controller', () => {
       error: { code: 'UNAUTHORIZED', message: 'Not authenticated' },
     })
     expect(functionsService.listFunctions).not.toHaveBeenCalled()
-    expect(access.checkProjectAccess).not.toHaveBeenCalled()
+    expect(assertProjectCapability).not.toHaveBeenCalled()
   })
 })

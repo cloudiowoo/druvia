@@ -28,6 +28,8 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - 业务数据按 tenant/project schema 隔离，当前实际运行更接近 Schema-per-Project。
 - 权限主要依赖 Hasura permissions，不依赖 PostgreSQL RLS。
 - 平台用户、项目终端用户、匿名项目 API key、trusted backend key 是不同身份边界，不得在新代码中合并语义。
+- 平台角色 `admin` 只表示可登录管理后台，不自动获得 workspace 或项目权限；项目管理权限必须由数据库当前 `super_admin`、workspace `owner_uid` 或 migration `022` 的项目成员关系解析，并由路由声明固定 capability。
+- Project User、项目 API Key 和 Trusted Backend Key 不得进入平台项目成员 RBAC；平台项目成员资格也不得赋予应用 GraphQL、Realtime token 或 SDK 数据凭证能力。
 - Project Data Access Batch 3A/3B 后，公开项目 GraphQL 和 Realtime token exchange 只接受同项目 `project_user` / `apikey`；平台 session 不能作为应用数据凭证，SDK 也不得把长期项目凭证直传 Hasura。
 - Project Data Access Batch 4 后，已有 compatibility 项目只能通过迁移 `019` 支撑的预检/apply/recovery/rollback 状态机激活；不得直接修改 `data_access_mode`，不得绕过相关管理写锁。
 - RPC 与 Functions 共用版本化 `ProjectActorContext`；SDK 的 RPC/Functions 只选择 Project Session 或项目 API Key，不得隐式回退 Platform Session。Functions 内部 GraphQL 必须使用服务端派生的 Hasura role/session variables，Platform User 不具备该应用数据能力。

@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { JwtPayload } from '../../middleware/auth.js';
 import type { MultipartFile } from '@fastify/multipart';
 import * as fileService from './file.service.js';
+import { assertTenantAccess, AuthorizationError } from '../../lib/project-authorization.js';
 
 interface UploadParams {
   tenantId: string;
@@ -25,6 +26,32 @@ interface ListFilesQuery {
 
 interface MultipartRequest extends FastifyRequest<{ Params: UploadParams; Querystring: UploadQuery }> {
   file(): Promise<MultipartFile | undefined>;
+}
+
+async function authorizeFile(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  fileId: string,
+) {
+  const file = await fileService.getFileById(fileId);
+  if (!file) {
+    reply.status(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'File not found' },
+    });
+    return null;
+  }
+  try {
+    await assertTenantAccess(request.user, file.tenantId, { ownerOnly: true });
+    return file;
+  } catch (error) {
+    if (!(error instanceof AuthorizationError)) throw error;
+    reply.status(error.statusCode).send({
+      success: false,
+      error: { code: error.code, message: error.message },
+    });
+    return null;
+  }
 }
 
 export async function uploadFile(
@@ -67,14 +94,8 @@ export async function getFile(
   request: FastifyRequest<{ Params: FileParams }>,
   reply: FastifyReply
 ) {
-  const file = await fileService.getFileById(request.params.fileId);
-
-  if (!file) {
-    return reply.status(404).send({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'File not found' },
-    });
-  }
+  const file = await authorizeFile(request, reply, request.params.fileId);
+  if (!file) return;
 
   return reply.send({ success: true, data: file });
 }
@@ -105,6 +126,7 @@ export async function deleteFile(
   request: FastifyRequest<{ Params: FileParams }>,
   reply: FastifyReply
 ) {
+  if (!(await authorizeFile(request, reply, request.params.fileId))) return;
   const deleted = await fileService.deleteFile(request.params.fileId);
 
   if (!deleted) {
@@ -121,6 +143,7 @@ export async function getSignedUrl(
   request: FastifyRequest<{ Params: FileParams; Querystring: { expiresIn?: string } }>,
   reply: FastifyReply
 ) {
+  if (!(await authorizeFile(request, reply, request.params.fileId))) return;
   const expiresIn = parseInt(request.query.expiresIn || '3600', 10);
   const url = await fileService.getSignedUrl(request.params.fileId, expiresIn);
 

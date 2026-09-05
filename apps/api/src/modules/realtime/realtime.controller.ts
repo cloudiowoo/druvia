@@ -3,6 +3,7 @@ import type { ProjectDataAccessMode } from '@druvia/shared';
 import type { JwtPayload } from '../../middleware/auth.js';
 import * as realtimeService from './realtime.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
+import { assertProjectCapability, AuthorizationError } from '../../lib/project-authorization.js';
 import { queryOne } from '../../db/index.js';
 import { checkRealtimeTokenRateLimit } from '../../middleware/ratelimit.js';
 import * as projectService from '../project/project.service.js';
@@ -55,16 +56,17 @@ async function verifyProjectAccess(
     return false;
   }
 
-  const hasAccess = await checkProjectAccess(userId, request.params.projectId);
-  if (!hasAccess) {
-    reply.status(403).send({
+  try {
+    await assertProjectCapability(request.user, request.params.projectId, 'realtime:manage');
+    return true;
+  } catch (error) {
+    if (!(error instanceof AuthorizationError)) throw error;
+    reply.status(error.statusCode).send({
       success: false,
-      error: { code: 'FORBIDDEN', message: 'No access to this project' },
+      error: { code: error.code, message: error.message },
     });
     return false;
   }
-
-  return true;
 }
 
 // ============================================

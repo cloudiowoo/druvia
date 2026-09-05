@@ -19,6 +19,16 @@ export interface NavItem {
   icon: NavIconKey;
 }
 
+const SUPER_ADMIN_NAV_LABELS = new Set<NavItem['label']>([
+  '用户管理',
+  '备份管理',
+]);
+
+export function filterPlatformNavigation(items: NavItem[], isSuperAdmin: boolean): NavItem[] {
+  if (isSuperAdmin) return items;
+  return items.filter((item) => !SUPER_ADMIN_NAV_LABELS.has(item.label));
+}
+
 export function buildGlobalNav(multiTenant: boolean, defaultTenant: string): NavItem[] {
   const nav: NavItem[] = [
     {

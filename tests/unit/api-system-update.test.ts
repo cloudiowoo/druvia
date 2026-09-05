@@ -11,8 +11,14 @@ vi.mock('../../apps/api/src/lib/redis.js', () => ({
   },
 }));
 
+vi.mock('../../apps/api/src/db/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../apps/api/src/db/index.js')>()),
+  queryOne: vi.fn(),
+}));
+
 import { buildApp } from '../../apps/api/src/index.js';
 import { config } from '../../apps/api/src/config/index.js';
+import { queryOne } from '../../apps/api/src/db/index.js';
 import { signProjectUserToken, signToken } from '../../apps/api/src/middleware/auth.js';
 
 describe('API system update proxy', () => {
@@ -20,6 +26,12 @@ describe('API system update proxy', () => {
   const originalProjectTokenSecret = config.projectAuth.tokenSecret;
 
   beforeEach(() => {
+    vi.mocked(queryOne).mockReset();
+    vi.mocked(queryOne).mockResolvedValue({
+      user_id: 'user_1',
+      status: 'active',
+      role: 'super_admin',
+    } as never);
     config.jwt.secret = 'test-jwt-secret-test-jwt-secret';
     config.projectAuth.tokenSecret = 'test-project-secret-test-project-secret';
     config.updater.url = 'http://updater:3010';
@@ -64,6 +76,11 @@ describe('API system update proxy', () => {
   });
 
   it('rejects non-super-admin platform users before contacting updater', async () => {
+    vi.mocked(queryOne).mockResolvedValue({
+      user_id: 'user_1',
+      status: 'active',
+      role: 'admin',
+    } as never);
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     const app = buildApp();
@@ -103,8 +120,8 @@ describe('API system update proxy', () => {
         headers: { authorization: `Bearer ${token}` },
       });
 
-      expect(response.statusCode).toBe(403);
-      expect(response.json().error.code).toBe('FORBIDDEN');
+      expect(response.statusCode).toBe(401);
+      expect(response.json().error.code).toBe('UNAUTHORIZED');
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       await app.close();

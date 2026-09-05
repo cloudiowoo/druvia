@@ -4,6 +4,7 @@ import * as dashboardService from './dashboard.service.js';
 import * as activityService from '../activity/activity.service.js';
 import { checkTenantAccess } from '../../lib/access.js';
 import { isPlatformUser } from '../../middleware/auth.js';
+import { listAccessibleProjectIds } from '../../lib/project-authorization.js';
 
 export async function getStats(request: FastifyRequest, reply: FastifyReply) {
   const stats = await dashboardService.getStats();
@@ -67,7 +68,10 @@ export async function getTenantOverview(
     return;
   }
 
-  const overview = await dashboardService.getTenantOverview(request.params.tenantId);
+  const projectIds = request.tenantAccess?.isWorkspaceOwner || request.tenantAccess?.isSuperAdmin
+    ? undefined
+    : await listAccessibleProjectIds(request.user, request.params.tenantId);
+  const overview = await dashboardService.getTenantOverview(request.params.tenantId, projectIds);
   return reply.send({ success: true, data: overview });
 }
 
@@ -79,7 +83,10 @@ export async function getTenantProjects(
     return;
   }
 
-  const projects = await dashboardService.getTenantProjectHealth(request.params.tenantId);
+  const projectIds = request.tenantAccess?.isWorkspaceOwner || request.tenantAccess?.isSuperAdmin
+    ? undefined
+    : await listAccessibleProjectIds(request.user, request.params.tenantId);
+  const projects = await dashboardService.getTenantProjectHealth(request.params.tenantId, undefined, projectIds);
   return reply.send({ success: true, data: projects });
 }
 
@@ -92,6 +99,9 @@ export async function getTenantTimeline(
   }
 
   const limit = parseInt(request.query.limit || '20', 10);
-  const timeline = await dashboardService.getTenantTimeline(request.params.tenantId, limit);
+  const projectIds = request.tenantAccess?.isWorkspaceOwner || request.tenantAccess?.isSuperAdmin
+    ? undefined
+    : await listAccessibleProjectIds(request.user, request.params.tenantId);
+  const timeline = await dashboardService.getTenantTimeline(request.params.tenantId, limit, projectIds);
   return reply.send({ success: true, data: timeline });
 }

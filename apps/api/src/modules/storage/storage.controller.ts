@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { MultipartFile } from '@fastify/multipart';
 import * as storageService from './storage.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
+import { assertProjectCapability, AuthorizationError } from '../../lib/project-authorization.js';
 import {
   ProjectActorRequiredError,
   ProjectActorScopeError,
@@ -188,16 +189,17 @@ async function verifyProjectAccess(
     return false;
   }
 
-  const hasAccess = await checkProjectAccess(request.user.userId, request.params.projectId);
-  if (!hasAccess) {
-    reply.status(403).send({
+  try {
+    await assertProjectCapability(request.user, request.params.projectId, 'storage:manage');
+    return true;
+  } catch (error) {
+    if (!(error instanceof AuthorizationError)) throw error;
+    reply.status(error.statusCode).send({
       success: false,
-      error: { code: 'FORBIDDEN', message: 'No access to this project' },
+      error: { code: error.code, message: error.message },
     });
     return false;
   }
-
-  return true;
 }
 
 async function resolveObjectActor(
@@ -210,8 +212,14 @@ async function resolveObjectActor(
     return null;
   }
   if (user.kind === 'platform_user') {
-    if (!(await checkProjectAccess(user.userId, request.params.projectId))) {
-      reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'No access to this project' } });
+    try {
+      await assertProjectCapability(user, request.params.projectId, 'storage:manage');
+    } catch (error) {
+      if (!(error instanceof AuthorizationError)) throw error;
+      reply.status(error.statusCode).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
       return null;
     }
     try {

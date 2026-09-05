@@ -46,6 +46,7 @@ import { Breadcrumb } from '@/components/Breadcrumb';
 import { ForeignKeyPopover } from '@/components/tables/ForeignKeyPopover';
 import { TableDataAccessPanel } from '@/components/tables/TableDataAccessPanel';
 import { useToast } from '@/hooks/use-toast';
+import { useProjectAccess } from '@/hooks/use-project-access';
 import { columnNameSchema } from '@/lib/schemas';
 import {
   isDefaultTableDataScope,
@@ -86,6 +87,9 @@ export default function TableStructurePage() {
   const tableName = params.tableName as string;
   const { currentProject, currentEnv, setCurrentEnv } = useAppStore();
   const { toast } = useToast();
+  const { can } = useProjectAccess();
+  const canWrite = can('database:write');
+  const canManageDataAccess = can('data_access:manage');
 
   const requestedTab = searchParams.get('tab');
   const requestedScope = searchParams.get('scope');
@@ -180,10 +184,10 @@ export default function TableStructurePage() {
   }, [effectiveSchema, tableName]);
 
   useEffect(() => {
-    if (!isDefaultProductionScope && activeTab === 'access') {
+    if ((!isDefaultProductionScope || !canManageDataAccess) && activeTab === 'access') {
       setActiveTab('structure');
     }
-  }, [activeTab, isDefaultProductionScope]);
+  }, [activeTab, canManageDataAccess, isDefaultProductionScope]);
 
   // 获取列的外键信息
   const getColumnForeignKey = (columnName: string) => {
@@ -335,7 +339,7 @@ export default function TableStructurePage() {
               查看数据
             </Link>
           </Button>
-          <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          {canWrite && <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="destructive" size="sm">
                 <Trash2 className="h-4 w-4 mr-2" />
@@ -358,8 +362,8 @@ export default function TableStructurePage() {
                 </Button>
               </DialogFooter>
             </DialogContent>
-          </Dialog>
-          {activeTab === 'structure' && (
+          </Dialog>}
+          {canWrite && activeTab === 'structure' && (
             <Button onClick={handleSave} disabled={!hasChanges || saving}>
               <Save className="h-4 w-4 mr-2" />
               {saving ? '保存中...' : '保存更改'}
@@ -371,13 +375,13 @@ export default function TableStructurePage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="mb-4">
           <TabsTrigger value="structure">表结构</TabsTrigger>
-          <TabsTrigger
+          {canManageDataAccess && <TabsTrigger
             value="access"
             disabled={!isDefaultProductionScope}
             title={!isDefaultProductionScope ? '当前仅支持生产环境' : undefined}
           >
             数据访问
-          </TabsTrigger>
+          </TabsTrigger>}
         </TabsList>
 
         <TabsContent value="structure" className="mt-0">
@@ -424,7 +428,7 @@ export default function TableStructurePage() {
                             }}
                             placeholder="column_name"
                             className={`font-mono ${columnErrors[index] ? 'border-destructive' : ''}`}
-                            disabled={!column.isNew && column.primaryKey}
+                            disabled={!canWrite || (!column.isNew && column.primaryKey)}
                           />
                           {column.isNew && (
                             <Badge variant="outline" className="text-green-600">新</Badge>
@@ -439,7 +443,7 @@ export default function TableStructurePage() {
                       <Select
                         value={column.type}
                         onValueChange={(value) => updateColumn(index, 'type', value)}
-                        disabled={column.primaryKey}
+                        disabled={!canWrite || column.primaryKey}
                       >
                         <SelectTrigger className="font-mono">
                           <SelectValue />
@@ -459,6 +463,7 @@ export default function TableStructurePage() {
                         onChange={(e) => updateColumn(index, 'defaultValue', e.target.value || null)}
                         placeholder="NULL"
                         className="font-mono"
+                        disabled={!canWrite}
                       />
                     </TableCell>
                     <TableCell className="text-center">
@@ -466,7 +471,7 @@ export default function TableStructurePage() {
                         type="checkbox"
                         checked={column.nullable}
                         onChange={(e) => updateColumn(index, 'nullable', e.target.checked)}
-                        disabled={column.primaryKey}
+                        disabled={!canWrite || column.primaryKey}
                         className="h-4 w-4"
                       />
                     </TableCell>
@@ -475,12 +480,12 @@ export default function TableStructurePage() {
                         type="checkbox"
                         checked={column.primaryKey}
                         onChange={(e) => updateColumn(index, 'primaryKey', e.target.checked)}
-                        disabled={!column.isNew}
+                        disabled={!canWrite || !column.isNew}
                         className="h-4 w-4"
                       />
                     </TableCell>
                     <TableCell className="text-center">
-                      {!column.isNew && effectiveSchema && (
+                      {canWrite && !column.isNew && effectiveSchema && (
                         <ForeignKeyPopover
                           schemaName={effectiveSchema}
                           columnName={column.name}
@@ -498,7 +503,7 @@ export default function TableStructurePage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <DropdownMenu>
+                      {canWrite && <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon" className="h-8 w-8">
                             <MoreHorizontal className="h-4 w-4" />
@@ -514,26 +519,26 @@ export default function TableStructurePage() {
                             删除字段
                           </DropdownMenuItem>
                         </DropdownMenuContent>
-                      </DropdownMenu>
+                      </DropdownMenu>}
                     </TableCell>
                   </TableRow>
                   );
                 })}
               </TableBody>
             </Table>
-            <div className="p-4 border-t">
+            {canWrite && <div className="p-4 border-t">
               <Button variant="outline" onClick={addColumn}>
                 <Plus className="h-4 w-4 mr-2" />
                 添加字段
               </Button>
-            </div>
+            </div>}
           </>
             )}
           </div>
         </TabsContent>
-        <TabsContent value="access" className="mt-0">
+        {canManageDataAccess && <TabsContent value="access" className="mt-0">
           <TableDataAccessPanel projectId={projectId} tableName={tableName} />
-        </TabsContent>
+        </TabsContent>}
       </Tabs>
     </DashboardLayout>
   );

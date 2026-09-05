@@ -19,6 +19,8 @@
 ## 工作规则
 
 - 管理类路由默认保持 JWT-only。
+- 项目管理路由必须使用 `project-authorization.ts` 的 project/schema/tenant capability guard；不得只检查已认证、JWT 中的 role、资源 ID 或旧布尔 access helper。
+- 平台 `admin` 不自动拥有项目权限。`super_admin`、workspace owner、成员角色和用户 active 状态必须按数据库当前值解析；Project User/API Key 不得进入管理 RBAC。
 - 匿名 `apikey` 能力必须是显式允许，不要扩散成默认放开。
 - 新建或同步 Hasura permissions 时，禁止默认生成无行过滤的写权限；任何匿名写入都必须有明确业务理由和测试。
 - 修改认证请求头时，要联动检查 SDK、MCP Server、Admin server routes 和 nginx 代理是否使用同一契约。
@@ -74,6 +76,7 @@
 - `druvia_projects.settings` 更新虽已改为 JSONB 顶层 merge，但 `rateLimits` 等嵌套对象仍不是深合并；路由和前端都不能误判。
 - migration `020_storage_project_user_access` 必须先于包含直接 Storage actor cutover 的 API/Admin 启动；升级前必须审计旧逻辑名和 Local 大小写物理 key 冲突。
 - migration `021_project_auth_identities` 必须先于包含 Apple Project Auth 的 API/Admin 启动；release manifest migration ceiling 不得低于 `21`。
+- migration `022_project_members` 必须先于包含项目成员授权的 API/Admin 启动；成员表非空时不得执行 down，release manifest migration ceiling 不得低于 `22`。
 - migration CLI 只能在迁移 SQL 同时存在最外层 `BEGIN` 与 `COMMIT` 时剥离包装；孤立事务边界必须保留并由 PostgreSQL 报错。
 
 ## 参考入口

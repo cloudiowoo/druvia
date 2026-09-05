@@ -8,6 +8,7 @@ import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
 import { GitBranch, ChevronDown } from 'lucide-react';
 import { SystemUpdateNotice } from '@/components/system-update/SystemUpdateNotice';
+import { hasProjectCapability } from '@/lib/project-access';
 
 interface Environment {
   id: number;
@@ -24,13 +25,14 @@ interface EnvironmentSwitcherProps {
 function EnvironmentSwitcher({ disabled = false }: EnvironmentSwitcherProps) {
   const params = useParams();
   const projectId = params.projectId as string | undefined;
-  const { currentProject, currentEnv, setCurrentEnv } = useAppStore();
+  const { currentProject, currentProjectAccess, currentEnv, setCurrentEnv } = useAppStore();
+  const canManageEnvironments = hasProjectCapability(currentProjectAccess, 'environments:manage');
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!projectId || !currentProject) return;
+    if (!projectId || !currentProject || !canManageEnvironments) return;
 
     async function loadEnvironments() {
       setLoading(true);
@@ -72,9 +74,9 @@ function EnvironmentSwitcher({ disabled = false }: EnvironmentSwitcherProps) {
     loadEnvironments();
     // Note: currentEnv and setCurrentEnv intentionally excluded to prevent infinite loop
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, currentProject?.schemaName]);
+  }, [projectId, currentProject?.schemaName, canManageEnvironments]);
 
-  if (!projectId || !currentProject) {
+  if (!projectId || !currentProject || !canManageEnvironments) {
     return null;
   }
 

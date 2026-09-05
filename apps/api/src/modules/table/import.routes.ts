@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { pool } from '../../db/index.js';
 import format from 'pg-format';
-import { checkProjectAccess } from '../../lib/access.js';
+import { requireSchemaCapability } from '../../lib/project-authorization.js';
 import { createRateLimiter } from '../../middleware/ratelimit.js';
 
 // Rate limiter for import endpoint (10 requests per minute)
@@ -69,26 +69,7 @@ export async function importRoutes(fastify: FastifyInstance) {
     {
       bodyLimit: 10 * 1024 * 1024, // 10MB body limit to match frontend validation
       preHandler: [
-        async (request: FastifyRequest, reply: FastifyReply) => {
-          const params = request.params as ImportParams;
-          const userId = (request as any).user?.userId;
-          if (!userId) {
-            return reply.status(401).send({ error: 'Unauthorized' });
-          }
-          // Get project_id from schema name (schema name format: tenant_xxx_project_xxx)
-          const projectResult = await pool.query(
-            'SELECT project_id FROM druvia_projects WHERE schema_name = $1',
-            [params.schemaName]
-          );
-          if (projectResult.rows.length === 0) {
-            return reply.status(404).send({ error: 'Schema not found' });
-          }
-          const projectId = projectResult.rows[0].project_id;
-          const hasAccess = await checkProjectAccess(userId, projectId);
-          if (!hasAccess) {
-            return reply.status(403).send({ error: 'Access denied' });
-          }
-        },
+        requireSchemaCapability('database:write'),
         importRateLimiter,
       ],
     },

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -17,6 +17,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { toast } from '@/hooks/use-toast';
+import { hasProjectCapability } from '@/lib/project-access';
+import type { ProjectAccess, ProjectCapability } from '@druvia/shared';
 
 interface Backup {
   backupId: string;
@@ -41,9 +43,9 @@ export default function TenantBackupsPage() {
   const { currentTenant } = useAppStore();
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectAccess, setProjectAccess] = useState<Record<string, ProjectAccess>>({});
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [backups, setBackups] = useState<Backup[]>([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
@@ -51,49 +53,58 @@ export default function TenantBackupsPage() {
   const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     async function fetchProjects() {
       const res = await api.listProjects(tenantId);
       if (res.success && res.data) {
+        if (cancelled) return;
         setProjects(res.data);
-      }
-    }
-    async function fetchBackupsInitial() {
-      setLoading(true);
-      try {
-        const res = await api.listAllBackups({ tenantId });
-        if (res.success && res.data) {
-          setBackups(res.data.backups as Backup[]);
-          setTotal(res.data.total);
+        const accessEntries = await Promise.all(res.data.map(async (project) => {
+          const access = await api.getProjectAccess(project.projectId);
+          return [project.projectId, access.success ? access.data : undefined] as const;
+        }));
+        if (!cancelled) {
+          setProjectAccess(Object.fromEntries(
+            accessEntries.filter((entry): entry is readonly [string, ProjectAccess] => Boolean(entry[1])),
+          ));
         }
-      } finally {
-        setLoading(false);
       }
     }
-    fetchProjects();
-    fetchBackupsInitial();
+    void fetchProjects();
+    return () => { cancelled = true; };
   }, [tenantId]);
 
-  const fetchBackups = async () => {
+  const fetchBackups = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.listAllBackups({
-        tenantId,
-        projectId: selectedProject || undefined,
-      });
+      const res = await api.listBackups(tenantId);
       if (res.success && res.data) {
-        setBackups(res.data.backups as Backup[]);
-        setTotal(res.data.total);
+        setBackups(res.data as Backup[]);
       }
     } finally {
       setLoading(false);
     }
-  };
+  }, [tenantId]);
 
   useEffect(() => {
-    if (selectedProject !== '') {
-      fetchBackups();
-    }
-  }, [selectedProject]);
+    void fetchBackups();
+  }, [fetchBackups]);
+
+  const canForProject = (projectId: string, capability: ProjectCapability) =>
+    hasProjectCapability(projectAccess[projectId], capability);
+  const canManageTenantBackups = Object.values(projectAccess).some(
+    (access) => access.isWorkspaceOwner || access.isSuperAdmin,
+  );
+  const canForBackup = (backup: Backup, capability: 'backups:read' | 'backups:restore') =>
+    backup.projectId
+      ? canForProject(backup.projectId, capability)
+      : canManageTenantBackups;
+  const visibleBackups = selectedProject
+    ? backups.filter((backup) => backup.projectId === selectedProject)
+    : backups;
+  const canCreateSelectedBackup = Boolean(
+    selectedProject && canForProject(selectedProject, 'backups:create'),
+  );
 
   const handleCreateBackup = async () => {
     if (!selectedProject) return;
@@ -248,15 +259,15 @@ export default function TenantBackupsPage() {
             <span>备份</span>
           </div>
           <h1 className="text-2xl font-bold">备份管理</h1>
-          <p className="text-gray-500">共 {total} 条备份记录</p>
+          <p className="text-gray-500">共 {visibleBackups.length} 条备份记录</p>
         </div>
-        <button
+        {canCreateSelectedBackup && <button
           onClick={handleCreateBackup}
           className="btn btn-primary"
-          disabled={!selectedProject || creating}
+          disabled={creating}
         >
           {creating ? '创建中...' : '创建备份'}
-        </button>
+        </button>}
       </div>
 
       <div className="card mb-6">
@@ -282,7 +293,7 @@ export default function TenantBackupsPage() {
       <div className="card">
         {loading ? (
           <div className="p-8 text-center text-gray-500">加载中...</div>
-        ) : backups.length === 0 ? (
+        ) : visibleBackups.length === 0 ? (
           <div className="p-8 text-center text-gray-500">暂无备份记录</div>
         ) : (
           <table className="table">
@@ -297,7 +308,7 @@ export default function TenantBackupsPage() {
               </tr>
             </thead>
             <tbody>
-              {backups.map((backup) => (
+              {visibleBackups.map((backup) => (
                 <tr key={backup.backupId}>
                   <td className="font-mono text-sm">{backup.backupId}</td>
                   <td className="text-gray-500">{backup.schemaName}</td>
@@ -306,14 +317,15 @@ export default function TenantBackupsPage() {
                   <td className="text-gray-500">{formatDate(backup.createdAt)}</td>
                   <td>
                     <div className="flex gap-2">
-                      {backup.status === 'completed' && (
-                        <>
+                      {backup.status === 'completed' && canForBackup(backup, 'backups:read') && (
                           <button
                             onClick={() => handleDownload(backup.backupId)}
                             className="text-sm text-primary-600 hover:underline"
                           >
                             下载
                           </button>
+                      )}
+                      {backup.status === 'completed' && canForBackup(backup, 'backups:restore') && (
                           <button
                             onClick={() => handleRestore(backup.backupId)}
                             disabled={restoring === backup.backupId}
@@ -321,14 +333,13 @@ export default function TenantBackupsPage() {
                           >
                             {restoring === backup.backupId ? '恢复中...' : '恢复'}
                           </button>
-                        </>
                       )}
-                      <button
+                      {canForBackup(backup, 'backups:restore') && <button
                         onClick={() => setDeleteConfirm({ backupId: backup.backupId, input: '' })}
                         className="text-sm text-red-600 hover:underline"
                       >
                         删除
-                      </button>
+                      </button>}
                     </div>
                   </td>
                 </tr>

@@ -2,6 +2,7 @@ import { query, queryOne } from '../../db/index.js';
 import { generateTenantId } from '@druvia/shared';
 import type { Tenant, CreateTenantInput, UpdateTenantInput } from '@druvia/shared';
 import { validateAlias } from '../../lib/validation.js';
+import type { PlatformJwtUser } from '../../middleware/auth.js';
 
 // Database row type (snake_case)
 interface TenantRow {
@@ -19,6 +20,15 @@ interface TenantRow {
   user_limit: number;
   created_at: Date;
   updated_at: Date;
+}
+
+interface AccessibleTenantRow extends TenantRow {
+  full_access: boolean;
+}
+
+export interface AccessibleTenant {
+  tenant: Tenant;
+  fullAccess: boolean;
 }
 
 // Convert database row to Tenant interface
@@ -90,6 +100,31 @@ export async function listTenants(ownerUid?: number, limit = 50, offset = 0): Pr
   }
 
   return rows.map(toTenant);
+}
+
+export async function listAccessibleTenants(
+  user: PlatformJwtUser,
+  limit = 50,
+  offset = 0,
+): Promise<AccessibleTenant[]> {
+  const rows = await query<AccessibleTenantRow>(
+    `SELECT DISTINCT t.*,
+            (u.role = 'super_admin' OR t.owner_uid = u.id) AS full_access
+       FROM druvia_tenants t
+       JOIN druvia_users u
+         ON u.id = $1 AND u.user_id = $2 AND u.status = 'active'
+       LEFT JOIN druvia_projects p ON p.tenant_id = t.tenant_id
+       LEFT JOIN druvia_project_members pm
+         ON pm.project_id = p.project_id AND pm.user_uid = u.id
+      WHERE u.role = 'super_admin' OR t.owner_uid = u.id OR pm.id IS NOT NULL
+      ORDER BY t.created_at DESC
+      LIMIT $3 OFFSET $4`,
+    [user.uid, user.userId, limit, offset],
+  );
+  return rows.map((row) => ({
+    tenant: toTenant(row),
+    fullAccess: row.full_access,
+  }));
 }
 
 export async function updateTenant(tenantId: string, input: UpdateTenantInput): Promise<Tenant | null> {

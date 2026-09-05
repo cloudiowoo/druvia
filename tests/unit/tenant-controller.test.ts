@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../apps/api/src/modules/tenant/tenant.service.js', () => ({
   deleteTenant: vi.fn(),
+  getTenantById: vi.fn(),
+  listAccessibleTenants: vi.fn(),
 }))
 
 import * as tenantService from '../../apps/api/src/modules/tenant/tenant.service.js'
-import { deleteTenant } from '../../apps/api/src/modules/tenant/tenant.controller.js'
+import { deleteTenant, getTenant, listTenants } from '../../apps/api/src/modules/tenant/tenant.controller.js'
 
 function replyStub() {
   const reply = { status: vi.fn(), send: vi.fn() }
@@ -58,5 +60,71 @@ describe('tenant deletion migration guard', () => {
       { params: { tenantId: 'tenant_1' } } as never,
       replyStub() as never
     )).rejects.toBe(failure)
+  })
+})
+
+describe('tenant member-safe projection', () => {
+  const tenant = {
+    id: 1,
+    tenantId: 'default',
+    alias: 'default',
+    name: 'Default Tenant',
+    ownerUid: 1,
+    plan: 'enterprise',
+    settings: { internal: true },
+    status: 'active',
+    description: 'Workspace',
+    storageLimit: 100,
+    projectLimit: 10,
+    userLimit: 20,
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-02T00:00:00Z'),
+  }
+
+  beforeEach(() => vi.clearAllMocks())
+
+  it('omits owner, settings and quotas for a project-only workspace member', async () => {
+    vi.mocked(tenantService.getTenantById).mockResolvedValue(tenant as never)
+    const reply = replyStub()
+
+    await getTenant({
+      params: { tenantId: 'default' },
+      tenantAccess: { tenantId: 'default', isWorkspaceOwner: false, isSuperAdmin: false },
+    } as never, reply as never)
+
+    const data = (vi.mocked(reply.send).mock.calls[0][0] as { data: Record<string, unknown> }).data
+    expect(data).toMatchObject({ tenantId: 'default', alias: 'default', name: 'Default Tenant' })
+    expect(data).not.toHaveProperty('ownerUid')
+    expect(data).not.toHaveProperty('settings')
+    expect(data).not.toHaveProperty('storageLimit')
+  })
+
+  it('keeps the full tenant response for workspace owners', async () => {
+    vi.mocked(tenantService.getTenantById).mockResolvedValue(tenant as never)
+    const reply = replyStub()
+
+    await getTenant({
+      params: { tenantId: 'default' },
+      tenantAccess: { tenantId: 'default', isWorkspaceOwner: true, isSuperAdmin: false },
+    } as never, reply as never)
+
+    expect(reply.send).toHaveBeenCalledWith({ success: true, data: tenant })
+  })
+
+  it('projects each workspace list row according to current access', async () => {
+    vi.mocked(tenantService.listAccessibleTenants).mockResolvedValue([
+      { tenant, fullAccess: false },
+    ] as never)
+    const reply = replyStub()
+
+    await listTenants({
+      query: {},
+      user: { kind: 'platform_user', uid: 2, userId: 'user_2', role: 'admin' },
+    } as never, reply as never)
+
+    const payload = vi.mocked(reply.send).mock.calls[0][0] as { data: Array<Record<string, unknown>> }
+    expect(payload.data[0]).toMatchObject({ tenantId: 'default', name: 'Default Tenant' })
+    expect(payload.data[0]).not.toHaveProperty('settings')
+    expect(payload.data[0]).not.toHaveProperty('ownerUid')
   })
 })

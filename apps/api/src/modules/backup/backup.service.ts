@@ -54,6 +54,16 @@ export interface Backup {
   completedAt: Date | null;
 }
 
+export interface BackupListItem {
+  backupId: string;
+  tenantId: string;
+  projectId: string | null;
+  schemaName: string;
+  status: Backup['status'];
+  sizeBytes: number;
+  createdAt: Date;
+}
+
 function toBackup(row: BackupRow): Backup {
   return {
     id: row.id,
@@ -72,6 +82,40 @@ function toBackup(row: BackupRow): Backup {
     completedAt: row.completed_at,
   };
 }
+
+function toBackupListItem(row: BackupRow): BackupListItem {
+  return {
+    backupId: row.backup_id,
+    tenantId: row.tenant_id,
+    projectId: row.project_id,
+    schemaName: row.schema_name,
+    status: row.status as Backup['status'],
+    sizeBytes: row.size_bytes,
+    createdAt: row.created_at,
+  };
+}
+
+const VALID_BACKUP_SCOPE_CTE = `WITH schema_projects AS (
+  SELECT p.schema_name, p.project_id, p.tenant_id
+    FROM druvia_projects p
+   WHERE p.schema_name IS NOT NULL
+  UNION
+  SELECT e.schema_name, p.project_id, p.tenant_id
+    FROM druvia_project_environments e
+    JOIN druvia_projects p ON p.project_id = e.project_id
+),
+unique_schema_scopes AS (
+  SELECT schema_name,
+         MIN(project_id) AS project_id,
+         MIN(tenant_id) AS tenant_id
+    FROM schema_projects
+   GROUP BY schema_name
+  HAVING COUNT(DISTINCT project_id) = 1
+     AND COUNT(DISTINCT tenant_id) = 1
+)`;
+
+const BACKUP_LIST_COLUMNS = `b.backup_id, b.tenant_id, b.project_id, b.schema_name,
+  b.status, b.size_bytes, b.created_at`;
 
 const BACKUP_POSTGRES_CONTAINER = process.env.BACKUP_POSTGRES_CONTAINER || 'druvia-postgres';
 
@@ -246,15 +290,42 @@ export async function listBackups(
   tenantId: string,
   limit = 50,
   offset = 0
-): Promise<Backup[]> {
+): Promise<BackupListItem[]> {
   const rows = await query<BackupRow>(
-    `SELECT * FROM druvia_backups
-     WHERE tenant_id = $1
-     ORDER BY created_at DESC
+    `${VALID_BACKUP_SCOPE_CTE}
+     SELECT ${BACKUP_LIST_COLUMNS}
+       FROM druvia_backups b
+       JOIN unique_schema_scopes scope ON scope.schema_name = b.schema_name
+      WHERE b.tenant_id = $1
+        AND scope.tenant_id = b.tenant_id
+        AND (b.project_id IS NULL OR b.project_id = scope.project_id)
+     ORDER BY b.created_at DESC
      LIMIT $2 OFFSET $3`,
     [tenantId, limit, offset]
   );
-  return rows.map(toBackup);
+  return rows.map(toBackupListItem);
+}
+
+export async function listBackupsForProjects(
+  tenantId: string,
+  projectIds: string[],
+  limit = 50,
+  offset = 0,
+): Promise<BackupListItem[]> {
+  const rows = await query<BackupRow>(
+    `${VALID_BACKUP_SCOPE_CTE}
+     SELECT ${BACKUP_LIST_COLUMNS}
+       FROM druvia_backups b
+       JOIN unique_schema_scopes scope ON scope.schema_name = b.schema_name
+      WHERE b.tenant_id = $1
+        AND scope.tenant_id = b.tenant_id
+        AND b.project_id = scope.project_id
+        AND b.project_id = ANY($2::text[])
+      ORDER BY b.created_at DESC
+      LIMIT $3 OFFSET $4`,
+    [tenantId, projectIds, limit, offset],
+  );
+  return rows.map(toBackupListItem);
 }
 
 // Delete backup

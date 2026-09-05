@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { queryOne, projectLock, schemaLock } = vi.hoisted(() => ({
+const { query, queryOne, projectLock, schemaLock } = vi.hoisted(() => ({
+  query: vi.fn(),
   queryOne: vi.fn(),
   projectLock: vi.fn(),
   schemaLock: vi.fn(),
 }))
 
-vi.mock('../../apps/api/src/db/index.js', () => ({ query: vi.fn(), queryOne, pool: {} }))
+vi.mock('../../apps/api/src/db/index.js', () => ({ query, queryOne, pool: {} }))
 vi.mock('../../apps/api/src/adapters/storage/index.js', () => ({ getDefaultStorageAdapter: vi.fn() }))
 vi.mock('../../apps/api/src/lib/logger.js', () => ({
   createApiLogger: vi.fn(() => ({ error: vi.fn(), warn: vi.fn() })),
@@ -16,7 +17,11 @@ vi.mock('../../apps/api/src/modules/data-access/data-access-mutation-lock.js', (
   withSchemaDataAccessMutationLock: schemaLock,
 }))
 
-import { restoreBackup } from '../../apps/api/src/modules/backup/backup.service.js'
+import {
+  listBackups,
+  listBackupsForProjects,
+  restoreBackup,
+} from '../../apps/api/src/modules/backup/backup.service.js'
 
 function backupRow(projectId: string | null) {
   return {
@@ -54,5 +59,31 @@ describe('backup restore migration lock', () => {
       'dru_project', expect.any(Function), { globalMode: 'exclusive' }
     )
     expect(projectLock).not.toHaveBeenCalled()
+  })
+
+  it('filters workspace backup listings by unique matching schema scope before pagination', async () => {
+    query.mockResolvedValue([backupRow(null)])
+
+    const backups = await listBackups('tenant_1', 25, 5)
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/HAVING COUNT\(DISTINCT project_id\) = 1[\s\S]*scope\.tenant_id = b\.tenant_id[\s\S]*b\.project_id IS NULL OR b\.project_id = scope\.project_id[\s\S]*LIMIT \$2 OFFSET \$3/),
+      ['tenant_1', 25, 5],
+    )
+    expect(backups[0]).not.toHaveProperty('storageKey')
+    expect(backups[0]).not.toHaveProperty('errorMessage')
+    expect(backups[0]).not.toHaveProperty('tablesList')
+    expect(backups[0]).not.toHaveProperty('createdBy')
+  })
+
+  it('filters member backup listings by unique matching project scope before pagination', async () => {
+    query.mockResolvedValue([backupRow('proj_1')])
+
+    await listBackupsForProjects('tenant_1', ['proj_1'], 10, 2)
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/HAVING COUNT\(DISTINCT project_id\) = 1[\s\S]*scope\.tenant_id = b\.tenant_id[\s\S]*b\.project_id = scope\.project_id[\s\S]*b\.project_id = ANY\(\$2::text\[\]\)[\s\S]*LIMIT \$3 OFFSET \$4/),
+      ['tenant_1', ['proj_1'], 10, 2],
+    )
   })
 })

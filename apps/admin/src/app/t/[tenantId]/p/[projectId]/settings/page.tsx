@@ -16,7 +16,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { GitBranch, Key, Gauge, ChevronRight, ShieldCheck } from 'lucide-react';
+import { GitBranch, Key, Gauge, ChevronRight, ShieldCheck, Users } from 'lucide-react';
+import { useProjectAccess } from '@/hooks/use-project-access';
 
 interface ProjectDetails {
   projectId: string;
@@ -33,6 +34,7 @@ export default function ProjectSettingsPage() {
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
   const { currentTenant, currentProject, setCurrentProject } = useAppStore();
+  const { can } = useProjectAccess();
 
   const [project, setProject] = useState<ProjectDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -176,12 +178,13 @@ export default function ProjectSettingsPage() {
                 className="input w-full"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                disabled={!can('project:update')}
               />
             </div>
             <div className="flex items-center gap-3">
-              <button type="submit" disabled={saving} className="btn btn-primary">
+              {can('project:update') && <button type="submit" disabled={saving} className="btn btn-primary">
                 {saving ? '保存中...' : '保存'}
-              </button>
+              </button>}
               {saveSuccess && (
                 <span className="text-green-600 text-sm">保存成功</span>
               )}
@@ -216,7 +219,13 @@ export default function ProjectSettingsPage() {
             <h2 className="font-semibold">更多设置</h2>
           </div>
           <div className="card-body p-0">
-            <Link
+            {can('members:read') && <Link
+              href={`/t/${tenantId}/p/${projectId}/settings/members`}
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 border-b"
+            >
+              <div className="flex items-center gap-3"><Users className="h-5 w-5 text-gray-400" /><div><div className="font-medium">项目成员</div><div className="text-sm text-gray-500">查看项目成员与角色</div></div></div><ChevronRight className="h-5 w-5 text-gray-400" />
+            </Link>}
+            {can('environments:manage') && <Link
               href={`/t/${tenantId}/p/${projectId}/settings/environments`}
               className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 border-b"
             >
@@ -228,8 +237,8 @@ export default function ProjectSettingsPage() {
                 </div>
               </div>
               <ChevronRight className="h-5 w-5 text-gray-400" />
-            </Link>
-            <Link
+            </Link>}
+            {can('api_keys:manage') && <Link
               href={`/t/${tenantId}/p/${projectId}/settings/api-keys`}
               className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 border-b"
             >
@@ -241,8 +250,8 @@ export default function ProjectSettingsPage() {
                 </div>
               </div>
               <ChevronRight className="h-5 w-5 text-gray-400" />
-            </Link>
-            <Link
+            </Link>}
+            {can('project:update') && <Link
               href={`/t/${tenantId}/p/${projectId}/settings/rate-limits`}
               className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 border-b"
             >
@@ -254,8 +263,8 @@ export default function ProjectSettingsPage() {
                 </div>
               </div>
               <ChevronRight className="h-5 w-5 text-gray-400" />
-            </Link>
-            <Link
+            </Link>}
+            {can('data_access:manage') && <Link
               href={`/t/${tenantId}/p/${projectId}/settings/data-access`}
               className="flex items-center justify-between px-6 py-4 hover:bg-gray-50"
             >
@@ -267,12 +276,12 @@ export default function ProjectSettingsPage() {
                 </div>
               </div>
               <ChevronRight className="h-5 w-5 text-gray-400" />
-            </Link>
+            </Link>}
           </div>
         </div>
 
         {/* 危险操作 */}
-        <div className="card lg:col-span-2 border-red-200">
+        {can('project:delete') && <div className="card lg:col-span-2 border-red-200">
           <div className="card-header bg-red-50">
             <h2 className="font-semibold text-red-600">危险操作</h2>
           </div>
@@ -300,7 +309,7 @@ export default function ProjectSettingsPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>}
       </div>
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

@@ -1,17 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
+  createProject: vi.fn(),
   getProjectById: vi.fn(),
   deleteProject: vi.fn(),
 }))
 
-vi.mock('../../apps/api/src/lib/access.js', () => ({
-  checkProjectAccess: vi.fn(),
+vi.mock('../../apps/api/src/lib/project-authorization.js', () => ({
+  AuthorizationError: class AuthorizationError extends Error {
+    constructor(public statusCode: number, public code: string, message: string) {
+      super(message)
+    }
+  },
+  assertProjectCapability: vi.fn(),
+  assertTenantAccess: vi.fn(),
 }))
 
 import * as projectController from '../../apps/api/src/modules/project/project.controller.js'
 import * as projectService from '../../apps/api/src/modules/project/project.service.js'
-import * as access from '../../apps/api/src/lib/access.js'
+import {
+  assertProjectCapability,
+  AuthorizationError,
+} from '../../apps/api/src/lib/project-authorization.js'
 import { DataAccessMutationLockedError } from '../../apps/api/src/modules/data-access/data-access-mutation-lock.js'
 
 type ReplyStub = {
@@ -51,7 +61,31 @@ describe('Project Controller', () => {
     vi.mocked(projectService.deleteProject).mockResolvedValue(true)
   })
 
+  it('returns conflict when the generated project schema is already in use', async () => {
+    vi.mocked(projectService.createProject).mockRejectedValue(
+      Object.assign(new Error('schema conflict'), { code: 'PROJECT_SCHEMA_CONFLICT' }),
+    )
+    const reply = createReply()
+
+    await projectController.createProject({
+      params: { tenantId: 'tenant_123' },
+      body: { alias: 'appdev', name: 'App Dev' },
+    } as never, reply as never)
+
+    expect(reply.status).toHaveBeenCalledWith(409)
+    expect(reply.payload).toEqual({
+      success: false,
+      error: {
+        code: 'PROJECT_SCHEMA_CONFLICT',
+        message: 'Project schema name is already in use',
+      },
+    })
+  })
+
   it('rejects delete requests from non-platform users', async () => {
+    vi.mocked(assertProjectCapability).mockRejectedValue(
+      new AuthorizationError(401, 'UNAUTHORIZED', 'Platform authentication required'),
+    )
     const reply = createReply()
     const request = {
       params: { projectId: 'proj_123' },
@@ -70,14 +104,20 @@ describe('Project Controller', () => {
     expect(reply.status).toHaveBeenCalledWith(401)
     expect(reply.payload).toEqual({
       success: false,
-      error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+      error: { code: 'UNAUTHORIZED', message: 'Platform authentication required' },
     })
     expect(projectService.deleteProject).not.toHaveBeenCalled()
-    expect(access.checkProjectAccess).not.toHaveBeenCalled()
+    expect(assertProjectCapability).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'project_user' }),
+      'proj_123',
+      'project:delete',
+    )
   })
 
   it('rejects delete requests when the user has no access to the project', async () => {
-    vi.mocked(access.checkProjectAccess).mockResolvedValue(false)
+    vi.mocked(assertProjectCapability).mockRejectedValue(
+      new AuthorizationError(403, 'FORBIDDEN', 'Project capability required'),
+    )
 
     const reply = createReply()
     const request = {
@@ -92,17 +132,21 @@ describe('Project Controller', () => {
 
     await projectController.deleteProject(request as never, reply as never)
 
-    expect(access.checkProjectAccess).toHaveBeenCalledWith('usr_other', 'proj_123')
+    expect(assertProjectCapability).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'usr_other' }),
+      'proj_123',
+      'project:delete',
+    )
     expect(reply.status).toHaveBeenCalledWith(403)
     expect(reply.payload).toEqual({
       success: false,
-      error: { code: 'FORBIDDEN', message: 'No access to this project' },
+      error: { code: 'FORBIDDEN', message: 'Project capability required' },
     })
     expect(projectService.deleteProject).not.toHaveBeenCalled()
   })
 
   it('allows owners to delete projects they can access', async () => {
-    vi.mocked(access.checkProjectAccess).mockResolvedValue(true)
+    vi.mocked(assertProjectCapability).mockResolvedValue({} as never)
 
     const reply = createReply()
     const request = {
@@ -117,7 +161,11 @@ describe('Project Controller', () => {
 
     await projectController.deleteProject(request as never, reply as never)
 
-    expect(access.checkProjectAccess).toHaveBeenCalledWith('usr_owner', 'proj_123')
+    expect(assertProjectCapability).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'usr_owner' }),
+      'proj_123',
+      'project:delete',
+    )
     expect(projectService.deleteProject).toHaveBeenCalledWith('proj_123')
     expect(reply.status).toHaveBeenCalledWith(204)
   })
@@ -126,7 +174,7 @@ describe('Project Controller', () => {
     new DataAccessMutationLockedError('busy'),
     { code: '55006', constraint: 'druvia_data_access_migrations_inflight_delete_guard' },
   ])('maps migration deletion guards to a stable conflict', async (failure) => {
-    vi.mocked(access.checkProjectAccess).mockResolvedValue(true)
+    vi.mocked(assertProjectCapability).mockResolvedValue({} as never)
     vi.mocked(projectService.deleteProject).mockRejectedValue(failure)
     const reply = createReply()
 
@@ -142,7 +190,7 @@ describe('Project Controller', () => {
   })
 
   it('rethrows unrelated project deletion failures', async () => {
-    vi.mocked(access.checkProjectAccess).mockResolvedValue(true)
+    vi.mocked(assertProjectCapability).mockResolvedValue({} as never)
     const failure = new Error('storage unavailable')
     vi.mocked(projectService.deleteProject).mockRejectedValue(failure)
 

@@ -19,26 +19,10 @@ on:
           - stable
           - beta
           - nightly
-      migration_required:
-        description: Whether this release requires database migrations
-        required: true
-        default: 'true'
       migration_from:
         description: Current migration floor
         required: true
         default: '18'
-      migration_to:
-        description: Target migration ceiling
-        required: true
-        default: '21'
-      migration_requires_backup:
-        description: Whether updater must take a database backup before apply
-        required: true
-        default: 'true'
-      migration_reversible:
-        description: Whether database migrations are automatically reversible
-        required: true
-        default: 'false'
 
 permissions:
   contents: write
@@ -185,6 +169,25 @@ jobs:
           tests/sdk/project-auth.test.ts
           tests/unit/admin/storage-bucket-access.test.ts
           tests/unit/release-pipeline.test.ts
+
+      - name: Verify project membership authorization
+        run: >-
+          pnpm vitest run
+          tests/unit/project-members-schema.test.ts
+          tests/unit/project-authorization.test.ts
+          tests/unit/project-service.test.ts
+          tests/unit/project-controller.test.ts
+          tests/unit/schema-service.test.ts
+          tests/unit/project-members.service.test.ts
+          tests/unit/project-members.controller.test.ts
+          tests/unit/backup-authorization.test.ts
+          tests/unit/backup-service.test.ts
+          tests/unit/admin/project-access.test.ts
+          tests/unit/admin/project-members-ui.test.ts
+          tests/unit/admin/project-read-only-ui.test.ts
+          tests/unit/admin/project-api-page.test.tsx
+          tests/unit/admin/tenant-backups-page.test.tsx
+          tests/unit/admin/sidebar-nav.test.ts
 
       - name: Verify Apple Project Auth provider
         run: >-
@@ -338,11 +341,11 @@ jobs:
           DRUVIA_ADMIN_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_admin }}
           DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_worker }}
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
-          DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'true' }}
+          DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '21' }}
-          DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'true' }}
-          DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
+          DRUVIA_MIGRATION_TO: '22'
+          DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
+          DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs
 
       - name: Generate self-hosted registry release manifest
@@ -360,11 +363,11 @@ jobs:
           DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.self_hosted_worker }}
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.self_hosted_updater }}
           DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
-          DRUVIA_MIGRATION_REQUIRED: ${{ inputs.migration_required || 'true' }}
+          DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: ${{ inputs.migration_to || '21' }}
-          DRUVIA_MIGRATION_REQUIRES_BACKUP: ${{ inputs.migration_requires_backup || 'true' }}
-          DRUVIA_MIGRATION_REVERSIBLE: ${{ inputs.migration_reversible || 'false' }}
+          DRUVIA_MIGRATION_TO: '22'
+          DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
+          DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs
 
       - name: Upload release assets

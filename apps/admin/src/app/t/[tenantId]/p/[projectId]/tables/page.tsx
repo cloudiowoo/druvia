@@ -21,6 +21,7 @@ import { Plus, Table2, GitBranch, RefreshCw, Check, X, Radio } from 'lucide-reac
 import { CreateTableDialog } from '@/components/CreateTableDialog';
 import { ERDiagram } from '@/components/tables/ERDiagram';
 import { toast } from '@/hooks/use-toast';
+import { useProjectAccess } from '@/hooks/use-project-access';
 import {
   getDataInterfaceLabel,
   getDataInterfaceSyncFeedback,
@@ -67,6 +68,8 @@ export default function TablesPage() {
   const tenantId = params.tenantId as string;
   const projectId = params.projectId as string;
   const { currentProject, currentTenant, currentEnv } = useAppStore();
+  const { can } = useProjectAccess();
+  const canWrite = can('database:write');
 
   // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
   const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
@@ -194,7 +197,7 @@ export default function TablesPage() {
           </div>
           <h1 className="text-2xl font-bold">数据表</h1>
         </div>
-        {effectiveSchema && (
+        {effectiveSchema && canWrite && (
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -245,7 +248,7 @@ export default function TablesPage() {
             ) : tables.length === 0 ? (
               <div className="p-12 text-center">
                 <p className="text-muted-foreground mb-4">暂无数据表</p>
-                {effectiveSchema && (
+                {effectiveSchema && canWrite && (
                   <CreateTableDialog
                     schemaName={effectiveSchema}
                     onSuccess={fetchTables}

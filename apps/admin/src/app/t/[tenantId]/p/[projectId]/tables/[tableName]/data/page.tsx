@@ -20,6 +20,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { CsvImportDialog } from '@/components/data/CsvImportDialog';
 import { DataGeneratorDialog } from '@/components/data/DataGeneratorDialog';
+import { useProjectAccess } from '@/hooks/use-project-access';
 
 export default function DataBrowserPage() {
   const params = useParams();
@@ -27,6 +28,8 @@ export default function DataBrowserPage() {
   const projectId = params.projectId as string;
   const tableName = params.tableName as string;
   const { currentProject, currentEnv } = useAppStore();
+  const { can } = useProjectAccess();
+  const canWrite = can('database:write');
 
   // 获取当前有效的 schema（优先使用环境 schema，否则使用项目 schema）
   const effectiveSchema = currentEnv?.schemaName || currentProject?.schemaName;
@@ -131,14 +134,14 @@ export default function DataBrowserPage() {
               <h1 className="text-2xl font-bold">数据浏览</h1>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setGeneratorOpen(true)}>
+              {canWrite && <Button variant="outline" size="sm" onClick={() => setGeneratorOpen(true)}>
                 <Wand2 className="h-4 w-4 mr-2" />
                 生成测试数据
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+              </Button>}
+              {canWrite && <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
                 <Upload className="h-4 w-4 mr-2" />
                 导入 CSV
-              </Button>
+              </Button>}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" disabled={exporting}>
@@ -164,10 +167,11 @@ export default function DataBrowserPage() {
             tableName={tableName}
             primaryKeyColumn="id"
             pageSize={50}
+            readOnly={!canWrite}
             onError={handleError}
           />
 
-          <CsvImportDialog
+          {canWrite && <CsvImportDialog
             open={importOpen}
             onOpenChange={setImportOpen}
             schemaName={effectiveSchema}
@@ -180,9 +184,9 @@ export default function DataBrowserPage() {
                 description: '数据已成功导入',
               });
             }}
-          />
+          />}
 
-          <DataGeneratorDialog
+          {canWrite && <DataGeneratorDialog
             open={generatorOpen}
             onOpenChange={setGeneratorOpen}
             schemaName={effectiveSchema}
@@ -195,7 +199,7 @@ export default function DataBrowserPage() {
                 description: '测试数据已成功生成',
               });
             }}
-          />
+          />}
         </div>
       </div>
     </DashboardLayout>

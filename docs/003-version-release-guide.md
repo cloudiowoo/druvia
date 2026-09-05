@@ -94,6 +94,8 @@ Bootstrap 检测逻辑：
 | 018 | 列存在 | `druvia_projects.data_access_mode` |
 | 019 | 表存在 | `druvia_data_access_migrations` |
 | 020 | 两列同时存在 | `druvia_storage_buckets.project_user_access` 与 `druvia_storage_objects.owner_project_user_id` |
+| 021 | 复合结构检测 | Apple Project Auth 三张 identity/lifecycle 表、refresh token 两列与约束 |
+| 022 | 复合结构检测 | `druvia_project_members` 表、角色/唯一约束、成员索引与更新时间触发器 |
 
 注意事项：
 - Bootstrap 只能执行一次，已有记录时会提示 "Already bootstrapped"
@@ -175,7 +177,7 @@ OTA 仍使用既有 updater 流程，但 release manifest 对应的 API 镜像�
 
 包含已有项目数据访问升级的版本必须先应用 `019_data_access_migrations`，再启动新 API/Admin。发布前先完成数据库和 Hasura metadata 备份；发布后通过 Admin 逐项目生成预检，不批量修改 `data_access_mode`。自定义旧规则会阻断，匿名写权限不会迁移，认证 aggregate 能力会收紧。
 
-当前 release workflow 的安全默认值为 `migration_required=true`、`migration_from=18`、`migration_to=21`、`migration_requires_backup=true`、`migration_reversible=false`。tag push 在没有 `workflow_dispatch` 输入时也使用这些值，GHCR 与自建 Registry manifest 必须保持一致；未来新增迁移时需同步提升该默认范围和对应契约测试。
+当前 release workflow 固定 `migration_required=true`、`migration_to=22`、`migration_requires_backup=true`、`migration_reversible=false`，手动发布不能覆盖这些安全字段；只有兼容起点 `migration_from` 保留为输入，默认值为 `18`。manifest 生成器会再次拒绝跳过迁移、目标不是 22、不备份或声明可自动回滚的合同。GHCR 与自建 Registry manifest 必须保持一致；未来新增迁移时需同步提升固定目标和对应契约测试。
 
 迁移操作、恢复与回滚流程见 `docs/004-project-data-access-migration-guide.md`。`019` 保存恢复依据，镜像或 OTA 回滚时必须保留，不能自动执行 down migration。
 
@@ -235,6 +237,71 @@ ORDER BY folded_storage_path;
 `020` 将所有旧 bucket 默认设为 `admin_only`，只从 `project_user` / `trusted_backend_project_user` 的非空可信 metadata 回填 owner。部署后由管理员逐 bucket 选择项目用户访问预设；不要批量打开公开访问。旧对象物理 key 不重写，新上传才使用 opaque object ID key。
 
 镜像回滚不得自动执行 `020 down`。先恢复数据库/Storage 备份或确认新 owner/preset 字段可安全舍弃，再人工回滚；现有 private signed URL 在有效期内不受 preset 变化影响，public 开关关闭后下一次未缓存请求应被拒绝，旧公开缓存最多保留 5 分钟。
+
+#### 项目成员授权 / 迁移 022 部署门禁
+
+包含项目成员 RBAC 的版本必须先应用 `022_project_members`，再启动新 API/Admin。该版本会把平台 `admin` 收紧为仅可登录身份，项目访问必须来自数据库当前 `super_admin`、workspace owner 或显式项目成员关系；不能在 migration 仍为 021 时先替换 API。
+
+1. 升级前完成数据库备份，并用 `pg_restore -l` 验证 custom archive 可读。
+2. 先执行以下只读查询审计 schema 是否被多个项目占用，正常结果必须为零行。授权解析会对歧义 schema 失败关闭；项目与环境创建也会拒绝使用已分配或物理存在的 schema，但历史冲突仍需在发布前人工修复。
+
+```sql
+WITH schema_projects AS (
+  SELECT schema_name, project_id
+  FROM druvia_projects
+  WHERE schema_name IS NOT NULL
+  UNION
+  SELECT schema_name, project_id
+  FROM druvia_project_environments
+)
+SELECT schema_name,
+       COUNT(DISTINCT project_id) AS project_count,
+       array_agg(DISTINCT project_id ORDER BY project_id) AS project_ids
+FROM schema_projects
+GROUP BY schema_name
+HAVING COUNT(DISTINCT project_id) > 1
+ORDER BY schema_name;
+```
+
+3. 再审计历史 backup scope，正常结果必须为零行。任何结果都先隔离并核对实际 dump 归属；新 API 会从列表中过滤不一致或歧义记录，并以 `BACKUP_SCOPE_MISMATCH` 拒绝详情读取、下载、删除和恢复。
+
+```sql
+WITH schema_projects AS (
+  SELECT p.schema_name, p.project_id, p.tenant_id
+  FROM druvia_projects p
+  WHERE p.schema_name IS NOT NULL
+  UNION
+  SELECT e.schema_name, p.project_id, p.tenant_id
+  FROM druvia_project_environments e
+  JOIN druvia_projects p ON p.project_id = e.project_id
+),
+backup_scopes AS (
+  SELECT b.backup_id,
+         b.tenant_id AS backup_tenant_id,
+         b.project_id AS backup_project_id,
+         b.schema_name,
+         COUNT(DISTINCT scope.project_id) AS schema_project_count,
+         MIN(scope.project_id) AS schema_project_id,
+         MIN(scope.tenant_id) AS schema_tenant_id
+  FROM druvia_backups b
+  LEFT JOIN schema_projects scope ON scope.schema_name = b.schema_name
+  GROUP BY b.backup_id, b.tenant_id, b.project_id, b.schema_name
+)
+SELECT *
+FROM backup_scopes
+WHERE schema_project_count <> 1
+   OR schema_tenant_id <> backup_tenant_id
+   OR (backup_project_id IS NOT NULL AND backup_project_id <> schema_project_id)
+ORDER BY backup_id;
+```
+
+4. 执行 `pnpm migrate status`，确认当前数据库与 manifest 的 `migration.from/to` 匹配。
+5. 执行 `pnpm migrate up`，确认 `druvia_schema_versions` 当前版本为 22，并检查 `druvia_project_members` 的角色约束、唯一约束、索引和触发器均存在。
+6. 启动 API/Admin 后，以 owner 验证原项目全权限；以普通无成员 `admin` 验证已知 Project ID/schema 仍返回 403。
+7. 通过成员 API 创建初始授权，不手写成员表 SQL；分别验证成员本项目 capability、跨项目拒绝和 owner-only 凭证/成员管理拒绝。
+8. GHCR 与自建 Registry manifest 必须都声明 `required=true`、`to=22`、`requiresBackup=true`、`reversible=false`，并引用同一次构建对应的镜像 digest。
+
+`022 down` 只允许成员表为空时执行；存在任何成员关系会以 SQLSTATE `55006` 拒绝回滚。需要回退旧 API 时，先评估移除成员对管理访问的影响并导出成员清单；不得为了镜像回滚自动删除成员或自动执行 down migration。
 
 ### 场景 E：生产环境回滚
 

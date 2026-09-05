@@ -196,12 +196,22 @@
 - migration `021_project_auth_identities` 是运行前置条件；GHCR 与自建 Registry 的 stable manifest 必须使用相同镜像 digest 对应构建，并将 migration ceiling 设置为至少 `21`。
 - 当前仅完成本地 mock Apple 协议和 Druvia 侧开发门禁；真实 Apple Developer 配置、真机登录、公网 notification 和 PITCHETCH actor 验收属于独立非生产验收，不据此宣称生产就绪。
 
+## 平台项目成员与管理授权
+
+- 当前产品仍是单租户多项目。平台角色 `admin` 只表示可登录控制台，不授予全局、workspace 或项目管理能力。
+- 项目有效角色按数据库当前状态解析：`super_admin` 全局覆盖、workspace `owner_uid` 隐式 owner、`druvia_project_members` 显式 `project_admin / database_admin / viewer`。JWT 中的旧 role 不能替代数据库检查。
+- 项目角色只映射到服务端固定 capability；路由声明 capability，不在 controller/UI 散落角色比较。成员不能管理其他成员、Trusted Backend Key、数据库连接凭证或项目删除。
+- workspace owner 不写入成员表。成员新增、改角色、移除与审计日志在同一事务内完成；停用用户立即失去访问，但仍允许 owner 清理其成员关系。
+- tenant/project/schema/backup 列表在 SQL 层按当前身份过滤；backup 必须先确认 schema 仅归属一个项目且 tenant/project 三方一致，再执行分页，并只返回不含 storage key、内部错误和表清单的摘要 DTO。仅有项目关系的用户只得到 tenant 导航字段，不得到 owner、settings 或 quota 等敏感配置。
+- 项目基础 schema 与环境 schema 共用同名 advisory lock；两条创建路径都必须拒绝已分配或物理存在的 schema。历史多项目归属必须在发布前审计，运行时解析遇到零归属或多归属均失败关闭。
+- `database:read` 的 SQL 查询必须同时使用 PostgreSQL extended protocol 和 `BEGIN READ ONLY` 事务：前者拒绝多语句，后者阻止 writable CTE 与数据库写副作用；首词检查只能提供输入反馈，不能作为授权边界。
+- 平台项目成员是管理身份，不是 Project User。它不会获得应用 GraphQL、Realtime token、Project Session、项目 API Key 或 SDK 数据身份。
+- migration `022_project_members` 是该授权代码的运行前置。成员表非空时 down 必须拒绝，生产镜像回滚不得自动删除成员关系。
+
 ## 项目删除策略
 
 - 项目删除是“全量清理”操作，不是单纯删除 `druvia_projects` 行。
-- 平台管理接口删除项目时，必须同时满足：
-  - 调用者是 `platform_user`
-  - 调用者通过 `checkProjectAccess()` 校验
+- 平台管理接口删除项目时，调用者必须是 `platform_user`，并通过统一授权服务的 `project:delete` capability；普通项目成员和旧布尔 access helper 不能授权删除。
 - 删除路径必须覆盖三类残留资源：
   - 项目 schema / 环境 schema
   - 项目数据库用户

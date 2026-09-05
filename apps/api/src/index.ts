@@ -33,6 +33,7 @@ import { environmentRoutes } from './modules/environment/environment.routes.js';
 import { rpcRoutes } from './modules/rpc/rpc.routes.js';
 import { systemUpdateRoutes } from './modules/system-update/system-update.routes.js';
 import { dataAccessRoutes } from './modules/data-access/data-access.routes.js';
+import { projectMemberRoutes } from './modules/project-members/project-members.routes.js';
 
 export const appCorsOptions: FastifyCorsOptions = {
   origin:
@@ -169,6 +170,7 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
   app.register(rpcRoutes, { prefix: '/api/v1' });
   app.register(systemUpdateRoutes, { prefix: '/api/v1' });
   app.register(dataAccessRoutes, { prefix: '/api/v1' });
+  app.register(projectMemberRoutes, { prefix: '/api/v1' });
 
   return app;
 }
