@@ -23,6 +23,7 @@
 
 ## Recent Milestones
 
+- RPC 已在本地建立数据库业务拒绝契约：仅业务函数调用阶段的 PostgreSQL `P0001` 在成功 rollback 后映射为 HTTP 400 `RPC_REJECTED`，客户端不接收原始数据库错误；连接、事务设置、未知 SQLSTATE 及 rollback 故障继续返回 500。该修复解除 PITCHETCH seal/time-only 等 RPC 验收矩阵的状态码阻塞，不涉及 migration、Hasura metadata 或 SDK 源码变更。
 - Data Access 已在本地支持 PostgreSQL generated/identity 列：select、insert、update 使用独立列能力，owner preset、inspection、overview 与 migration v2 共用同一契约；v1 preview/rollback 兼容边界已固定，Hasura 502 增加脱敏定位日志。真实 PostgreSQL 17 + Hasura v2.48 已验证 Generated Always、Identity Always、Identity By Default 的策略写入和回读；PITCHETCH 已重新配置相关业务表。表列表状态现按项目当前 compatibility/explicit 模式检查唯一运行时角色集合，不再暴露物理 Hasura role；非默认环境在 actor 身份未实现前显示为暂不可用。尚待应用侧运行完整验收脚本。
 - 项目成员与管理授权切片已完成本地实现：migration `022` 新增项目成员关系；平台 `admin` 收紧为登录身份；数据库当前 `super_admin`、workspace owner 和固定项目角色统一映射 capability；tenant/project/schema/backup 与项目模块路由完成资源级授权；Admin 增加成员管理和只读界面门禁。普通 PostgreSQL 与活动 PostGIS 本地库均已应用 022，PITCHETCH 用户已通过正式 API 在活动 PostGIS 库授予 `database_admin`，跨 Taro 项目及 owner-only 能力运行态验证为 403。生产 release/OTA 尚未执行。
 - Apple Project Auth Druvia 侧开发切片已完成本地实现：migration `021`、平台 identity binding、原生登录、identity-bound refresh、两阶段 revoke、Apple server notification、Admin 配置与 lifecycle 管理、SDK helper、独立密钥加密和双 Registry release ceiling 已落地。mock Apple 与数据库集成定向回归通过；PITCHETCH 当前没有 Apple Developer Program 付费团队身份，真实 provider 配置、原生实现、真机和公网 notification 验收暂缓，因此不标记生产就绪。

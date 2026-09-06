@@ -51,6 +51,7 @@
   - `docker/deno-worker/*`
 - RPC 与 Functions 必须从 `project-actor.ts` 取得版本化 actor，禁止模块自行拼装或把 Platform User 静默转换为 Project User。
 - RPC 只接受同项目 Project User 或已通过项目访问校验的 Platform User；API Key 不获得匿名 RPC。写入 PostgreSQL 的 claims 必须使用同一连接、事务级 `set_config(..., true)`，业务函数仍需自行鉴权。
+- RPC 仅将业务函数实际调用阶段的 PostgreSQL `P0001` 映射为 HTTP 400 `RPC_REJECTED`；不得向客户端返回数据库原始错误。连接、事务设置、commit、rollback 或其他 SQLSTATE 故障仍按 500 处理，rollback 失败不得被业务拒绝掩盖。
 - Functions 的 `invoke_auth_mode` 必须在 service 对实际执行的同一函数记录上校验；`anon_allowed` 只允许同项目 API Key，所有 service 调用都必须显式传 actor。
 - `/api/internal/functions/graphql` 只允许签名 token 中的同项目 Project User/API Key，并根据项目 `data_access_mode` 派生 Hasura role/session variables；Platform User 必须返回 `PROJECT_ACTOR_REQUIRED`。
 - 直接 Storage 对象路由只接受已授权 Platform User 或同项目 Project User；API Key 返回 `PROJECT_ACTOR_REQUIRED`。Project User 必须服从 bucket 的 `admin_only / owner_only / authenticated_read`，其他用户对象按矩阵返回 404/409，不得泄露 owner。

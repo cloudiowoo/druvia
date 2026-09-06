@@ -50,6 +50,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Object.prototype.toString.call(value) === '[object Object]';
 }
 
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && Reflect.get(error, 'code') === code;
+}
+
 function isJsonLikeType(typeOid?: number): typeOid is typeof PG_JSON_OID | typeof PG_JSONB_OID {
   return typeOid === PG_JSON_OID || typeOid === PG_JSONB_OID;
 }
@@ -225,6 +231,7 @@ export function createRpcService(dependencies: RpcServiceDependencies) {
       const client = await dependencies.getClient();
       let transactionStarted = false;
       let releaseError: Error | undefined;
+      let phase: 'setup' | 'invoke' | 'commit' = 'setup';
 
       try {
         await client.query('BEGIN');
@@ -235,7 +242,9 @@ export function createRpcService(dependencies: RpcServiceDependencies) {
           JSON.stringify(toProjectActorHeaders(actor)),
         ]);
         await client.query("SELECT set_config('druvia.actor', $1, true)", [claims]);
+        phase = 'invoke';
         const result = await client.query(invocation.sql, invocation.values);
+        phase = 'commit';
         await client.query('COMMIT');
         return normalizeResult(result.rows);
       } catch (error) {
@@ -247,6 +256,12 @@ export function createRpcService(dependencies: RpcServiceDependencies) {
               ? rollbackError
               : new Error(String(rollbackError));
           }
+        }
+        if (phase === 'invoke' && hasErrorCode(error, 'P0001')) {
+          if (releaseError) {
+            throw releaseError;
+          }
+          throw new RpcError('RPC_REJECTED', 'RPC request rejected');
         }
         throw error;
       } finally {

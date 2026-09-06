@@ -42,4 +42,23 @@ describe('DruviaRpc', () => {
     expect(result.data).toBeNull()
     expect(result.error?.code).toBe('NOT_FOUND')
   })
+
+  it('returns RPC_REJECTED from an HTTP 400 response', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        data: null,
+        error: { code: 'RPC_REJECTED', message: 'RPC request rejected' },
+      }),
+    }) as unknown as FetchFn
+    const rpc = new DruviaRpc('/api/v1', projectId, fetch)
+
+    const result = await rpc.call('complete_base_samples', {})
+
+    expect(result).toEqual({
+      data: null,
+      error: { code: 'RPC_REJECTED', message: 'RPC request rejected' },
+    })
+  })
 })

@@ -99,11 +99,16 @@ export async function invokeRpc(
     });
     return reply.send({ data, error: null });
   } catch (error) {
-    logger.error('rpc invocation failed', {
+    const auditContext = {
       ...toProjectActorAuditContext(verified.actor),
       functionName,
-    }, error);
+    };
     if (error instanceof RpcError) {
+      if (error.code === 'RPC_REJECTED') {
+        logger.warn('rpc invocation rejected', auditContext);
+      } else {
+        logger.error('rpc invocation failed', auditContext, error);
+      }
       const status = error.code === 'FUNCTION_NOT_FOUND' ? 404 : 400;
       return reply.status(status).send({
         data: null,
@@ -111,10 +116,13 @@ export async function invokeRpc(
           code: error.code,
           message: error.code === 'FUNCTION_NOT_FOUND'
             ? 'Function not found'
-            : 'RPC request failed',
+            : error.code === 'RPC_REJECTED'
+              ? 'RPC request rejected'
+              : 'RPC request failed',
         },
       });
     }
+    logger.error('rpc invocation failed', auditContext, error);
     return reply.status(500).send({
       data: null,
       error: { code: 'RPC_ERROR', message: 'RPC execution failed' },

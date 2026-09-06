@@ -104,6 +104,58 @@ describe('RPC Service', () => {
     expect(releaseClient).toHaveBeenCalledOnce()
   })
 
+  it('maps PostgreSQL raised exceptions to a generic RPC rejection after rollback', async () => {
+    discoveryQuery.mockResolvedValueOnce([{ proargnames: null }])
+    const databaseError = Object.assign(
+      new Error('PITCHETCH upload chunks are incomplete'),
+      { code: 'P0001' },
+    )
+    clientQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) throw databaseError
+      return { rows: [] }
+    })
+
+    await expect(invoke('complete_base_samples')).rejects.toMatchObject<RpcError>({
+      code: 'RPC_REJECTED',
+      message: 'RPC request rejected',
+    })
+
+    expect(clientQuery.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK')
+    expect(releaseClient).toHaveBeenCalledWith(undefined)
+  })
+
+  it('does not map actor context setup errors to RPC business rejections', async () => {
+    discoveryQuery.mockResolvedValueOnce([{ proargnames: null }])
+    const databaseError = Object.assign(new Error('actor context setup failed'), { code: 'P0001' })
+    clientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("set_config('request.jwt.claims'")) throw databaseError
+      return { rows: [] }
+    })
+
+    await expect(invoke('get_count')).rejects.toBe(databaseError)
+    expect(clientQuery.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK')
+  })
+
+  it('keeps unknown PostgreSQL errors as infrastructure failures', async () => {
+    discoveryQuery.mockResolvedValueOnce([{ proargnames: null }])
+    const databaseError = Object.assign(new Error('internal SQL failure'), { code: 'XX000' })
+    clientQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) throw databaseError
+      return { rows: [] }
+    })
+
+    await expect(invoke('explode')).rejects.toBe(databaseError)
+  })
+
+  it('keeps connection failures as infrastructure failures', async () => {
+    discoveryQuery.mockResolvedValueOnce([{ proargnames: null }])
+    const connectionError = Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })
+    getClient.mockRejectedValueOnce(connectionError)
+
+    await expect(invoke('get_count')).rejects.toBe(connectionError)
+    expect(clientQuery).not.toHaveBeenCalled()
+  })
+
   it('discards the client when rollback itself fails', async () => {
     discoveryQuery.mockResolvedValueOnce([{ proargnames: null }])
     clientQuery.mockImplementation(async (sql: string) => {
@@ -117,6 +169,20 @@ describe('RPC Service', () => {
     expect(releaseClient).toHaveBeenCalledWith(expect.objectContaining({
       message: 'rollback failed',
     }))
+  })
+
+  it('treats rollback failure after a raised exception as an infrastructure failure', async () => {
+    discoveryQuery.mockResolvedValueOnce([{ proargnames: null }])
+    const databaseError = Object.assign(new Error('business rejection'), { code: 'P0001' })
+    const rollbackError = Object.assign(new Error('rollback connection lost'), { code: 'ECONNRESET' })
+    clientQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) throw databaseError
+      if (sql === 'ROLLBACK') throw rollbackError
+      return { rows: [] }
+    })
+
+    await expect(invoke('complete_base_samples')).rejects.toBe(rollbackError)
+    expect(releaseClient).toHaveBeenCalledWith(rollbackError)
   })
 
   it('maps named args to positional params by pg_proc order', async () => {

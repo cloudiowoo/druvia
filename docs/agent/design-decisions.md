@@ -63,6 +63,7 @@
   - RPC 仅在 controller 已完成项目访问校验后允许显式管理调用
   - Function 可用于显式管理测试，但 `druvia.graphql()` 必须拒绝 Platform actor
 - RPC 将可信 actor claims 写入同一数据库连接的事务级设置；这些 claims 供业务函数鉴权和审计，不代表 Druvia 已为项目 schema 启用 PostgreSQL RLS。
+- RPC 将业务函数调用阶段 PostgreSQL 默认 `RAISE EXCEPTION` 的 SQLSTATE `P0001` 视为通用业务拒绝，完成 rollback 后返回 HTTP 400 `RPC_REJECTED` 和固定脱敏文案。函数发现、连接、actor context、commit、rollback 及其他 SQLSTATE 错误保持 HTTP 500；rollback 失败优先于 `P0001`，不得把连接故障误报为业务拒绝。
 - Functions 的 `invoke_auth_mode` 在 service 使用即将执行的同一函数记录校验；不能只依赖 controller 预检或二次读取。
 - Function internal GraphQL 继续使用 Hasura admin secret 做服务间认证，但始终附加服务端派生的项目 role/session variables；Project User/API Key 数据能力由现有 Hasura permissions 决定。
 - API-to-Worker 使用独立 `DENO_WORKER_SECRET`，要求至少 32 UTF-8 字节并在读取执行 body 前验证。Function 子 Worker 没有真实 env 权限，只能读取 invocation-local Function secret shim。

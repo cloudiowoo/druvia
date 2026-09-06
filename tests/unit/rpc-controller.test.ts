@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { rpcLogger } = vi.hoisted(() => ({
+  rpcLogger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
 vi.mock('../../apps/api/src/modules/rpc/rpc.service.js', () => ({
   callFunction: vi.fn(),
   RpcError: class RpcError extends Error {
@@ -17,8 +25,12 @@ vi.mock('../../apps/api/src/lib/project-authorization.js', () => ({
   assertProjectCapability: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/lib/logger.js', () => ({
+  createApiLogger: vi.fn(() => rpcLogger),
+}))
+
 import * as rpcController from '../../apps/api/src/modules/rpc/rpc.controller.js'
-import { callFunction } from '../../apps/api/src/modules/rpc/rpc.service.js'
+import { callFunction, RpcError } from '../../apps/api/src/modules/rpc/rpc.service.js'
 import { getProjectById } from '../../apps/api/src/modules/project/project.service.js'
 import { assertProjectCapability } from '../../apps/api/src/lib/project-authorization.js'
 
@@ -178,5 +190,63 @@ describe('RPC Controller', () => {
 
     expect(reply.status).toHaveBeenCalledWith(403)
     expect(callFunction).not.toHaveBeenCalled()
+  })
+
+  it('returns a generic HTTP 400 response for an RPC business rejection', async () => {
+    vi.mocked(callFunction).mockRejectedValue(
+      new RpcError('RPC_REJECTED', 'RPC request rejected'),
+    )
+    const reply = createReply()
+
+    await rpcController.invokeRpc({
+      params: { projectId: 'proj_123', functionName: 'complete_base_samples' },
+      body: {},
+      user: {
+        kind: 'project_user',
+        sub: 'pusr_123',
+        projectId: 'proj_123',
+        authType: 'project_user',
+        role: 'authenticated',
+        provider: 'trusted_backend',
+      },
+    } as never, reply as never)
+
+    expect(reply.status).toHaveBeenCalledWith(400)
+    expect(reply.payload).toEqual({
+      data: null,
+      error: { code: 'RPC_REJECTED', message: 'RPC request rejected' },
+    })
+    expect(rpcLogger.warn).toHaveBeenCalledWith(
+      'rpc invocation rejected',
+      expect.objectContaining({ functionName: 'complete_base_samples' }),
+    )
+    expect(rpcLogger.error).not.toHaveBeenCalled()
+  })
+
+  it('keeps unknown RPC failures as generic HTTP 500 responses', async () => {
+    vi.mocked(callFunction).mockRejectedValue(
+      Object.assign(new Error('database unavailable'), { code: 'ECONNREFUSED' }),
+    )
+    const reply = createReply()
+
+    await rpcController.invokeRpc({
+      params: { projectId: 'proj_123', functionName: 'get_profile' },
+      body: {},
+      user: {
+        kind: 'project_user',
+        sub: 'pusr_123',
+        projectId: 'proj_123',
+        authType: 'project_user',
+        role: 'authenticated',
+        provider: 'trusted_backend',
+      },
+    } as never, reply as never)
+
+    expect(reply.status).toHaveBeenCalledWith(500)
+    expect(reply.payload).toEqual({
+      data: null,
+      error: { code: 'RPC_ERROR', message: 'RPC execution failed' },
+    })
+    expect(rpcLogger.error).toHaveBeenCalledOnce()
   })
 })
