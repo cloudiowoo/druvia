@@ -507,12 +507,63 @@ class ApiClient {
   async updateTableDataAccess(
     projectId: string,
     tableName: string,
-    policy: TableDataAccessPolicy
+    input: TableDataAccessPolicy & {
+      operationId: string;
+      expectedBaselineRevision?: number;
+      columnGrants: import('./table-data-access').TableDataAccessColumnGrants;
+    }
   ) {
     return this.request<TableDataAccessState>(
       'PUT',
       `/api/v1/projects/${projectId}/data-access/tables/${tableName}`,
-      policy
+      input
+    );
+  }
+
+  async previewTableDataAccessAdoption(projectId: string, tableName: string) {
+    return this.request<import('./table-data-access').DataAccessPolicyPreview>(
+      'POST', `/api/v1/projects/${projectId}/data-access/tables/${tableName}/adoption/preview`, {}
+    );
+  }
+
+  async applyTableDataAccessAdoption(projectId: string, tableName: string, input: {
+    operationId: string; sourceDigest: string; projectAlias: string;
+  }) {
+    return this.request<TableDataAccessState>(
+      'POST', `/api/v1/projects/${projectId}/data-access/tables/${tableName}/adoption/apply`, input
+    );
+  }
+
+  async previewTableDataAccessReconcile(
+    projectId: string,
+    tableName: string,
+    input?: {
+      policy?: TableDataAccessPolicy;
+      columnGrants?: import('./table-data-access').TableDataAccessColumnGrants;
+    }
+  ) {
+    return this.request<import('./table-data-access').DataAccessPolicyPreview>(
+      'POST', `/api/v1/projects/${projectId}/data-access/tables/${tableName}/reconcile/preview`,
+      input ?? {}
+    );
+  }
+
+  async applyTableDataAccessReconcile(projectId: string, tableName: string, input: {
+    operationId: string; sourceDigest: string; targetDigest: string;
+    baselineRevision: number; projectAlias: string;
+    columnGrants: import('./table-data-access').TableDataAccessColumnGrants;
+    policy: TableDataAccessPolicy;
+  }) {
+    return this.request<TableDataAccessState>(
+      'POST', `/api/v1/projects/${projectId}/data-access/tables/${tableName}/reconcile/apply`, input
+    );
+  }
+
+  async recoverTableDataAccessOperation(projectId: string, operationId: string, input: {
+    sourceDigest: string; projectAlias: string;
+  }) {
+    return this.request<import('./table-data-access').DataAccessPolicyOperationState>(
+      'POST', `/api/v1/projects/${projectId}/data-access/policy-operations/${operationId}/recover`, input
     );
   }
 

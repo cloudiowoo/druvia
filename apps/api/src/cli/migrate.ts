@@ -216,6 +216,8 @@ async function bootstrap(): Promise<void> {
     16: 'druvia_project_refresh_tokens',
     17: 'druvia_trusted_backend_keys',
     19: 'druvia_data_access_migrations',
+    23: 'druvia_data_access_managed_policies',
+    24: 'druvia_table_deletion_outbox',
   };
 
   // 纯数据迁移：通过查询数据行判断是否已应用

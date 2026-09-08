@@ -24,6 +24,11 @@
 - 匿名 `apikey` 能力必须是显式允许，不要扩散成默认放开。
 - 新建或同步 Hasura permissions 时，禁止默认生成无行过滤的写权限；任何匿名写入都必须有明确业务理由和测试。
 - Hasura 表权限必须使用操作级列能力：select 使用全部可读列，insert/update 分别使用 PostgreSQL 实际可写列；`GENERATED ALWAYS` 与 `IDENTITY ALWAYS` 不得进入客户端写权限或 owner insert preset，materialization、inspection、overview 和 migration 必须共用同一能力集合。
+- 表级 Data Access provenance 依赖 migration `023`：baseline 和 operation 必须按项目当前 schema 精确读取，operation 创建时的 schema 身份不可变，schema 漂移后的 apply/recover 必须失败关闭。无 baseline 的受支持 scoped permission 只能显式 adoption；有 baseline 时 metadata 与基线不变、列能力变化才进入 `refresh_required`，新增列默认零授权，普通 PUT 必须携带 operation ID 和 expected baseline revision。
+- `refresh_required` 的 target policy 只能保持原访问模式或收紧为 `none`；owner 列删除/generated/identity always 收缩只能保留原 owner 或关闭受影响操作，禁止在 reconcile 中更换 owner 或放宽为 `all`。需更换 owner 时先收敛到 managed，再走普通 policy update。持久 grants 必须排除关闭操作和 owner preset 列。
+- 列删除或能力收缩使 Hasura metadata inconsistent 时，只允许基于同一次 v2 export 快照、携带 `resource_version` 的受控 `replace_metadata` 修复目标表当前项目 scoped permissions；必须保留 legacy、external role 和其他 metadata，禁止使用 `drop_inconsistent_metadata` 全局清理。
+- Hasura metadata 写入只有带结构化 Hasura error code 的确定性 4xx 拒绝才能直接结束为 failed；5xx、transport、timeout 和非原子 fallback 错误都按结果未知处理并保留 recovery gate。表删除 outbox 只能通过带超时的 v2 metadata export 确认目标表已不存在，不能依赖错误文本推断 untrack 成功。
+- policy operation 恢复只能覆盖 source、target 或受记录的 drop-then-create 命令前缀解释的 scoped permission；恢复前已存在的第三方 filter/preset/columns 变化必须保持 recovery gate。表删除 outbox 在 untrack 前还必须确认 PostgreSQL 中精确同名 relation 仍不存在，同名重建时不得触碰 Hasura。
 - schema 级 Hasura 状态接口必须从授权 guard 写入的 `request.projectAccess.projectId` 读取项目当前 `data_access_mode`：`compatibility` 只检查 `user / anonymous`，`explicit` 只检查项目 scoped roles，不得合并两套角色造成误报；非默认环境在环境 actor 身份未实现前必须明确返回运行时不可用，状态响应不得暴露物理 Hasura role。
 - 修改认证请求头时，要联动检查 SDK、MCP Server、Admin server routes 和 nginx 代理是否使用同一契约。
 - Apple Project Auth 使用平台级 identity binding：Apple subject 只能存在于 `druvia_project_auth_identities`，不得写入项目业务 `users.provider_id`、email 或日志。
@@ -80,6 +85,9 @@
 - migration `020_storage_project_user_access` 必须先于包含直接 Storage actor cutover 的 API/Admin 启动；升级前必须审计旧逻辑名和 Local 大小写物理 key 冲突。
 - migration `021_project_auth_identities` 必须先于包含 Apple Project Auth 的 API/Admin 启动；release manifest migration ceiling 不得低于 `21`。
 - migration `022_project_members` 必须先于包含项目成员授权的 API/Admin 启动；成员表非空时不得执行 down，release manifest migration ceiling 不得低于 `22`。
+- migration `023_data_access_managed_policies` 与 `024_table_deletion_outbox` 必须先于包含受管策略 adoption/reconcile 和可恢复表删除的 API/Admin 启动；存在 baseline、operation 或 pending deletion 时不得 down，release manifest migration ceiling 不得低于 `24`。
+- managed baseline 的数据库主键、repository 读写和 operation 身份必须统一使用 `project + schema + table`，不得退化为只按项目和表名寻址。
+- 表删除必须将业务表、`_meta_tables`、精确 `project + schema + table` baseline 和 deletion outbox 写入同一 PostgreSQL 事务；提交后再 untrack Hasura。pending outbox 必须阻断同 scope 管理写入，并由启动恢复及运行期定时重试清除，不能依赖进程重启或人工删记录。migration `024` 的 event trigger 必须在 pending 期间保留同名 relation，所有数据库连接上的创建/重命名冲突都应以 SQLSTATE `55006` 失败；执行该 migration 的数据库角色必须具备创建 event trigger 的权限。
 - migration CLI 只能在迁移 SQL 同时存在最外层 `BEGIN` 与 `COMMIT` 时剥离包装；孤立事务边界必须保留并由 PostgreSQL 报错。
 
 ## 参考入口

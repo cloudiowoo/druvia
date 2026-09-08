@@ -1,6 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import { pool, query, queryOne } from '../../db/index.js';
-import { hasuraMetadataRequest } from '../realtime/realtime.service.js';
+import {
+  hasuraMetadataRequest,
+  hasuraMetadataRequestWithOptions,
+} from '../realtime/realtime.service.js';
 import { createApiLogger } from '../../lib/logger.js';
+import type { PoolClient } from 'pg';
+import {
+  deleteTableDeletionOutbox,
+  enqueueTableDeletion,
+  markTableDeletionAttemptFailed,
+  type TableDeletionOutboxRecord,
+} from './table-deletion-outbox.repository.js';
 
 const logger = createApiLogger({ module: 'table' });
 
@@ -172,14 +183,22 @@ export async function trackTableInHasura(schemaName: string, tableName: string):
 }
 
 // Drop table from schema
-export async function dropTable(schemaName: string, tableName: string): Promise<void> {
-  // Untrack from Hasura first (before dropping the table)
-  await untrackTableFromHasura(schemaName, tableName);
-
-  const client = await pool.connect();
+export async function dropTable(
+  schemaName: string,
+  tableName: string,
+  options: {
+    client?: PoolClient;
+    afterDrop?: (client: PoolClient) => Promise<void>;
+    deletion?: { operationId: string; lockScope: string };
+  } = {}
+): Promise<void> {
+  const ownsClient = !options.client;
+  const client = options.client ?? await pool.connect();
+  let transactionOpen = false;
 
   try {
     await client.query('BEGIN');
+    transactionOpen = true;
 
     // Drop table
     await client.query(`DROP TABLE IF EXISTS "${schemaName}"."${tableName}" CASCADE`);
@@ -190,30 +209,86 @@ export async function dropTable(schemaName: string, tableName: string): Promise<
       [tableName]
     );
 
+    await options.afterDrop?.(client);
+
+    const deletion = await enqueueTableDeletion(client, {
+      operationId: options.deletion?.operationId ?? `td_${randomUUID()}`,
+      lockScope: options.deletion?.lockScope ?? `unresolved-schema:${schemaName}`,
+      schemaName,
+      tableName,
+    });
+
     await client.query('COMMIT');
+    transactionOpen = false;
+
+    await completePendingTableDeletion(client, deletion);
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (transactionOpen) await client.query('ROLLBACK');
     throw error;
   } finally {
-    client.release();
+    if (ownsClient) client.release();
+  }
+}
+
+export async function completePendingTableDeletion(
+  client: Pick<PoolClient, 'query'>,
+  deletion: TableDeletionOutboxRecord
+): Promise<void> {
+  try {
+    const relation = await client.query<{ exists: boolean }>(
+      `SELECT to_regclass(format('%I.%I', $1::text, $2::text)) IS NOT NULL AS exists`,
+      [deletion.schemaName, deletion.tableName]
+    );
+    if (relation.rows[0]?.exists) {
+      throw new Error('Cannot recover table deletion because a relation with the same name exists');
+    }
+    await untrackTableFromHasura(deletion.schemaName, deletion.tableName);
+    await deleteTableDeletionOutbox(client, deletion.operationId);
+  } catch (error) {
+    await markTableDeletionAttemptFailed(client, deletion.operationId).catch((markError) => {
+      logger.warn('failed to record table deletion recovery attempt', {
+        operationId: deletion.operationId,
+        schemaName: deletion.schemaName,
+        tableName: deletion.tableName,
+      }, markError);
+    });
+    throw error;
   }
 }
 
 // Untrack table from Hasura
 async function untrackTableFromHasura(schemaName: string, tableName: string): Promise<void> {
+  if (!await isTableTrackedInHasura(schemaName, tableName)) return;
   try {
-    await hasuraMetadataRequest('pg_untrack_table', {
+    await hasuraMetadataRequestWithOptions('pg_untrack_table', {
       source: 'default',
       table: { schema: schemaName, name: tableName },
       cascade: true,
-    });
+    }, { timeoutMs: 30_000 });
   } catch (error) {
-    // Ignore if not tracked
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    if (!errorMsg.includes('not tracked') && !errorMsg.includes('does not exist')) {
-      logger.warn('failed to untrack table from hasura', { schemaName, tableName }, error);
-    }
+    if (!await isTableTrackedInHasura(schemaName, tableName)) return;
+    logger.warn('failed to untrack table from hasura', { schemaName, tableName }, error);
+    throw error;
   }
+}
+
+async function isTableTrackedInHasura(
+  schemaName: string,
+  tableName: string
+): Promise<boolean> {
+  const exported = await hasuraMetadataRequestWithOptions<{
+    metadata: {
+      sources?: Array<{
+        name?: string
+        tables?: Array<{ table: { schema: string; name: string } }>
+      }>
+    }
+  }>('export_metadata', {}, { version: 2, timeoutMs: 30_000 });
+  const source = exported.metadata.sources?.find((item) => item.name === 'default');
+  if (!source) throw new Error('Default Hasura source is unavailable');
+  return source.tables?.some(
+    (item) => item.table.schema === schemaName && item.table.name === tableName
+  ) ?? false;
 }
 
 export async function reloadHasuraMetadata(): Promise<void> {

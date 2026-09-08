@@ -54,7 +54,11 @@ describe('project data access mutation lock', () => {
     await withProjectDataAccessMutationLock('proj_1', async () => undefined, { globalMode: 'exclusive' })
 
     expect(query.mock.calls[0][0]).not.toContain('_shared')
-    expect(query.mock.calls[2][0]).toContain('WHERE (TRUE)')
+    expect(query.mock.calls[2][0]).toContain('WHERE ($1::text IS NOT NULL)')
+    expect(query.mock.calls[2][0]).toMatch(
+      /FROM druvia_table_deletion_outbox\s+WHERE \(lock_scope = \$1\)/
+    )
+    expect(query.mock.calls[2][1]?.[0]).toBe('proj_1')
   })
 
   it('keeps an unresolved schema under the requested deployment-wide lock', async () => {
@@ -64,12 +68,13 @@ describe('project data access mutation lock', () => {
       'detached_schema', callback, { globalMode: 'exclusive' }
     )).resolves.toBe('done')
 
-    expect(callback).toHaveBeenCalledWith(null)
+    expect(callback).toHaveBeenCalledWith(null, expect.objectContaining({ query }))
     expect(query.mock.calls[0][1]).toEqual([DATA_ACCESS_GLOBAL_LOCK_ID])
     expect(query.mock.calls[1][1]).toEqual([
       projectDataAccessLockId('unresolved-schema:detached_schema'),
     ])
-    expect(query.mock.calls[2][0]).toContain('WHERE (TRUE)')
+    expect(query.mock.calls[2][0]).toContain('WHERE ($1::text IS NOT NULL)')
+    expect(query.mock.calls[2][1]?.[0]).toBe('unresolved-schema:detached_schema')
   })
 
   it.each([0, 1])('rejects conflict at lock acquisition %s and always releases the client', async (failedIndex) => {
@@ -97,7 +102,7 @@ describe('project data access mutation lock', () => {
       .rejects.toBeInstanceOf(DataAccessMutationLockedError)
   })
 
-  it('requires migration identity and bypasses ordinary persisted-state gating', async () => {
+  it('requires migration identity and checks only competing persisted operations', async () => {
     await expect(withProjectDataAccessMutationLock('proj_1', async () => undefined, {
       purpose: 'migration',
     })).rejects.toThrow('Migration ID and operation ID are required')
@@ -105,7 +110,42 @@ describe('project data access mutation lock', () => {
     await withProjectDataAccessMutationLock('proj_1', async () => undefined, {
       purpose: 'migration', migrationId: 'mig_1', operationId: 'op_1',
     })
-    expect(query.mock.calls.some(([sql]) => String(sql).includes('SELECT EXISTS'))).toBe(false)
+    expect(query.mock.calls.some(([sql]) => String(sql).includes('SELECT EXISTS'))).toBe(true)
+    expect(query.mock.calls.find(([sql]) => String(sql).includes('SELECT EXISTS'))?.[0])
+      .toContain('druvia_data_access_policy_operations')
+  })
+
+  it('blocks ordinary and new table writes on a pending deletion but lets recovery proceed', async () => {
+    await withProjectDataAccessMutationLock('proj_1', async () => undefined)
+    const ordinaryCheck = query.mock.calls.find(([sql]) => String(sql).includes('SELECT EXISTS'))
+    expect(ordinaryCheck?.[0]).toContain('druvia_table_deletion_outbox')
+    expect(ordinaryCheck?.[1]).toContain(true)
+
+    vi.clearAllMocks()
+    query.mockImplementation(async (sql: string) => {
+      if (sql.includes('pg_try_advisory')) return { rows: [{ acquired: true }] }
+      if (sql.includes('SELECT EXISTS')) return { rows: [{ blocked: false }] }
+      return { rows: [] }
+    })
+    await withProjectDataAccessMutationLock('proj_1', async () => undefined, {
+      globalMode: 'exclusive', purpose: 'table_delete', operationId: 'delete_1',
+    })
+    const deleteCheck = query.mock.calls.find(([sql]) => String(sql).includes('SELECT EXISTS'))
+    expect(deleteCheck?.[1]).toContain(true)
+    expect(deleteCheck?.[0]).toContain('lock_scope = $1')
+
+    vi.clearAllMocks()
+    query.mockImplementation(async (sql: string) => {
+      if (sql.includes('pg_try_advisory')) return { rows: [{ acquired: true }] }
+      if (sql.includes('SELECT EXISTS')) return { rows: [{ blocked: false }] }
+      return { rows: [] }
+    })
+    await withProjectDataAccessMutationLock('proj_1', async () => undefined, {
+      globalMode: 'exclusive', purpose: 'table_delete_recovery', operationId: 'delete_1',
+    })
+    const recoveryCheck = query.mock.calls.find(([sql]) => String(sql).includes('SELECT EXISTS'))
+    expect(recoveryCheck?.[1]).toContain(false)
+    expect(recoveryCheck?.[0]).toContain('WHERE (project_id = $1)')
   })
 
   it('releases both locks and the client after callback failure', async () => {

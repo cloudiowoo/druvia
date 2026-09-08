@@ -20,8 +20,52 @@ export interface TableDataAccessState {
   tableName: string
   columns: string[]
   policy: TableDataAccessPolicy
-  managedState: 'managed' | 'custom'
+  managedState: 'managed' | 'refresh_required' | 'adoption_required' | 'custom' | 'recovery_required'
   legacyRoles: string[]
+  baselineRevision: number | null
+  capabilities: {
+    readable: string[]
+    insertable: string[]
+    updateable: string[]
+  }
+  effective: TableDataAccessColumnGrants
+  drift: {
+    addedReadable: string[]
+    addedInsertable: string[]
+    addedUpdateable: string[]
+    removedOrRestricted: string[]
+  } | null
+  activeOperation: DataAccessPolicyOperationState | null
+}
+
+export interface TableDataAccessColumnGrants {
+  authenticated: { select: string[]; insert: string[]; update: string[] }
+  anonymous: { select: string[] }
+}
+
+export interface DataAccessPolicyOperationState {
+  operationId: string
+  tableName: string
+  kind: 'adoption' | 'policy_update' | 'reconcile'
+  status: 'preview_ready' | 'applying' | 'recovering' | 'completed' | 'failed' | 'recovery_required' | 'superseded'
+  phase: string
+  sourceDigest: string
+  targetDigest: string | null
+  writeDeadlineAt: string | null
+  startedAt: string | null
+  error: { code: string; message: string } | null
+}
+
+export interface DataAccessPolicyPreview {
+  operation: DataAccessPolicyOperationState
+  projectId: string
+  schemaName: string
+  tableName: string
+  baselineRevision: number | null
+  policy: TableDataAccessPolicy
+  columnGrants: TableDataAccessColumnGrants
+  capabilities: TableDataAccessState['capabilities']
+  drift: TableDataAccessState['drift']
 }
 
 const OPERATIONS: AuthenticatedDataOperation[] = ['select', 'insert', 'update', 'delete']
@@ -60,6 +104,19 @@ export function cloneTableDataAccessPolicy(
   return {
     authenticated: { ...policy.authenticated },
     anonymous: { ...policy.anonymous },
+  }
+}
+
+export function cloneTableDataAccessColumnGrants(
+  grants: TableDataAccessColumnGrants
+): TableDataAccessColumnGrants {
+  return {
+    authenticated: {
+      select: [...grants.authenticated.select],
+      insert: [...grants.authenticated.insert],
+      update: [...grants.authenticated.update],
+    },
+    anonymous: { select: [...grants.anonymous.select] },
   }
 }
 

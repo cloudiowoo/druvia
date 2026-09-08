@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildReleaseManifest, normalizeReleaseVersion } from '../../scripts/release/generate-manifest.mjs';
+import {
+  buildReleaseManifest,
+  normalizeReleaseVersion,
+  resolveReleaseMetadata,
+} from '../../scripts/release/generate-manifest.mjs';
 
 const digest = (char: string) => `sha256:${char.repeat(64)}`;
 
@@ -31,7 +35,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '17',
-      DRUVIA_MIGRATION_TO: '22',
+      DRUVIA_MIGRATION_TO: '24',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
       DRUVIA_MIGRATION_REVERSIBLE: 'false',
     }, {
@@ -54,7 +58,7 @@ describe('release manifest generator', () => {
       migrations: {
         required: true,
         from: 17,
-        to: 22,
+        to: 24,
         requiresBackup: true,
         reversible: false,
       },
@@ -74,7 +78,50 @@ describe('release manifest generator', () => {
     expect(() => normalizeReleaseVersion('v0.2.0+build.1')).toThrow(/INVALID_RELEASE_VERSION/);
   });
 
-  it('rejects release manifests that can skip migration 022 or its backup', async () => {
+  it('rejects SemVer numeric identifiers with leading zeroes', () => {
+    expect(() => normalizeReleaseVersion('v01.2.3')).toThrow(/INVALID_RELEASE_VERSION/);
+    expect(() => normalizeReleaseVersion('v1.2.3-beta.01')).toThrow(/INVALID_RELEASE_VERSION/);
+  });
+
+  it('derives release channels from validated SemVer and rejects contradictory input', () => {
+    expect(resolveReleaseMetadata('v1.2.3')).toEqual({
+      version: '1.2.3', tag: 'v1.2.3', channel: 'stable', prerelease: false,
+    });
+    expect(resolveReleaseMetadata('1.2.3-beta.2', 'beta')).toMatchObject({
+      channel: 'beta', prerelease: true,
+    });
+    expect(resolveReleaseMetadata('1.2.3-nightly.20260907', 'nightly')).toMatchObject({
+      channel: 'nightly', prerelease: true,
+    });
+    expect(() => resolveReleaseMetadata('latest', 'stable')).toThrow(/INVALID_RELEASE_VERSION/);
+    expect(() => resolveReleaseMetadata('1.2.3-beta.1', 'stable'))
+      .toThrow(/RELEASE_CHANNEL_MISMATCH/);
+    for (const unsupported of [
+      '1.2.3-alpha.1',
+      '1.2.3-rc.1',
+      '1.2.3-preview',
+      '1.2.3-beta.nightly.1',
+      '1.2.3-beta.rc.1',
+      '1.2.3-beta.preview',
+      '1.2.3-nightly.alpha.1',
+    ]) {
+      expect(() => resolveReleaseMetadata(unsupported)).toThrow(/INVALID_RELEASE_CHANNEL_SUFFIX/);
+    }
+  });
+
+  it('rejects a manifest whose configured channel contradicts its version', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'druvia-release-'));
+    const composePath = join(dir, 'docker-compose.release.yml');
+    await writeFile(composePath, 'services:\n  api:\n    image: test\n', 'utf8');
+
+    await expect(buildReleaseManifest({
+      GITHUB_REF_NAME: 'v1.2.3-beta.1',
+      GITHUB_REPOSITORY: 'druvia/druvia',
+      DRUVIA_RELEASE_CHANNEL: 'stable',
+    }, { composePath })).rejects.toThrow(/RELEASE_CHANNEL_MISMATCH/);
+  });
+
+  it('rejects release manifests that can skip migration 024 or its backup', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'druvia-release-'));
     const composePath = join(dir, 'docker-compose.release.yml');
     await writeFile(composePath, 'services:\n  api:\n    image: test\n', 'utf8');
@@ -91,7 +138,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '18',
-      DRUVIA_MIGRATION_TO: '22',
+      DRUVIA_MIGRATION_TO: '24',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
     };
 
@@ -134,11 +181,44 @@ describe('release workflow', () => {
     expect(workflow).toContain('tests/unit/realtime-compose-config.test.ts');
   });
 
+  it('validates release metadata before registry login and image publication', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+    const preflight = workflow.indexOf('node scripts/release/prepare-release.mjs');
+    const firstLogin = workflow.indexOf('uses: docker/login-action');
+    const firstImageBuild = workflow.indexOf('uses: docker/build-push-action');
+
+    expect(preflight).toBeGreaterThan(0);
+    expect(firstLogin).toBeGreaterThan(preflight);
+    expect(firstImageBuild).toBeGreaterThan(firstLogin);
+  });
+
   it('gates image publication on both managed and legacy data access classifiers', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
-    expect(workflow).toContain('tests/unit/data-access-inspection.test.ts');
-    expect(workflow).toContain('tests/unit/data-access-migration-inspection.test.ts');
+    for (const requiredTest of [
+      'tests/unit/data-access-inspection.test.ts',
+      'tests/unit/data-access-migration-inspection.test.ts',
+      'tests/unit/data-access-managed-policy.test.ts',
+      'tests/unit/data-access-managed-policy-schema.test.ts',
+      'tests/unit/data-access-managed-policy-repository.test.ts',
+      'tests/unit/data-access-policy-operation-service.test.ts',
+      'tests/unit/table-deletion-outbox-schema.test.ts',
+      'tests/unit/table-deletion-recovery.test.ts',
+      'tests/unit/admin/table-data-access-panel.test.tsx',
+    ]) {
+      expect(workflow).toContain(requiredTest);
+    }
+  });
+
+  it('requires the real PostgreSQL and Hasura managed-policy integration before release', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+
+    expect(workflow).toContain('data-access-integration:');
+    expect(workflow).toContain('image: postgres:17-alpine');
+    expect(workflow).toContain('image: hasura/graphql-engine:v2.48.0');
+    expect(workflow).toContain('tests/integration/data-access-generated-columns.test.ts');
+    expect(workflow).toContain('DRUVIA_INTEGRATION_HASURA_ADMIN_SECRET: integration-hasura-secret');
+    expect(workflow).toContain('needs: data-access-integration');
   });
 
   it('gates image publication on the Project Actor, Functions Worker, rollback, and SDK cutover', () => {
@@ -204,7 +284,17 @@ describe('release workflow', () => {
     expect(workflow).toContain('docker/docker-compose.release.yml');
   });
 
-  it('marks migration 022 as the safe default for tag and manual releases', () => {
+  it('keeps beta and nightly tags out of the stable latest release channel', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+
+    expect(workflow).toContain('RELEASE_INPUT_VERSION: ${{ inputs.version }}');
+    expect(workflow).toContain('RELEASE_INPUT_CHANNEL: ${{ inputs.channel }}');
+    expect(workflow).toContain('run: node scripts/release/prepare-release.mjs');
+    expect(workflow.match(/DRUVIA_RELEASE_CHANNEL: \$\{\{ env\.RELEASE_CHANNEL \}\}/g)).toHaveLength(2);
+    expect(workflow).toContain('prerelease: ${{ env.RELEASE_PRERELEASE }}');
+  });
+
+  it('marks migration 024 as the safe default for tag and manual releases', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
     expect(workflow).not.toContain("\n      migration_required:");
@@ -214,7 +304,7 @@ describe('release workflow', () => {
     expect(workflow).not.toContain("\n      migration_reversible:");
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_FROM: \$\{\{ inputs\.migration_from \|\| '18' \}\}/g)).toHaveLength(2);
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '22'/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: '24'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REVERSIBLE: 'false'/g)).toHaveLength(2);
   });

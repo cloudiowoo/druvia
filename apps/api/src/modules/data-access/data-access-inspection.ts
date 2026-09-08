@@ -1,10 +1,15 @@
-import { createClosedTableDataAccessPolicy } from './data-access-policy.js'
+import {
+  createClosedTableDataAccessPolicy,
+  materializeTableDataAccessPolicy,
+} from './data-access-policy.js'
 import type {
   AuthenticatedAccessMode,
   DataAccessColumnCapabilities,
   DataAccessOperation,
   DataAccessRoleNames,
   TableDataAccessInput,
+  DataAccessColumnGrants,
+  MaterializedDataPermission,
 } from './data-access.types.js'
 
 const OPERATIONS: DataAccessOperation[] = ['select', 'insert', 'update', 'delete']
@@ -17,6 +22,7 @@ export interface HasuraPermissionEntry {
 
 export interface HasuraTableMetadata {
   table: { schema: string; name: string }
+  configuration?: Record<string, unknown>
   select_permissions?: HasuraPermissionEntry[]
   insert_permissions?: HasuraPermissionEntry[]
   update_permissions?: HasuraPermissionEntry[]
@@ -29,6 +35,28 @@ export interface InspectedTableDataAccess {
   policy: TableDataAccessInput
   legacyRoles: string[]
   existingManaged: Array<{ operation: DataAccessOperation; role: string }>
+  permissions: MaterializedDataPermission[]
+  columnGrants: DataAccessColumnGrants
+  containsWildcard: boolean
+}
+
+export function materializeInspectedTableDataAccess(
+  inspected: InspectedTableDataAccess,
+  roles: DataAccessRoleNames,
+  capabilities: DataAccessColumnCapabilities
+): MaterializedDataPermission[] {
+  if (
+    inspected.authenticatedState === 'custom'
+    || inspected.anonymousState === 'custom'
+    || inspected.containsWildcard
+  ) {
+    throw new Error('Custom data access metadata cannot be materialized as managed')
+  }
+  return materializeTableDataAccessPolicy(inspected.policy, {
+    roles,
+    capabilities,
+    columnGrants: inspected.columnGrants,
+  })
 }
 
 export function inspectTableDataAccessMetadata(
@@ -44,6 +72,9 @@ export function inspectTableDataAccessMetadata(
       policy,
       legacyRoles: [],
       existingManaged: [],
+      permissions: [],
+      columnGrants: emptyColumnGrants(),
+      containsWildcard: false,
     }
   }
 
@@ -52,6 +83,9 @@ export function inspectTableDataAccessMetadata(
   let authenticatedCustom = false
   let anonymousCustom = false
   let ownerColumn: string | null = null
+  let containsWildcard = false
+  const permissions: MaterializedDataPermission[] = []
+  const columnGrants = emptyColumnGrants()
 
   for (const operation of OPERATIONS) {
     const entries = getPermissionEntries(tableMetadata, operation)
@@ -66,6 +100,8 @@ export function inspectTableDataAccessMetadata(
 
     for (const entry of [...authenticatedEntries, ...anonymousEntries]) {
       existingManaged.push({ operation, role: entry.role })
+      permissions.push({ operation, role: entry.role, permission: entry.permission })
+      if (entry.permission.columns === '*') containsWildcard = true
     }
 
     if (authenticatedEntries.length > 1) {
@@ -80,6 +116,9 @@ export function inspectTableDataAccessMetadata(
         authenticatedCustom = true
       } else {
         policy.authenticated[operation] = mode.mode
+        if (operation !== 'delete') {
+          columnGrants.authenticated[operation] = mode.columns
+        }
         if (mode.ownerColumn) {
           if (ownerColumn && ownerColumn !== mode.ownerColumn) authenticatedCustom = true
           ownerColumn = mode.ownerColumn
@@ -93,11 +132,12 @@ export function inspectTableDataAccessMetadata(
       const anonymous = anonymousEntries[0]
       if (
         operation !== 'select'
-        || !isAllSelectPermission(anonymous.permission, capabilities.readableColumns)
+        || !isSupportedAnonymousSelect(anonymous.permission, capabilities.readableColumns)
       ) {
         anonymousCustom = true
       } else {
         policy.anonymous.select = true
+        columnGrants.anonymous.select = anonymous.permission.columns as string[]
       }
     }
   }
@@ -109,6 +149,9 @@ export function inspectTableDataAccessMetadata(
     policy,
     legacyRoles: [...legacyRoles].sort(),
     existingManaged,
+    permissions,
+    columnGrants,
+    containsWildcard,
   }
 }
 
@@ -123,37 +166,50 @@ function parseAuthenticatedPermission(
   operation: DataAccessOperation,
   permission: Record<string, unknown>,
   capabilities: DataAccessColumnCapabilities
-): { mode: Exclude<AuthenticatedAccessMode, 'none'>; ownerColumn: string | null } | null {
-  if (isAllPermission(operation, permission, capabilities)) {
-    return { mode: 'all', ownerColumn: null }
-  }
-
+): {
+  mode: Exclude<AuthenticatedAccessMode, 'none'>
+  ownerColumn: string | null
+  columns: string[]
+} | null {
   const rule = operation === 'insert' ? permission.check : permission.filter
   const ownerColumn = parseOwnerRule(rule)
-  if (!ownerColumn || !capabilities.readableColumns.includes(ownerColumn)) return null
+  const allRows = isEmptyObject(rule)
+  if (!allRows && (!ownerColumn || !capabilities.readableColumns.includes(ownerColumn))) return null
+  const mode = allRows ? 'all' : 'owner'
+  let columns: string[] = []
 
   switch (operation) {
     case 'select':
       if (!hasOnlyKeys(permission, ['columns', 'filter', 'allow_aggregations'])) return null
-      if (!selectColumnsMatch(permission.columns, capabilities.readableColumns)) return null
+      {
+        const parsed = parseExplicitColumns(permission.columns, capabilities.readableColumns)
+        if (!parsed) return null
+        columns = parsed
+      }
       if (!isAggregationsDisabled(permission.allow_aggregations)) return null
       break
     case 'insert':
       if (!hasOnlyKeys(permission, ['columns', 'check', 'set'])) return null
-      if (!capabilities.insertableColumns.includes(ownerColumn)) return null
-      if (!columnsMatch(
-        permission.columns,
-        capabilities.insertableColumns.filter((column) => column !== ownerColumn)
-      )) return null
-      if (!deepEqual(permission.set, { [ownerColumn]: USER_ID_SESSION_VARIABLE })) return null
+      {
+        const parsed = parseExplicitColumns(permission.columns, capabilities.insertableColumns)
+        if (!parsed) return null
+        columns = parsed
+      }
+      if (mode === 'owner') {
+        if (!capabilities.insertableColumns.includes(ownerColumn!)) return null
+        if (columns.includes(ownerColumn!)) return null
+        if (!deepEqual(permission.set, { [ownerColumn!]: USER_ID_SESSION_VARIABLE })) return null
+      } else if (!isEmptyOrMissingObject(permission.set)) return null
       break
     case 'update':
       if (!hasOnlyKeys(permission, ['columns', 'filter', 'check', 'set'])) return null
-      if (!columnsMatch(
-        permission.columns,
-        capabilities.updateableColumns.filter((column) => column !== ownerColumn)
-      )) return null
-      if (!deepEqual(permission.check, rule)) return null
+      {
+        const parsed = parseExplicitColumns(permission.columns, capabilities.updateableColumns)
+        if (!parsed) return null
+        columns = parsed
+      }
+      if (mode === 'owner' && columns.includes(ownerColumn!)) return null
+      if (!isEmptyOrMissingObject(permission.check) && !deepEqual(permission.check, rule)) return null
       if (!isEmptyOrMissingObject(permission.set)) return null
       break
     case 'delete':
@@ -161,39 +217,15 @@ function parseAuthenticatedPermission(
       break
   }
 
-  return { mode: 'owner', ownerColumn }
+  return { mode, ownerColumn: mode === 'owner' ? ownerColumn : null, columns }
 }
 
-function isAllPermission(
-  operation: DataAccessOperation,
-  permission: Record<string, unknown>,
-  capabilities: DataAccessColumnCapabilities
-): boolean {
-  switch (operation) {
-    case 'select':
-      return isAllSelectPermission(permission, capabilities.readableColumns)
-    case 'insert':
-      return hasOnlyKeys(permission, ['columns', 'check', 'set'])
-        && columnsMatch(permission.columns, capabilities.insertableColumns)
-        && isEmptyObject(permission.check)
-        && isEmptyOrMissingObject(permission.set)
-    case 'update':
-      return hasOnlyKeys(permission, ['columns', 'filter', 'check', 'set'])
-        && columnsMatch(permission.columns, capabilities.updateableColumns)
-        && isEmptyObject(permission.filter)
-        && isEmptyOrMissingObject(permission.check)
-        && isEmptyOrMissingObject(permission.set)
-    case 'delete':
-      return hasOnlyKeys(permission, ['filter']) && isEmptyObject(permission.filter)
-  }
-}
-
-function isAllSelectPermission(
+function isSupportedAnonymousSelect(
   permission: Record<string, unknown>,
   columns: string[]
 ): boolean {
   return hasOnlyKeys(permission, ['columns', 'filter', 'allow_aggregations'])
-    && selectColumnsMatch(permission.columns, columns)
+    && parseExplicitColumns(permission.columns, columns) !== null
     && isEmptyObject(permission.filter)
     && isAggregationsDisabled(permission.allow_aggregations)
 }
@@ -207,14 +239,10 @@ function parseOwnerRule(value: unknown): string | null {
   return column
 }
 
-function columnsMatch(value: unknown, expected: string[]): boolean {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) return false
-  return value.length === expected.length
-    && expected.every((column) => value.includes(column))
-}
-
-function selectColumnsMatch(value: unknown, expected: string[]): boolean {
-  return value === '*' || columnsMatch(value, expected)
+function parseExplicitColumns(value: unknown, allowed: string[]): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) return null
+  if (new Set(value).size !== value.length) return null
+  return value.every((column) => allowed.includes(column)) ? [...value].sort() : null
 }
 
 function isEmptyObject(value: unknown): boolean {
@@ -238,4 +266,11 @@ function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: string[]): boo
 
 function deepEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function emptyColumnGrants(): DataAccessColumnGrants {
+  return {
+    authenticated: { select: [], insert: [], update: [] },
+    anonymous: { select: [] },
+  }
 }

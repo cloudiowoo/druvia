@@ -55,6 +55,26 @@ interface HasuraMetadata {
 
 const HASURA_METADATA_URL = `${config.hasura.endpoint}/v1/metadata`;
 
+export class HasuraMetadataRequestError extends Error {
+  readonly code: string | null
+
+  constructor(
+    readonly status: number,
+    readonly responseBody: string
+  ) {
+    super(`Hasura metadata request failed with HTTP ${status}: ${responseBody}`)
+    this.name = 'HasuraMetadataRequestError'
+    this.code = parseHasuraErrorCode(responseBody)
+  }
+
+  get isDefinitiveRejection(): boolean {
+    return this.status >= 400
+      && this.status < 500
+      && ![408, 425, 429].includes(this.status)
+      && this.code !== null
+  }
+}
+
 export async function hasuraMetadataRequest<T = unknown>(
   type: string,
   args: Record<string, unknown>
@@ -70,10 +90,54 @@ export async function hasuraMetadataRequest<T = unknown>(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Hasura metadata request failed: ${errorText}`);
+    throw new HasuraMetadataRequestError(response.status, errorText);
   }
 
   return response.json() as Promise<T>;
+}
+
+export interface HasuraMetadataRequestOptions {
+  version?: number
+  resourceVersion?: bigint
+  timeoutMs?: number
+}
+
+export async function hasuraMetadataRequestWithOptions<T = unknown>(
+  type: string,
+  args: Record<string, unknown> | unknown[],
+  options: HasuraMetadataRequestOptions = {}
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 30_000
+  const response = await fetch(HASURA_METADATA_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Hasura-Admin-Secret': config.hasura.adminSecret,
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify({
+      type,
+      args,
+      ...(options.version === undefined ? {} : { version: options.version }),
+      ...(options.resourceVersion === undefined
+        ? {}
+        : { resource_version: Number(options.resourceVersion) }),
+    }),
+  })
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new HasuraMetadataRequestError(response.status, errorText)
+  }
+  return response.json() as Promise<T>
+}
+
+function parseHasuraErrorCode(responseBody: string): string | null {
+  try {
+    const parsed = JSON.parse(responseBody) as { code?: unknown }
+    return typeof parsed.code === 'string' && parsed.code.length > 0 ? parsed.code : null
+  } catch {
+    return null
+  }
 }
 
 // ============================================

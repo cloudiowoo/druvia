@@ -8,7 +8,12 @@ import {
   getTableDataAccess as getTableDataAccessState,
   updateTableDataAccess as updateTableDataAccessState,
 } from './data-access.service.js'
-import type { AuthenticatedAccessMode, TableDataAccessInput } from './data-access.types.js'
+import type {
+  AuthenticatedAccessMode,
+  DataAccessColumnGrants,
+  TableDataAccessInput,
+  TableDataAccessUpdateInput,
+} from './data-access.types.js'
 import { DataAccessValidationError } from './data-access-policy.js'
 import { DataAccessMutationLockedError } from './data-access-mutation-lock.js'
 import {
@@ -27,6 +32,15 @@ import {
   type RollbackDataAccessMigrationInput,
 } from './data-access-migration.service.js'
 import type { ProjectDataAccessMigrationReport } from './data-access-migration.types.js'
+import {
+  DataAccessPolicyOperationError,
+  applyPolicyAdoption as applyPolicyAdoptionState,
+  applyPolicyReconcile as applyPolicyReconcileState,
+  getActivePolicyOperation as getActivePolicyOperationState,
+  previewPolicyAdoption as previewPolicyAdoptionState,
+  previewPolicyReconcile as previewPolicyReconcileState,
+  recoverPolicyOperation as recoverPolicyOperationState,
+} from './data-access-policy-operation.service.js'
 
 interface TableDataAccessParams {
   projectId: string
@@ -39,6 +53,10 @@ interface ProjectDataAccessParams {
 
 interface DataAccessMigrationParams extends ProjectDataAccessParams {
   migrationId: string
+}
+
+interface DataAccessPolicyOperationParams extends ProjectDataAccessParams {
+  operationId: string
 }
 
 const ACCESS_MODES = new Set<AuthenticatedAccessMode>(['none', 'all', 'owner'])
@@ -77,7 +95,7 @@ export async function getTableDataAccess(
 export async function updateTableDataAccess(
   request: FastifyRequest<{
     Params: TableDataAccessParams
-    Body: TableDataAccessInput
+    Body: TableDataAccessUpdateInput
   }>,
   reply: FastifyReply
 ) {
@@ -93,7 +111,8 @@ export async function updateTableDataAccess(
     const state = await updateTableDataAccessState(
       request.params.projectId,
       request.params.tableName,
-      request.body
+      request.body,
+      platformUserId(request.user)
     )
     return reply.send({ success: true, data: state })
   } catch (error) {
@@ -103,6 +122,125 @@ export async function updateTableDataAccess(
         error: { code: 'INVALID_DATA_ACCESS_POLICY', message: error.message },
       })
     }
+    return sendDataAccessError(error, reply, request)
+  }
+}
+
+export async function previewPolicyAdoption(
+  request: FastifyRequest<{ Params: TableDataAccessParams }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  try {
+    const data = await previewPolicyAdoptionState(
+      request.params.projectId, request.params.tableName, platformUserId(request.user)
+    )
+    return reply.send({ success: true, data })
+  } catch (error) {
+    return sendDataAccessError(error, reply, request)
+  }
+}
+
+export async function applyPolicyAdoption(
+  request: FastifyRequest<{
+    Params: TableDataAccessParams
+    Body: { operationId: string; sourceDigest: string; projectAlias: string }
+  }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  if (!isOperationConfirmation(request.body, false)) return sendInvalidPolicyOperationInput(reply)
+  try {
+    const data = await applyPolicyAdoptionState(
+      request.params.projectId, request.params.tableName, request.body, platformUserId(request.user),
+      () => getTableDataAccessState(request.params.projectId, request.params.tableName)
+    )
+    return reply.send({ success: true, data })
+  } catch (error) {
+    return sendDataAccessError(error, reply, request)
+  }
+}
+
+export async function previewPolicyReconcile(
+  request: FastifyRequest<{
+    Params: TableDataAccessParams
+    Body: { columnGrants?: DataAccessColumnGrants; policy?: TableDataAccessInput }
+  }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  if ((request.body?.columnGrants !== undefined && !isColumnGrants(request.body.columnGrants))
+    || (request.body?.policy !== undefined && !isTableDataAccessPolicy(request.body.policy))) {
+    return sendInvalidPolicyOperationInput(reply)
+  }
+  try {
+    const data = await previewPolicyReconcileState(
+      request.params.projectId, request.params.tableName, platformUserId(request.user), request.body ?? {}
+    )
+    return reply.send({ success: true, data })
+  } catch (error) {
+    return sendDataAccessError(error, reply, request)
+  }
+}
+
+export async function applyPolicyReconcile(
+  request: FastifyRequest<{
+    Params: TableDataAccessParams
+    Body: {
+      operationId: string; sourceDigest: string; targetDigest: string
+      baselineRevision: number; projectAlias: string; columnGrants: DataAccessColumnGrants
+      policy: TableDataAccessInput
+    }
+  }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  if (!isOperationConfirmation(request.body, true)
+    || !Number.isSafeInteger(request.body.baselineRevision)
+    || !isColumnGrants(request.body.columnGrants)
+    || !isTableDataAccessPolicy(request.body.policy)) return sendInvalidPolicyOperationInput(reply)
+  try {
+    const data = await applyPolicyReconcileState(
+      request.params.projectId, request.params.tableName, request.body, platformUserId(request.user),
+      () => getTableDataAccessState(request.params.projectId, request.params.tableName)
+    )
+    return reply.send({ success: true, data })
+  } catch (error) {
+    return sendDataAccessError(error, reply, request)
+  }
+}
+
+export async function getActivePolicyOperation(
+  request: FastifyRequest<{ Params: ProjectDataAccessParams }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  try {
+    return reply.send({
+      success: true,
+      data: await getActivePolicyOperationState(request.params.projectId),
+    })
+  } catch (error) {
+    return sendDataAccessError(error, reply, request)
+  }
+}
+
+export async function recoverPolicyOperation(
+  request: FastifyRequest<{
+    Params: DataAccessPolicyOperationParams
+    Body: { sourceDigest: string; projectAlias: string }
+  }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  if (!isRecord(request.body) || !isDigest(request.body.sourceDigest)
+    || typeof request.body.projectAlias !== 'string') return sendInvalidPolicyOperationInput(reply)
+  try {
+    const data = await recoverPolicyOperationState(
+      request.params.projectId, request.params.operationId, request.body
+    )
+    return reply.send({ success: true, data })
+  } catch (error) {
     return sendDataAccessError(error, reply, request)
   }
 }
@@ -234,7 +372,16 @@ async function verifyManagementAccess(
   return true
 }
 
-function isTableDataAccessInput(value: unknown): value is TableDataAccessInput {
+function isTableDataAccessInput(value: unknown): value is TableDataAccessUpdateInput {
+  if (!isRecord(value) || !isTableDataAccessPolicy(value)) return false
+  const envelope = value as Record<string, unknown>
+  return typeof envelope.operationId === 'string'
+    && (envelope.expectedBaselineRevision === undefined
+      || Number.isSafeInteger(envelope.expectedBaselineRevision))
+    && (envelope.columnGrants === undefined || isColumnGrants(envelope.columnGrants))
+}
+
+function isTableDataAccessPolicy(value: unknown): value is TableDataAccessInput {
   if (!isRecord(value) || !isRecord(value.authenticated) || !isRecord(value.anonymous)) {
     return false
   }
@@ -245,6 +392,40 @@ function isTableDataAccessInput(value: unknown): value is TableDataAccessInput {
   )
     && (ownerColumn === null || typeof ownerColumn === 'string')
     && typeof value.anonymous.select === 'boolean'
+}
+
+function isColumnGrants(value: unknown): value is DataAccessColumnGrants {
+  if (!isRecord(value) || !isRecord(value.authenticated) || !isRecord(value.anonymous)) return false
+  const authenticated = value.authenticated
+  const anonymous = value.anonymous
+  return ['select', 'insert', 'update'].every(
+    (operation) => isStringArray(authenticated[operation])
+  ) && isStringArray(anonymous.select)
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function isOperationConfirmation(
+  value: unknown,
+  targetRequired: boolean
+): value is {
+  operationId: string; sourceDigest: string; targetDigest: string
+  projectAlias: string
+} {
+  return isRecord(value)
+    && typeof value.operationId === 'string'
+    && isDigest(value.sourceDigest)
+    && (!targetRequired || isDigest(value.targetDigest))
+    && typeof value.projectAlias === 'string'
+}
+
+function sendInvalidPolicyOperationInput(reply: FastifyReply) {
+  return reply.status(400).send({
+    success: false,
+    error: { code: 'INVALID_DATA_ACCESS_POLICY_OPERATION', message: 'Invalid data access operation' },
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -344,6 +525,28 @@ function sendDataAccessError(
       error: { code: error.code, message: 'Project data changes are temporarily locked' },
     })
   }
+  if (error instanceof DataAccessPolicyOperationError) {
+    const status = error.code === 'DATA_ACCESS_UPSTREAM_ERROR'
+      ? 502
+      : error.code === 'DATA_ACCESS_NOT_FOUND'
+      ? 404
+      : error.code.startsWith('INVALID_')
+        ? 400
+        : 409
+    return reply.status(status).send({
+      success: false,
+      error: {
+        code: error.code,
+        message: status === 502 ? 'Data access service is temporarily unavailable' : error.message,
+      },
+    })
+  }
+  if (error instanceof DataAccessValidationError) {
+    return reply.status(400).send({
+      success: false,
+      error: { code: 'INVALID_DATA_ACCESS_POLICY', message: error.message },
+    })
+  }
   if (error instanceof DataAccessNotFoundError) {
     return reply.status(404).send({
       success: false,
@@ -383,4 +586,9 @@ function sendDataAccessError(
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+
+function platformUserId(user: FastifyRequest['user']): string {
+  if (!user || user.kind !== 'platform_user') throw new Error('Platform authentication required')
+  return user.userId
 }

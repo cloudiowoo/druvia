@@ -55,7 +55,7 @@ describe('data access metadata inspection', () => {
     })
   })
 
-  it('accepts Hasura wildcard columns for managed select permissions', () => {
+  it('keeps Hasura wildcard columns outside managed provenance', () => {
     const result = inspectTableDataAccessMetadata({
       table: { schema: 'dru_test', name: 'orders' },
       select_permissions: [
@@ -73,10 +73,9 @@ describe('data access metadata inspection', () => {
       ],
     }, roles, capabilities)
 
-    expect(result.authenticatedState).toBe('managed')
-    expect(result.anonymousState).toBe('managed')
-    expect(result.policy.authenticated).toMatchObject({ select: 'owner', ownerColumn: 'owner_id' })
-    expect(result.policy.anonymous.select).toBe(true)
+    expect(result.authenticatedState).toBe('custom')
+    expect(result.anonymousState).toBe('custom')
+    expect(result.containsWildcard).toBe(true)
   })
 
   it('recognizes generated-excluded write permissions as managed', () => {
@@ -178,6 +177,18 @@ describe('data access metadata inspection', () => {
           check: ownerFilter,
           set: { title: 'forced' },
         },
+      }],
+    }, roles, capabilities)
+
+    expect(result.authenticatedState).toBe('custom')
+  })
+
+  it('rejects explicit permission columns outside the current operation capability', () => {
+    const result = inspectTableDataAccessMetadata({
+      table: { schema: 'dru_test', name: 'orders' },
+      insert_permissions: [{
+        role: roles.authenticated,
+        permission: { columns: ['id', 'generated_value'], check: {} },
       }],
     }, roles, capabilities)
 

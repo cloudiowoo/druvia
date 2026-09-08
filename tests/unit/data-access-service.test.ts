@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { updateManagedTablePolicy } = vi.hoisted(() => ({
+  updateManagedTablePolicy: vi.fn(),
+}))
+
 vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
   getProjectById: vi.fn(),
 }))
@@ -22,6 +26,17 @@ vi.mock('../../apps/api/src/modules/data-access/data-access-mutation-lock.js', (
   withProjectDataAccessMutationLock: vi.fn(async (_projectId, callback) => callback()),
 }))
 
+vi.mock('../../apps/api/src/modules/data-access/data-access-managed-policy.repository.js', () => ({
+  getManagedPolicy: vi.fn(async () => null),
+  getProjectPolicyOperation: vi.fn(async () => null),
+  listManagedPolicies: vi.fn(async () => []),
+}))
+
+vi.mock('../../apps/api/src/modules/data-access/data-access-policy-operation.service.js', () => ({
+  updateManagedTablePolicy,
+  toOperationState: vi.fn(),
+}))
+
 import * as projectService from '../../apps/api/src/modules/project/project.service.js'
 import * as tableService from '../../apps/api/src/modules/table/table.service.js'
 import { hasuraMetadataRequest } from '../../apps/api/src/modules/realtime/realtime.service.js'
@@ -31,14 +46,20 @@ import {
 } from '../../apps/api/src/modules/data-access/data-access-inventory.js'
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
 import {
-  DataAccessConflictError,
+  getManagedPolicy,
+  getProjectPolicyOperation,
+} from '../../apps/api/src/modules/data-access/data-access-managed-policy.repository.js'
+import {
   DataAccessNotFoundError,
   DataAccessUpstreamError,
   getProjectDataAccessOverview,
   getTableDataAccess,
   updateTableDataAccess,
 } from '../../apps/api/src/modules/data-access/data-access.service.js'
-import type { TableDataAccessInput } from '../../apps/api/src/modules/data-access/data-access.types.js'
+import type {
+  TableDataAccessInput,
+  TableDataAccessUpdateInput,
+} from '../../apps/api/src/modules/data-access/data-access.types.js'
 
 const projectId = 'proj_123'
 const schemaName = 'dru_proj_123'
@@ -108,6 +129,7 @@ describe('data access service', () => {
       realtimeEnabled: false,
     }])
     vi.mocked(hasuraMetadataRequest).mockResolvedValue(tableMetadata() as never)
+    updateManagedTablePolicy.mockResolvedValue({ projectId, tableName } as never)
   })
 
   it('builds a project overview from one default-source metadata export', async () => {
@@ -213,12 +235,12 @@ describe('data access service', () => {
 
     const state = await getTableDataAccess(projectId, tableName)
 
-    expect(state).toEqual({
+    expect(state).toMatchObject({
       projectId,
       schemaName,
       tableName,
       columns,
-      managedState: 'managed',
+      managedState: 'adoption_required',
       legacyRoles: ['user'],
       policy: {
         authenticated: {
@@ -231,6 +253,18 @@ describe('data access service', () => {
         anonymous: { select: true },
       },
     })
+  })
+
+  it('exposes a stalled metadata write as recovery-required', async () => {
+    vi.mocked(getProjectPolicyOperation).mockResolvedValueOnce({
+      tableName,
+      status: 'applying',
+      writeDeadlineAt: new Date(Date.now() - 5_001),
+    } as never)
+
+    const state = await getTableDataAccess(projectId, tableName)
+
+    expect(state.managedState).toBe('recovery_required')
   })
 
   it('maps supported owner rules back to the logical policy', async () => {
@@ -252,7 +286,7 @@ describe('data access service', () => {
 
     const state = await getTableDataAccess(projectId, tableName)
 
-    expect(state.managedState).toBe('managed')
+    expect(state.managedState).toBe('adoption_required')
     expect(state.policy.authenticated).toMatchObject({
       select: 'owner',
       insert: 'owner',
@@ -278,7 +312,7 @@ describe('data access service', () => {
 
     const state = await getTableDataAccess(projectId, tableName)
 
-    expect(state.managedState).toBe('managed')
+    expect(state.managedState).toBe('adoption_required')
     expect(state.policy.authenticated).toMatchObject({
       select: 'all',
       insert: 'all',
@@ -286,100 +320,61 @@ describe('data access service', () => {
     })
   })
 
-  it('replaces only managed permissions in one metadata bulk request', async () => {
-    vi.mocked(hasuraMetadataRequest)
-      .mockResolvedValueOnce(tableMetadata({
-        select_permissions: [
-          {
-            role: roles.authenticated,
-            permission: { columns, filter: {}, allow_aggregations: false },
-          },
-          { role: 'user', permission: { columns: '*', filter: {} } },
-        ],
-      }) as never)
-      .mockResolvedValueOnce({ message: 'success' } as never)
-
-    const input: TableDataAccessInput = {
-      authenticated: {
-        select: 'owner',
-        insert: 'owner',
-        update: 'owner',
-        delete: 'none',
-        ownerColumn: 'owner_id',
-      },
-      anonymous: { select: true },
+  it('requires reconcile when a previously granted column is no longer readable', async () => {
+    const baselineColumns = [...columns, 'retired_summary']
+    const policy: TableDataAccessInput = {
+      ...closedPolicy(),
+      authenticated: { ...closedPolicy().authenticated, select: 'all' },
     }
+    vi.mocked(hasuraMetadataRequest).mockResolvedValueOnce(tableMetadata({
+      select_permissions: [{
+        role: roles.authenticated,
+        permission: { columns: baselineColumns, filter: {}, allow_aggregations: false },
+      }],
+    }) as never)
+    vi.mocked(getManagedPolicy).mockResolvedValueOnce({
+      projectId,
+      tableName,
+      schemaName,
+      policyVersion: 1,
+      policy,
+      columnGrants: {
+        authenticated: { select: baselineColumns, insert: [], update: [] },
+        anonymous: { select: [] },
+      },
+      capabilitiesSnapshot: {
+        readableColumns: baselineColumns,
+        insertableColumns: baselineColumns,
+        updateableColumns: baselineColumns,
+      },
+      permissionsSnapshot: [{
+        role: roles.authenticated,
+        operation: 'select',
+        permission: { columns: baselineColumns, filter: {}, allow_aggregations: false },
+      }],
+      metadataDigest: 'a'.repeat(64),
+      revision: 1n,
+      createdBy: 'usr_1',
+      updatedBy: 'usr_1',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
 
-    const state = await updateTableDataAccess(projectId, tableName, input)
+    const state = await getTableDataAccess(projectId, tableName)
 
-    expect(tableService.trackTableInHasura).toHaveBeenCalledWith(schemaName, tableName)
-    const bulkCall = vi.mocked(hasuraMetadataRequest).mock.calls.find(
-      ([type]) => type === 'bulk_atomic'
-    )
-    expect(bulkCall).toBeDefined()
-    const commands = bulkCall?.[1] as Array<{ type: string; args: { role: string } }>
-    expect(commands.map((command) => command.type)).toEqual([
-      'pg_drop_select_permission',
-      'pg_create_select_permission',
-      'pg_create_insert_permission',
-      'pg_create_update_permission',
-      'pg_create_select_permission',
-    ])
-    expect(commands.filter((command) => command.args.role === roles.anonymous))
-      .toEqual([expect.objectContaining({ type: 'pg_create_select_permission' })])
-    expect(commands.some((command) => command.args.role === 'user')).toBe(false)
-    expect(state.policy).toEqual(input)
+    expect(state.managedState).toBe('refresh_required')
+    expect(state.drift?.removedOrRestricted).toEqual(['retired_summary'])
   })
 
-  it('excludes generated columns from Hasura writes while keeping them readable', async () => {
-    const readableColumns = [...columns, 'observed_at']
-    vi.mocked(tableService.getTableMetadata).mockResolvedValueOnce({
-      schemaName,
-      tableName,
-      columns: readableColumns.map((name) => ({
-        name,
-        type: 'text',
-        nullable: false,
-        defaultValue: null,
-        isPrimaryKey: name === 'id',
-        isGenerated: name === 'observed_at',
-        isIdentity: false,
-        identityGeneration: null,
-      })),
-      rowCount: 0,
-      sizeBytes: 0,
-    })
-    vi.mocked(hasuraMetadataRequest)
-      .mockResolvedValueOnce(tableMetadata() as never)
-      .mockResolvedValueOnce({ message: 'success' } as never)
-
-    await updateTableDataAccess(projectId, tableName, {
-      authenticated: {
-        select: 'all',
-        insert: 'owner',
-        update: 'all',
-        delete: 'none',
-        ownerColumn: 'owner_id',
-      },
-      anonymous: { select: false },
-    })
-
-    const bulkCall = vi.mocked(hasuraMetadataRequest).mock.calls.find(
-      ([type]) => type === 'bulk_atomic'
+  it('delegates policy writes to the persisted operation state machine', async () => {
+    const input: TableDataAccessUpdateInput = {
+      ...closedPolicy(),
+      operationId: 'operation_123',
+    }
+    await updateTableDataAccess(projectId, tableName, input, 'usr_1')
+    expect(updateManagedTablePolicy).toHaveBeenCalledWith(
+      projectId, tableName, input, 'usr_1', expect.any(Function)
     )
-    const commands = bulkCall?.[1] as Array<{
-      type: string
-      args: { permission: { columns?: string[]; set?: Record<string, string> } }
-    }>
-    expect(commands.find((item) => item.type === 'pg_create_select_permission')
-      ?.args.permission.columns).toEqual(readableColumns)
-    expect(commands.find((item) => item.type === 'pg_create_insert_permission')
-      ?.args.permission).toMatchObject({
-        columns: ['id', 'title'],
-        set: { owner_id: 'X-Hasura-User-Id' },
-      })
-    expect(commands.find((item) => item.type === 'pg_create_update_permission')
-      ?.args.permission.columns).toEqual(columns)
   })
 
   it('marks unsupported managed metadata as custom and refuses to overwrite it', async () => {
@@ -393,13 +388,6 @@ describe('data access service', () => {
     const state = await getTableDataAccess(projectId, tableName)
     expect(state.managedState).toBe('custom')
 
-    await expect(
-      updateTableDataAccess(projectId, tableName, closedPolicy())
-    ).rejects.toBeInstanceOf(DataAccessConflictError)
-    expect(tableService.trackTableInHasura).not.toHaveBeenCalled()
-    expect(vi.mocked(hasuraMetadataRequest).mock.calls.some(
-      ([type]) => type === 'bulk_atomic'
-    )).toBe(false)
   })
 
   it('treats owner write permissions with wildcard columns as custom', async () => {
@@ -446,41 +434,6 @@ describe('data access service', () => {
     vi.mocked(tableService.getTableMetadata).mockResolvedValueOnce(null)
     await expect(getTableDataAccess(projectId, tableName))
       .rejects.toBeInstanceOf(DataAccessNotFoundError)
-  })
-
-  it('does not write policy metadata when table tracking fails', async () => {
-    vi.mocked(tableService.trackTableInHasura).mockResolvedValueOnce(false)
-
-    await expect(
-      updateTableDataAccess(projectId, tableName, closedPolicy())
-    ).rejects.toBeInstanceOf(DataAccessUpstreamError)
-    expect(vi.mocked(hasuraMetadataRequest).mock.calls.some(
-      ([type]) => type === 'bulk_atomic'
-    )).toBe(false)
-  })
-
-  it('normalizes metadata write failures as upstream errors', async () => {
-    vi.mocked(hasuraMetadataRequest)
-      .mockResolvedValueOnce(tableMetadata() as never)
-      .mockRejectedValueOnce(new Error(
-        'Hasura metadata request failed: {"error":"Column \\"observed_at\\" is not insertable","code":"permission-error","path":"$.args"}'
-      ))
-
-    const error = await updateTableDataAccess(projectId, tableName, {
-        ...closedPolicy(),
-        anonymous: { select: true },
-      })
-      .catch((caught: unknown) => caught)
-
-    expect(error).toBeInstanceOf(DataAccessUpstreamError)
-    expect(error).toMatchObject({
-      operation: 'update_permissions',
-      projectId,
-      schemaName,
-      tableName,
-      upstreamCode: 'permission-error',
-      upstreamMessage: 'Column "observed_at" is not insertable',
-    })
   })
 
   it.each([

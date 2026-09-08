@@ -9,12 +9,35 @@ import {
   updateTableDataAccess,
 } from '../../apps/api/src/modules/data-access/data-access.service.js'
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
-import { hasuraMetadataRequest } from '../../apps/api/src/modules/realtime/realtime.service.js'
+import {
+  hasuraMetadataRequest,
+  hasuraMetadataRequestWithOptions,
+} from '../../apps/api/src/modules/realtime/realtime.service.js'
 import * as projectService from '../../apps/api/src/modules/project/project.service.js'
 import * as tenantService from '../../apps/api/src/modules/tenant/tenant.service.js'
+import {
+  completePendingTableDeletion,
+  dropTable,
+} from '../../apps/api/src/modules/table/table.service.js'
+import { recoverPendingTableDeletions } from '../../apps/api/src/modules/table/table-deletion-recovery.service.js'
+import { listPendingTableDeletions } from '../../apps/api/src/modules/table/table-deletion-outbox.repository.js'
+import {
+  applyPolicyAdoption,
+  applyPolicyReconcile,
+  previewPolicyAdoption,
+  previewPolicyReconcile,
+} from '../../apps/api/src/modules/data-access/data-access-policy-operation.service.js'
 
 const runIntegration = process.env.DRUVIA_RUN_DATA_ACCESS_COLUMN_INTEGRATION === '1'
 const TABLE_NAME = 'generated_observations'
+const ADOPTION_TABLE_NAME = 'legacy_managed_orders'
+const UNRELATED_INCONSISTENT_TABLE = 'unrelated_missing_table'
+const OWNER_DELETED_TABLE = 'owner_deleted_reconcile'
+const OWNER_GENERATED_TABLE = 'owner_generated_reconcile'
+const OWNER_IDENTITY_TABLE = 'owner_identity_reconcile'
+const OUTBOX_RECOVERY_TABLE = 'outbox_recovery_orders'
+const OUTBOX_POST_UNTRACK_TABLE = 'outbox_post_untrack_orders'
+const OUTBOX_RECREATED_TABLE = 'outbox_recreated_orders'
 
 describe.skipIf(!runIntegration)('data access generated columns against PostgreSQL and Hasura', () => {
   let userUid = 0
@@ -22,6 +45,7 @@ describe.skipIf(!runIntegration)('data access generated columns against PostgreS
   let tenantId = ''
   let projectId = ''
   let schemaName = ''
+  let projectAlias = ''
   let originalAdminSecret = ''
 
   beforeAll(async () => {
@@ -50,6 +74,7 @@ describe.skipIf(!runIntegration)('data access generated columns against PostgreS
       name: 'Generated Column Integration',
     })
     projectId = project.projectId
+    projectAlias = project.alias
     schemaName = project.schemaName || ''
     if (!schemaName) throw new Error('Fixture project schema was not created')
 
@@ -66,11 +91,40 @@ describe.skipIf(!runIntegration)('data access generated columns against PostgreS
 
   afterAll(async () => {
     if (schemaName) {
-      await hasuraMetadataRequest('pg_untrack_table', {
-        source: 'default',
-        table: { schema: schemaName, name: TABLE_NAME },
-        cascade: true,
-      }).catch(() => undefined)
+      const exported = await hasuraMetadataRequestWithOptions<{
+        resource_version: number
+        metadata: { sources?: Array<{ name?: string; tables?: Array<{
+          table: { schema: string; name: string }
+        }> }> }
+      }>('export_metadata', {}, { version: 2 }).catch(() => null)
+      const source = exported?.metadata.sources?.find((item) => item.name === 'default')
+      if (source?.tables) {
+        source.tables = source.tables.filter(
+          (item) => item.table.schema !== schemaName || item.table.name !== UNRELATED_INCONSISTENT_TABLE
+        )
+        await hasuraMetadataRequestWithOptions('replace_metadata', {
+          allow_inconsistent_metadata: true,
+          metadata: exported!.metadata,
+        }, { resourceVersion: BigInt(exported!.resource_version) }).catch(() => undefined)
+      }
+    }
+    if (schemaName) {
+      for (const tableName of [
+        TABLE_NAME,
+        ADOPTION_TABLE_NAME,
+        OWNER_DELETED_TABLE,
+        OWNER_GENERATED_TABLE,
+        OWNER_IDENTITY_TABLE,
+        OUTBOX_RECOVERY_TABLE,
+        OUTBOX_POST_UNTRACK_TABLE,
+        OUTBOX_RECREATED_TABLE,
+      ]) {
+        await hasuraMetadataRequest('pg_untrack_table', {
+          source: 'default',
+          table: { schema: schemaName, name: tableName },
+          cascade: true,
+        }).catch(() => undefined)
+      }
       await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`).catch(() => undefined)
     }
     if (projectId) {
@@ -86,7 +140,33 @@ describe.skipIf(!runIntegration)('data access generated columns against PostgreS
   })
 
   it('applies and re-inspects operation-specific permissions', async () => {
+    await hasuraMetadataRequest('pg_track_table', {
+      source: 'default', table: { schema: schemaName, name: TABLE_NAME },
+  })
+
+    const beforeFence = await hasuraMetadataRequestWithOptions<{
+      resource_version: number
+      metadata: { sources?: Array<{ name?: string; tables?: Array<{
+        table: { schema: string; name: string }
+        configuration?: Record<string, unknown>
+      }> }> }
+    }>('export_metadata', {}, { version: 2 })
+    const tracked = beforeFence.metadata.sources?.find((source) => source.name === 'default')
+      ?.tables?.find((item) => item.table.schema === schemaName && item.table.name === TABLE_NAME)
+    expect(tracked).toBeDefined()
+    await hasuraMetadataRequestWithOptions('pg_set_table_customization', {
+      source: 'default',
+      table: { schema: schemaName, name: TABLE_NAME },
+      configuration: tracked?.configuration ?? {},
+    }, { resourceVersion: BigInt(beforeFence.resource_version) })
+    const afterFence = await hasuraMetadataRequestWithOptions<typeof beforeFence>(
+      'export_metadata', {}, { version: 2 }
+    )
+    expect(afterFence.resource_version).toBeGreaterThan(beforeFence.resource_version)
+    expect(afterFence.metadata).toEqual(beforeFence.metadata)
+
     await expect(updateTableDataAccess(projectId, TABLE_NAME, {
+      operationId: `invalid_${randomUUID()}`,
       authenticated: {
         select: 'owner',
         insert: 'owner',
@@ -95,9 +175,10 @@ describe.skipIf(!runIntegration)('data access generated columns against PostgreS
         ownerColumn: 'message_upper',
       },
       anonymous: { select: false },
-    })).rejects.toBeInstanceOf(DataAccessValidationError)
+    }, userId)).rejects.toBeInstanceOf(DataAccessValidationError)
 
     const state = await updateTableDataAccess(projectId, TABLE_NAME, {
+      operationId: `apply_${randomUUID()}`,
       authenticated: {
         select: 'owner',
         insert: 'owner',
@@ -106,7 +187,7 @@ describe.skipIf(!runIntegration)('data access generated columns against PostgreS
         ownerColumn: 'owner_id',
       },
       anonymous: { select: true },
-    })
+    }, userId)
 
     expect(state.columns).toEqual(['id', 'system_id', 'owner_id', 'message', 'message_upper'])
     expect((await getTableDataAccess(projectId, TABLE_NAME)).managedState).toBe('managed')
@@ -138,10 +219,367 @@ describe.skipIf(!runIntegration)('data access generated columns against PostgreS
       columns: ['id', 'message'],
       set: { owner_id: 'X-Hasura-User-Id' },
     })
-    expect(updatePermission.columns).toEqual(['id', 'owner_id', 'message'])
+    expect(updatePermission.columns).toEqual(['id', 'message', 'owner_id'])
     expect(JSON.stringify([insertPermission, updatePermission])).not.toContain('system_id')
     expect(JSON.stringify([insertPermission, updatePermission])).not.toContain('message_upper')
+
+    await pool.query(`ALTER TABLE "${schemaName}"."${TABLE_NAME}"
+      ADD COLUMN analysis_version TEXT`)
+    const drifted = await getTableDataAccess(projectId, TABLE_NAME)
+    expect(drifted.managedState).toBe('refresh_required')
+    expect(drifted.drift?.addedReadable).toEqual(['analysis_version'])
+
+    const defaultPreview = await previewPolicyReconcile(projectId, TABLE_NAME, userId)
+    expect(defaultPreview.columnGrants.authenticated.select).not.toContain('analysis_version')
+    const selectedGrants = structuredClone(defaultPreview.columnGrants)
+    selectedGrants.authenticated.select.push('analysis_version')
+    const selectedPreview = await previewPolicyReconcile(
+      projectId, TABLE_NAME, userId, { columnGrants: selectedGrants }
+    )
+    await applyPolicyReconcile(projectId, TABLE_NAME, {
+      operationId: selectedPreview.operation.operationId,
+      sourceDigest: selectedPreview.operation.sourceDigest,
+      targetDigest: selectedPreview.operation.targetDigest!,
+      baselineRevision: selectedPreview.baselineRevision!,
+      projectAlias,
+      columnGrants: selectedPreview.columnGrants,
+      policy: selectedPreview.policy,
+    }, userId, () => getTableDataAccess(projectId, TABLE_NAME))
+
+    const reconciled = await getTableDataAccess(projectId, TABLE_NAME)
+    expect(reconciled.managedState).toBe('managed')
+    expect(reconciled.effective.authenticated.select).toContain('analysis_version')
+    expect(reconciled.effective.authenticated.insert).not.toContain('analysis_version')
+    expect(reconciled.effective.authenticated.update).not.toContain('analysis_version')
+
+    await pool.query(`ALTER TABLE "${schemaName}"."${TABLE_NAME}"
+      DROP COLUMN analysis_version`)
+    const contracted = await getTableDataAccess(projectId, TABLE_NAME)
+    expect(contracted.managedState).toBe('refresh_required')
+    expect(contracted.drift?.removedOrRestricted).toContain('analysis_version')
+
+    const beforeUnrelatedInconsistency = await hasuraMetadataRequestWithOptions<{
+      resource_version: number
+      metadata: { sources?: Array<{ name?: string; tables?: Array<Record<string, unknown>> }> }
+    }>('export_metadata', {}, { version: 2 })
+    const defaultSource = beforeUnrelatedInconsistency.metadata.sources
+      ?.find((source) => source.name === 'default')
+    if (!defaultSource) throw new Error('Missing default source')
+    defaultSource.tables = [
+      ...(defaultSource.tables ?? []),
+      { table: { schema: schemaName, name: UNRELATED_INCONSISTENT_TABLE } },
+    ]
+    await hasuraMetadataRequestWithOptions('replace_metadata', {
+      allow_inconsistent_metadata: true,
+      metadata: beforeUnrelatedInconsistency.metadata,
+    }, { resourceVersion: BigInt(beforeUnrelatedInconsistency.resource_version) })
+    const inconsistentBefore = await hasuraMetadataRequest<unknown>(
+      'get_inconsistent_metadata', {}
+    )
+    expect(JSON.stringify(inconsistentBefore)).toContain(UNRELATED_INCONSISTENT_TABLE)
+
+    const contractionPreview = await previewPolicyReconcile(projectId, TABLE_NAME, userId)
+    expect(contractionPreview.columnGrants.authenticated.select).not.toContain('analysis_version')
+    await applyPolicyReconcile(projectId, TABLE_NAME, {
+      operationId: contractionPreview.operation.operationId,
+      sourceDigest: contractionPreview.operation.sourceDigest,
+      targetDigest: contractionPreview.operation.targetDigest!,
+      baselineRevision: contractionPreview.baselineRevision!,
+      projectAlias,
+      columnGrants: contractionPreview.columnGrants,
+      policy: contractionPreview.policy,
+    }, userId, () => getTableDataAccess(projectId, TABLE_NAME))
+    expect((await getTableDataAccess(projectId, TABLE_NAME)).managedState).toBe('managed')
+    const inconsistentAfter = await hasuraMetadataRequest<unknown>(
+      'get_inconsistent_metadata', {}
+    )
+    expect(JSON.stringify(inconsistentAfter)).toContain(UNRELATED_INCONSISTENT_TABLE)
+
+    await pool.query(`CREATE TABLE "${schemaName}"."${ADOPTION_TABLE_NAME}" (
+      id BIGINT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      title TEXT NOT NULL
+    )`)
+    await hasuraMetadataRequest('pg_track_table', {
+      source: 'default', table: { schema: schemaName, name: ADOPTION_TABLE_NAME },
+    })
+    const adoptionRole = resolveDataScopeRole({ projectId, actor: 'authenticated' })
+    await hasuraMetadataRequest('bulk', [
+      {
+        type: 'pg_create_select_permission',
+        args: {
+          source: 'default', table: { schema: schemaName, name: ADOPTION_TABLE_NAME },
+          role: adoptionRole,
+          permission: { columns: ['id', 'owner_id', 'title'], filter: { owner_id: { _eq: 'X-Hasura-User-Id' } } },
+        },
+      },
+      {
+        type: 'pg_create_insert_permission',
+        args: {
+          source: 'default', table: { schema: schemaName, name: ADOPTION_TABLE_NAME },
+          role: adoptionRole,
+          permission: {
+            columns: ['id', 'title'], check: { owner_id: { _eq: 'X-Hasura-User-Id' } },
+            set: { owner_id: 'X-Hasura-User-Id' },
+          },
+        },
+      },
+    ] as never)
+    expect((await getTableDataAccess(projectId, ADOPTION_TABLE_NAME)).managedState)
+      .toBe('adoption_required')
+    const adoption = await previewPolicyAdoption(projectId, ADOPTION_TABLE_NAME, userId)
+    await applyPolicyAdoption(projectId, ADOPTION_TABLE_NAME, {
+      operationId: adoption.operation.operationId,
+      sourceDigest: adoption.operation.sourceDigest,
+      projectAlias,
+    }, userId, () => getTableDataAccess(projectId, ADOPTION_TABLE_NAME))
+    expect((await getTableDataAccess(projectId, ADOPTION_TABLE_NAME)).managedState).toBe('managed')
   }, 30_000)
+
+  it('persists and recovers a table deletion when Hasura untrack is unavailable', async () => {
+    await pool.query(`CREATE TABLE "${schemaName}"."${OUTBOX_RECOVERY_TABLE}" (
+      id BIGINT PRIMARY KEY
+    )`)
+    await hasuraMetadataRequest('pg_track_table', {
+      source: 'default', table: { schema: schemaName, name: OUTBOX_RECOVERY_TABLE },
+    })
+    const originalFetch = globalThis.fetch
+    try {
+      globalThis.fetch = async () => {
+        throw new TypeError('injected Hasura transport failure')
+      }
+      await expect(dropTable(schemaName, OUTBOX_RECOVERY_TABLE, {
+        deletion: { operationId: `td_${randomUUID()}`, lockScope: projectId },
+      })).rejects.toThrow()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+
+    const pending = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM druvia_table_deletion_outbox
+       WHERE lock_scope = $1 AND schema_name = $2 AND table_name = $3`,
+      [projectId, schemaName, OUTBOX_RECOVERY_TABLE]
+    )
+    expect(pending.rows[0]?.count).toBe('1')
+    const physical = await pool.query<{ exists: boolean }>(
+      'SELECT to_regclass($1) IS NOT NULL AS exists',
+      [`${schemaName}.${OUTBOX_RECOVERY_TABLE}`]
+    )
+    expect(physical.rows[0]?.exists).toBe(false)
+
+    await expect(recoverPendingTableDeletions()).resolves.toEqual({ recovered: 1, failed: 0 })
+    const remaining = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM druvia_table_deletion_outbox
+       WHERE lock_scope = $1 AND schema_name = $2 AND table_name = $3`,
+      [projectId, schemaName, OUTBOX_RECOVERY_TABLE]
+    )
+    expect(remaining.rows[0]?.count).toBe('0')
+    const metadata = await hasuraMetadataRequest<{ sources?: Array<{
+      name?: string
+      tables?: Array<{ table: { schema: string; name: string } }>
+    }> }>('export_metadata', {})
+    expect(metadata.sources?.find((source) => source.name === 'default')?.tables)
+      .not.toContainEqual({ table: { schema: schemaName, name: OUTBOX_RECOVERY_TABLE } })
+  })
+
+  it('recovers when Hasura untrack succeeded before outbox cleanup failed', async () => {
+    await pool.query(`CREATE TABLE "${schemaName}"."${OUTBOX_POST_UNTRACK_TABLE}" (
+      id BIGINT PRIMARY KEY
+    )`)
+    await hasuraMetadataRequest('pg_track_table', {
+      source: 'default', table: { schema: schemaName, name: OUTBOX_POST_UNTRACK_TABLE },
+    })
+    const client = await pool.connect()
+    let failCleanup = true
+    const faultClient = {
+      query: async (sql: string, values?: unknown[]) => {
+        if (failCleanup && sql.startsWith('DELETE FROM druvia_table_deletion_outbox')) {
+          failCleanup = false
+          throw new Error('injected outbox cleanup failure')
+        }
+        return client.query(sql, values)
+      },
+    }
+    try {
+      await expect(dropTable(schemaName, OUTBOX_POST_UNTRACK_TABLE, {
+        client: faultClient as never,
+        deletion: { operationId: `td_${randomUUID()}`, lockScope: projectId },
+      })).rejects.toThrow('injected outbox cleanup failure')
+    } finally {
+      client.release()
+    }
+
+    const pending = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM druvia_table_deletion_outbox
+       WHERE lock_scope = $1 AND schema_name = $2 AND table_name = $3`,
+      [projectId, schemaName, OUTBOX_POST_UNTRACK_TABLE]
+    )
+    expect(pending.rows[0]?.count).toBe('1')
+
+    await expect(recoverPendingTableDeletions()).resolves.toEqual({ recovered: 1, failed: 0 })
+    const remaining = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM druvia_table_deletion_outbox
+       WHERE lock_scope = $1 AND schema_name = $2 AND table_name = $3`,
+      [projectId, schemaName, OUTBOX_POST_UNTRACK_TABLE]
+    )
+    expect(remaining.rows[0]?.count).toBe('0')
+  })
+
+  it('reserves a pending deletion name through the relation check and Hasura untrack', async () => {
+    await pool.query(`CREATE TABLE "${schemaName}"."${OUTBOX_RECREATED_TABLE}" (
+      id BIGINT PRIMARY KEY
+    )`)
+    await hasuraMetadataRequest('pg_track_table', {
+      source: 'default', table: { schema: schemaName, name: OUTBOX_RECREATED_TABLE },
+    })
+    const originalFetch = globalThis.fetch
+    try {
+      globalThis.fetch = async () => {
+        throw new TypeError('injected Hasura transport failure')
+      }
+      await expect(dropTable(schemaName, OUTBOX_RECREATED_TABLE, {
+        deletion: { operationId: `td_${randomUUID()}`, lockScope: projectId },
+      })).rejects.toThrow()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+
+    const deletion = (await listPendingTableDeletions()).find(
+      (item) => item.schemaName === schemaName && item.tableName === OUTBOX_RECREATED_TABLE
+    )
+    expect(deletion).toBeDefined()
+    const recoveryClient = await pool.connect()
+    const competingClient = await pool.connect()
+    let checked = false
+    const coordinatedClient = {
+      query: async (sql: string, values?: unknown[]) => {
+        const result = await recoveryClient.query(sql, values)
+        if (sql.includes('to_regclass')) {
+          checked = true
+          await expect(competingClient.query(
+            `CREATE TABLE "${schemaName}"."${OUTBOX_RECREATED_TABLE}" (
+               id BIGINT PRIMARY KEY,
+               recreated BOOLEAN NOT NULL DEFAULT TRUE
+             )`
+          )).rejects.toMatchObject({ code: '55006' })
+          const renameSource = `${OUTBOX_RECREATED_TABLE}_rename_source`
+          await competingClient.query(
+            `CREATE TABLE "${schemaName}"."${renameSource}" (id BIGINT PRIMARY KEY)`
+          )
+          try {
+            await expect(competingClient.query(
+              `ALTER TABLE "${schemaName}"."${renameSource}"
+               RENAME TO "${OUTBOX_RECREATED_TABLE}"`
+            )).rejects.toMatchObject({ code: '55006' })
+          } finally {
+            await competingClient.query(`DROP TABLE "${schemaName}"."${renameSource}"`)
+          }
+        }
+        return result
+      },
+    }
+    try {
+      await completePendingTableDeletion(coordinatedClient as never, deletion!)
+    } finally {
+      recoveryClient.release()
+      competingClient.release()
+    }
+    expect(checked).toBe(true)
+    expect((await listPendingTableDeletions()).some(
+      (item) => item.schemaName === schemaName && item.tableName === OUTBOX_RECREATED_TABLE
+    )).toBe(false)
+    const metadata = await hasuraMetadataRequest<{ sources?: Array<{
+      name?: string
+      tables?: Array<{ table: { schema: string; name: string } }>
+    }> }>('export_metadata', {})
+    expect(metadata.sources?.find((source) => source.name === 'default')?.tables)
+      .not.toContainEqual(expect.objectContaining({
+        table: { schema: schemaName, name: OUTBOX_RECREATED_TABLE },
+      }))
+
+    await pool.query(`CREATE TABLE "${schemaName}"."${OUTBOX_RECREATED_TABLE}" (
+      id BIGINT PRIMARY KEY,
+      recreated BOOLEAN NOT NULL DEFAULT TRUE
+    )`)
+    await pool.query(`DROP TABLE "${schemaName}"."${OUTBOX_RECREATED_TABLE}"`)
+  })
+
+  it.each([
+    {
+      tableName: OWNER_DELETED_TABLE,
+      ownerType: 'TEXT',
+      alter: 'DROP COLUMN owner_id',
+      expectedSelect: 'none',
+      expectedOwner: null,
+    },
+    {
+      tableName: OWNER_GENERATED_TABLE,
+      ownerType: 'TEXT',
+      alter: 'DROP COLUMN owner_id, ADD COLUMN owner_id TEXT GENERATED ALWAYS AS (id) STORED',
+      expectedSelect: 'owner',
+      expectedOwner: 'owner_id',
+    },
+    {
+      tableName: OWNER_IDENTITY_TABLE,
+      ownerType: 'BIGINT',
+      alter: 'DROP COLUMN owner_id, ADD COLUMN owner_id BIGINT GENERATED ALWAYS AS IDENTITY',
+      expectedSelect: 'owner',
+      expectedOwner: 'owner_id',
+    },
+  ] as const)(
+    'reconciles an owner column capability contraction for $tableName',
+    async ({ tableName, ownerType, alter, expectedSelect, expectedOwner }) => {
+      const idType = ownerType === 'BIGINT' ? 'BIGINT' : 'TEXT'
+      await pool.query(`
+        CREATE TABLE "${schemaName}"."${tableName}" (
+          id ${idType} PRIMARY KEY,
+          owner_id ${ownerType} NOT NULL,
+          title TEXT NOT NULL
+        )
+      `)
+      await hasuraMetadataRequest('pg_track_table', {
+        source: 'default', table: { schema: schemaName, name: tableName },
+      })
+      await updateTableDataAccess(projectId, tableName, {
+        operationId: `owner_${randomUUID()}`,
+        authenticated: {
+          select: 'owner', insert: 'owner', update: 'none', delete: 'none',
+          ownerColumn: 'owner_id',
+        },
+        anonymous: { select: false },
+        columnGrants: {
+          authenticated: { select: ['id', 'owner_id', 'title'], insert: ['id', 'title'], update: [] },
+          anonymous: { select: [] },
+        },
+      }, userId)
+
+      await pool.query(`ALTER TABLE "${schemaName}"."${tableName}" ${alter}`)
+      expect((await getTableDataAccess(projectId, tableName)).managedState).toBe('refresh_required')
+
+      const preview = await previewPolicyReconcile(projectId, tableName, userId)
+      expect(preview.policy.authenticated).toMatchObject({
+        select: expectedSelect,
+        insert: 'none',
+        ownerColumn: expectedOwner,
+      })
+      await applyPolicyReconcile(projectId, tableName, {
+        operationId: preview.operation.operationId,
+        sourceDigest: preview.operation.sourceDigest,
+        targetDigest: preview.operation.targetDigest!,
+        baselineRevision: preview.baselineRevision!,
+        projectAlias,
+        columnGrants: preview.columnGrants,
+        policy: preview.policy,
+      }, userId, () => getTableDataAccess(projectId, tableName))
+
+      expect((await getTableDataAccess(projectId, tableName)).managedState).toBe('managed')
+    },
+    30_000
+  )
 })
 
 function permissionFor(

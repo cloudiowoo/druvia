@@ -24,6 +24,8 @@
 - Realtime 连接测试同样只使用组件内存中的项目 API Key 或 Project access token，经 Druvia API 换取短期令牌后连接 Hasura；不得使用平台 token、持久化应用凭证或模拟连接成功。
 - 非默认环境在缺少不可变 environment identity 前只能显示运行时不可用，不得让用户误以为 dev/test 环境已具备隔离的 Realtime actor。
 - 已有项目数据访问升级必须通过预检、独立风险确认、持久阶段进度、恢复和回滚预检完成；界面不得提供直接切换 `data_access_mode`，也不得展示物理 role、原始 metadata 或 Hasura secret。
+- 表级 Data Access 必须按服务端 `managed / adoption_required / refresh_required / custom / recovery_required` 状态工作：新增列默认不选，普通保存提交当前 effective column grants，adoption/reconcile/recovery 使用独立确认流程；custom 与 recovery gate 不得提供普通覆盖入口。
+- reconcile 遇到 owner 列删除或写能力收缩时，必须让用户确认安全关闭或保留原 owner；界面不得提供更换 owner 或借结构刷新把 `owner/none` 放宽为 `all` 的选项。需更换 owner 时先完成收紧，再走普通保存；apply 必须回传 preview 返回的完整 target policy 与规范化 grants。
 - 项目导航、直接页面访问和写控件只根据服务端返回的 `ProjectAccess.capabilities` 判断；不得从平台 `admin/super_admin` 字段猜测项目权限。前端隐藏只改善体验，API guard 始终是最终授权边界。
 - `viewer` 的表结构、行数据和 SQL 页面必须保持只读；成员新增、改角色和移除仅在 `members:manage` 存在时展示，并且 workspace owner 行不可编辑。
 

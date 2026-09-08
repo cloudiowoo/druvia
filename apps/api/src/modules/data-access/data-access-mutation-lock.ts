@@ -14,12 +14,15 @@ export class DataAccessMutationLockedError extends Error {
 export function isDataAccessMigrationDeleteGuardError(error: unknown): boolean {
   const value = error as { code?: string; constraint?: string }
   return value?.code === '55006'
-    && value.constraint === 'druvia_data_access_migrations_inflight_delete_guard'
+    && [
+      'druvia_data_access_migrations_inflight_delete_guard',
+      'druvia_data_access_policy_operations_inflight_delete_guard',
+    ].includes(value.constraint ?? '')
 }
 
 export interface DataAccessMutationLockOptions {
   globalMode?: 'shared' | 'exclusive'
-  purpose?: 'ordinary' | 'migration'
+  purpose?: 'ordinary' | 'migration' | 'policy_operation' | 'table_delete' | 'table_delete_recovery'
   migrationId?: string
   operationId?: string
 }
@@ -39,6 +42,12 @@ export async function withProjectDataAccessMutationLock<T>(
   if (purpose === 'migration' && (!options.migrationId || !options.operationId)) {
     throw new Error('Migration ID and operation ID are required for migration lock context')
   }
+  if (purpose === 'policy_operation' && !options.operationId) {
+    throw new Error('Operation ID is required for policy operation lock context')
+  }
+  if ((purpose === 'table_delete' || purpose === 'table_delete_recovery') && !options.operationId) {
+    throw new Error('Operation ID is required for table deletion lock context')
+  }
 
   const client = await getClient()
   let globalAcquired = false
@@ -50,8 +59,19 @@ export async function withProjectDataAccessMutationLock<T>(
     projectAcquired = await tryLock(client, projectDataAccessLockId(projectId), false)
     if (!projectAcquired) throw new DataAccessMutationLockedError('A project data change is in progress')
 
-    if (purpose === 'ordinary' && await hasPersistedMigrationBlock(client, projectId, globalMode)) {
+    if (await hasPersistedDataAccessBlock(
+      client,
+      projectId,
+      globalMode,
+      purpose,
+      options.operationId,
+      options.migrationId
+    )) {
       throw new DataAccessMutationLockedError('Project data access migration requires completion or recovery')
+    }
+
+    if (purpose !== 'policy_operation') {
+      await supersedePolicyOperationPreviews(client, projectId, globalMode)
     }
 
     return await callback(client)
@@ -85,12 +105,30 @@ export async function resolveProjectIdForDataSchema(schemaName: string): Promise
 
 export async function withSchemaDataAccessMutationLock<T>(
   schemaName: string,
-  callback: (projectId: string | null) => Promise<T>,
+  callback: (projectId: string | null, client: PoolClient) => Promise<T>,
   options: DataAccessMutationLockOptions = {}
 ): Promise<T> {
   const projectId = await resolveProjectIdForDataSchema(schemaName)
   const lockScope = projectId ?? `unresolved-schema:${schemaName}`
-  return withProjectDataAccessMutationLock(lockScope, () => callback(projectId), options)
+  return withProjectDataAccessMutationLock(
+    lockScope,
+    (client) => callback(projectId, client),
+    options
+  )
+}
+
+async function supersedePolicyOperationPreviews(
+  client: PoolClient,
+  projectId: string,
+  globalMode: 'shared' | 'exclusive'
+): Promise<void> {
+  const scope = globalMode === 'exclusive' ? 'TRUE' : 'project_id = $1'
+  await client.query(
+    `UPDATE druvia_data_access_policy_operations
+     SET status = 'superseded', phase = 'completed', completed_at = NOW()
+     WHERE (${scope}) AND status = 'preview_ready'`,
+    globalMode === 'exclusive' ? [] : [projectId]
+  )
 }
 
 async function tryLock(client: PoolClient, identity: string, shared: boolean): Promise<boolean> {
@@ -107,26 +145,52 @@ async function unlock(client: PoolClient, identity: string, shared: boolean): Pr
   await client.query(`SELECT ${fn}(hashtextextended($1, 0))`, [identity])
 }
 
-async function hasPersistedMigrationBlock(
+async function hasPersistedDataAccessBlock(
   client: PoolClient,
   projectId: string,
-  globalMode: 'shared' | 'exclusive'
+  globalMode: 'shared' | 'exclusive',
+  purpose: 'ordinary' | 'migration' | 'policy_operation' | 'table_delete' | 'table_delete_recovery',
+  operationId?: string,
+  migrationId?: string
 ): Promise<boolean> {
-  const scope = globalMode === 'exclusive'
-    ? 'TRUE'
+  const tableScopedDelete = purpose === 'table_delete' || purpose === 'table_delete_recovery'
+  const scope = globalMode === 'exclusive' && !tableScopedDelete
+    ? '$1::text IS NOT NULL'
     : 'project_id = $1'
-  const params = globalMode === 'exclusive' ? [] : [projectId]
+  const migrationExcluded = purpose === 'migration'
+    ? 'AND migration_id <> $2'
+    : 'AND $2::text IS NOT NULL'
+  const policyStatuses = purpose === 'migration'
+    ? "('preview_ready', 'applying', 'recovering', 'recovery_required')"
+    : "('applying', 'recovering', 'recovery_required')"
+  const policyExcluded = purpose === 'policy_operation'
+    ? 'AND operation_id <> $3'
+    : 'AND $3::text IS NOT NULL'
+  const tableDeletionBlocks = purpose !== 'table_delete_recovery'
+  const tableDeletionScope = 'lock_scope = $1'
   const result = await client.query<{ blocked: boolean }>(
     `SELECT EXISTS (
        SELECT 1
        FROM druvia_data_access_migrations
        WHERE (${scope})
+         ${migrationExcluded}
          AND (
            status IN ('applying', 'rolling_back')
-           OR (status = 'failed' AND error_code = ANY($${params.length + 1}::text[]))
+           OR (status = 'failed' AND error_code = ANY($4::text[]))
          )
+       UNION ALL
+       SELECT 1
+       FROM druvia_data_access_policy_operations
+       WHERE (${scope})
+         ${policyExcluded}
+         AND status IN ${policyStatuses}
+       UNION ALL
+       SELECT 1
+       FROM druvia_table_deletion_outbox
+       WHERE (${tableDeletionScope})
+         AND $5::boolean
      ) AS blocked`,
-    [...params, RECOVERY_ERRORS]
+    [projectId, migrationId ?? '', operationId ?? '', RECOVERY_ERRORS, tableDeletionBlocks]
   )
   return result.rows[0]?.blocked === true
 }

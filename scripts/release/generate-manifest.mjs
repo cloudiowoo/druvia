@@ -2,10 +2,15 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-const SEMVER_PATTERN = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/;
+const NUMERIC_IDENTIFIER = '(?:0|[1-9]\\d*)';
+const PRERELEASE_IDENTIFIER = '(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)';
+const SEMVER_PATTERN = new RegExp(
+  `^v?(${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}`
+  + `(?:-${PRERELEASE_IDENTIFIER}(?:\\.${PRERELEASE_IDENTIFIER})*)?)$`,
+);
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const CHANNELS = new Set(['stable', 'beta', 'nightly']);
-const REQUIRED_MIGRATION_TARGET = 22;
+const REQUIRED_MIGRATION_TARGET = 24;
 
 function required(env, key) {
   const value = env[key];
@@ -49,6 +54,31 @@ export function normalizeReleaseVersion(value) {
   return match[1];
 }
 
+export function resolveReleaseMetadata(value, requestedChannel = '') {
+  const version = normalizeReleaseVersion(value);
+  const prereleasePart = version.includes('-') ? version.slice(version.indexOf('-') + 1) : '';
+  const identifiers = prereleasePart ? prereleasePart.split('.') : [];
+  const firstIdentifier = identifiers[0]?.toLowerCase();
+  if (firstIdentifier && !['beta', 'nightly'].includes(firstIdentifier)) {
+    throw new Error(`INVALID_RELEASE_CHANNEL_SUFFIX: ${prereleasePart}`);
+  }
+  if (identifiers.slice(1).some((identifier) => !/^\d+$/.test(identifier))) {
+    throw new Error(`INVALID_RELEASE_CHANNEL_SUFFIX: ${prereleasePart}`);
+  }
+  const channel = firstIdentifier || 'stable';
+  if (requestedChannel && requestedChannel !== channel) {
+    throw new Error(
+      `RELEASE_CHANNEL_MISMATCH: ${requestedChannel} does not match ${version} (${channel})`,
+    );
+  }
+  return {
+    version,
+    tag: releaseTagFromVersion(version),
+    channel,
+    prerelease: channel !== 'stable',
+  };
+}
+
 function releaseTagFromVersion(version) {
   return `v${version}`;
 }
@@ -74,12 +104,14 @@ function buildImage(env, version, name, envPrefix) {
 }
 
 export async function buildReleaseManifest(env = process.env, options = {}) {
-  const version = normalizeReleaseVersion(env.RELEASE_VERSION || env.GITHUB_REF_NAME);
-  const tag = releaseTagFromVersion(version);
-  const channel = env.DRUVIA_RELEASE_CHANNEL || 'stable';
-  if (!CHANNELS.has(channel)) {
-    throw new Error(`INVALID_RELEASE_CHANNEL: ${channel}`);
+  const requestedChannel = env.DRUVIA_RELEASE_CHANNEL || 'stable';
+  if (!CHANNELS.has(requestedChannel)) {
+    throw new Error(`INVALID_RELEASE_CHANNEL: ${requestedChannel}`);
   }
+  const { version, tag, channel } = resolveReleaseMetadata(
+    env.RELEASE_VERSION || env.GITHUB_REF_NAME,
+    requestedChannel,
+  );
 
   const composePath = options.composePath || env.DRUVIA_RELEASE_COMPOSE_PATH || 'docker/docker-compose.release.yml';
   const composeContent = await readFile(composePath);

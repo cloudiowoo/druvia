@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import * as tableService from './table.service.js';
 import * as schemaService from '../schema/schema.service.js';
 import * as projectService from '../project/project.service.js';
@@ -7,6 +8,7 @@ import {
   DataAccessMutationLockedError,
   withSchemaDataAccessMutationLock,
 } from '../data-access/data-access-mutation-lock.js';
+import { deleteManagedPolicy } from '../data-access/data-access-managed-policy.repository.js';
 import { resolveDataScopeRole } from '../data-access/data-scope-role.js';
 
 interface SchemaParams {
@@ -67,10 +69,24 @@ export async function dropTable(
   const { schemaName, tableName } = request.params;
 
   try {
+    const operationId = `td_${randomUUID()}`;
     await withSchemaDataAccessMutationLock(
       schemaName,
-      () => tableService.dropTable(schemaName, tableName),
-      { globalMode: 'exclusive' }
+      async (projectId, client) => {
+        await tableService.dropTable(schemaName, tableName, {
+          client,
+          deletion: {
+            operationId,
+            lockScope: projectId ?? `unresolved-schema:${schemaName}`,
+          },
+          afterDrop: async (transactionClient) => {
+            if (projectId) {
+              await deleteManagedPolicy(transactionClient, projectId, schemaName, tableName);
+            }
+          },
+        });
+      },
+      { globalMode: 'exclusive', purpose: 'table_delete', operationId }
     );
     return reply.status(204).send();
   } catch (error) {

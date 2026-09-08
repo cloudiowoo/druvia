@@ -29,7 +29,82 @@ permissions:
   packages: write
 
 jobs:
+  data-access-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: integration-password
+          POSTGRES_DB: druvia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d druvia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      hasura:
+        image: hasura/graphql-engine:v2.48.0
+        env:
+          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:integration-password@postgres:5432/druvia
+          HASURA_GRAPHQL_ADMIN_SECRET: integration-hasura-secret
+          HASURA_GRAPHQL_ENABLE_CONSOLE: 'false'
+        ports:
+          - 8080:8080
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Wait for Hasura
+        run: >-
+          curl --fail --silent --show-error
+          --retry 30 --retry-delay 2 --retry-all-errors
+          http://127.0.0.1:8080/healthz
+
+      - name: Apply database migrations
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_USER: postgres
+          DB_NAME: druvia
+          POSTGRES_PASSWORD: integration-password
+        run: pnpm migrate up
+
+      - name: Verify managed-policy reconciliation against PostgreSQL and Hasura
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_USER: postgres
+          DB_NAME: druvia
+          POSTGRES_PASSWORD: integration-password
+          HASURA_ENDPOINT: http://127.0.0.1:8080
+          HASURA_ADMIN_SECRET: integration-hasura-secret
+          DRUVIA_INTEGRATION_HASURA_ADMIN_SECRET: integration-hasura-secret
+          JWT_SECRET: integration-test-secret-at-least-32-characters
+          REDIS_URL: redis://127.0.0.1:6379
+          DRUVIA_RUN_DATA_ACCESS_COLUMN_INTEGRATION: '1'
+        run: pnpm vitest run tests/integration/data-access-generated-columns.test.ts
+
   release:
+    needs: data-access-integration
     runs-on: ubuntu-latest
     env:
       GHCR_REGISTRY: ghcr.io
@@ -90,6 +165,12 @@ jobs:
         run: >-
           pnpm vitest run
           tests/unit/data-access-inspection.test.ts
+          tests/unit/data-access-managed-policy.test.ts
+          tests/unit/data-access-managed-policy-schema.test.ts
+          tests/unit/data-access-managed-policy-repository.test.ts
+          tests/unit/data-access-policy-operation-service.test.ts
+          tests/unit/table-deletion-outbox-schema.test.ts
+          tests/unit/table-deletion-recovery.test.ts
           tests/unit/data-access-migration-schema.test.ts
           tests/unit/data-access-migration-inspection.test.ts
           tests/unit/data-access-migration-plan.test.ts
@@ -118,6 +199,7 @@ jobs:
           tests/unit/admin/project-data-access-migration.test.ts
           tests/unit/admin/project-data-access-migration-panel.test.tsx
           tests/unit/admin/project-data-access-overview-panel.test.tsx
+          tests/unit/admin/table-data-access-panel.test.tsx
           tests/unit/api-app.test.ts
 
       - name: Verify Project Actor RPC and Functions cutover
@@ -222,17 +304,10 @@ jobs:
         run: node scripts/release/verify-realtime-compose.mjs
 
       - name: Prepare release metadata
-        shell: bash
-        run: |
-          INPUT_VERSION="${{ inputs.version }}"
-          if [ -n "$INPUT_VERSION" ]; then
-            RELEASE_VERSION="${INPUT_VERSION#v}"
-          else
-            RELEASE_VERSION="${GITHUB_REF_NAME#v}"
-          fi
-          echo "RELEASE_VERSION=${RELEASE_VERSION}" >> "$GITHUB_ENV"
-          echo "RELEASE_TAG=v${RELEASE_VERSION}" >> "$GITHUB_ENV"
-          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        env:
+          RELEASE_INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_INPUT_CHANNEL: ${{ inputs.channel }}
+        run: node scripts/release/prepare-release.mjs
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -331,7 +406,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
           GITHUB_REF_NAME: ${{ env.RELEASE_TAG }}
-          DRUVIA_RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          DRUVIA_RELEASE_CHANNEL: ${{ env.RELEASE_CHANNEL }}
           DRUVIA_MIN_UPDATER_VERSION: 0.1.0
           DRUVIA_API_IMAGE_REPOSITORY: ${{ env.GHCR_API_IMAGE }}
           DRUVIA_ADMIN_IMAGE_REPOSITORY: ${{ env.GHCR_ADMIN_IMAGE }}
@@ -343,7 +418,7 @@ jobs:
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
           DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: '22'
+          DRUVIA_MIGRATION_TO: '24'
           DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
           DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs
@@ -352,7 +427,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
           GITHUB_REF_NAME: ${{ env.RELEASE_TAG }}
-          DRUVIA_RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          DRUVIA_RELEASE_CHANNEL: ${{ env.RELEASE_CHANNEL }}
           DRUVIA_MIN_UPDATER_VERSION: 0.1.0
           DRUVIA_API_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_API_IMAGE }}
           DRUVIA_ADMIN_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_ADMIN_IMAGE }}
@@ -365,7 +440,7 @@ jobs:
           DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
           DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: '22'
+          DRUVIA_MIGRATION_TO: '24'
           DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
           DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs
@@ -374,6 +449,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ env.RELEASE_PRERELEASE }}
           files: |
             release-manifest.json
             release-manifest.cn.json

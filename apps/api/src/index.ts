@@ -34,6 +34,10 @@ import { rpcRoutes } from './modules/rpc/rpc.routes.js';
 import { systemUpdateRoutes } from './modules/system-update/system-update.routes.js';
 import { dataAccessRoutes } from './modules/data-access/data-access.routes.js';
 import { projectMemberRoutes } from './modules/project-members/project-members.routes.js';
+import {
+  recoverPendingTableDeletions,
+  startTableDeletionRecoveryLoop,
+} from './modules/table/table-deletion-recovery.service.js';
 
 export const appCorsOptions: FastifyCorsOptions = {
   origin:
@@ -178,6 +182,19 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
 async function start() {
   const app = buildApp();
   try {
+    const tableDeletionRecovery = await recoverPendingTableDeletions();
+    if (tableDeletionRecovery.failed > 0) {
+      app.log.warn(tableDeletionRecovery, 'some pending table deletions still require recovery');
+    }
+    const stopTableDeletionRecovery = startTableDeletionRecoveryLoop({
+      runImmediately: false,
+      onResult: (result) => {
+        if (result.failed > 0) {
+          app.log.warn(result, 'some pending table deletions still require recovery');
+        }
+      },
+    });
+    app.addHook('onClose', async () => stopTableDeletionRecovery());
     await app.listen({ port: config.port, host: config.host });
     app.log.info(
       { host: config.host, port: config.port },

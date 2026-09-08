@@ -19,6 +19,30 @@ export async function dataAccessRoutes(app: FastifyInstance) {
     '/projects/:projectId/data-access/tables/:tableName',
     controller.updateTableDataAccess as never
   )
+  app.post(
+    '/projects/:projectId/data-access/tables/:tableName/adoption/preview',
+    controller.previewPolicyAdoption as never
+  )
+  app.post(
+    '/projects/:projectId/data-access/tables/:tableName/adoption/apply',
+    controller.applyPolicyAdoption as never
+  )
+  app.post(
+    '/projects/:projectId/data-access/tables/:tableName/reconcile/preview',
+    controller.previewPolicyReconcile as never
+  )
+  app.post(
+    '/projects/:projectId/data-access/tables/:tableName/reconcile/apply',
+    controller.applyPolicyReconcile as never
+  )
+  app.get(
+    '/projects/:projectId/data-access/policy-operation',
+    controller.getActivePolicyOperation as never
+  )
+  app.post(
+    '/projects/:projectId/data-access/policy-operations/:operationId/recover',
+    controller.recoverPolicyOperation as never
+  )
   app.get(
     '/projects/:projectId/data-access/migration',
     controller.getDataAccessMigration as never

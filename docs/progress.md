@@ -23,6 +23,7 @@
 
 ## Recent Milestones
 
+- Data Access managed-policy reconcile 已完成 Druvia 本地平台实现：migration `023` 按 `project + schema + table` 唯一持久化表级 baseline，并将 policy operation 绑定创建时 schema；migration `024` 持久化跨 PostgreSQL/Hasura 的表删除 outbox，并由 event trigger 在 pending 期间保留同名 relation。Admin/API 支持 adoption、结构刷新、显式列 grants、恢复状态和 revision/operation 幂等控制。恢复只覆盖 operation source/target 或可解释的非原子命令前缀，第三方 scoped permission 变化保持 recovery gate。真实 PostgreSQL 17 + Hasura v2.48 已验证新增列默认零授权、仅显式 select 扩展、删除已授权列后的受控 metadata 修复、owner 字段删除/generated/identity always 收缩、custom preservation、metadata consistency，以及 PostgreSQL 提交后 Hasura untrack 失败、untrack 已成功但 outbox 清理失败、pending 期间另一数据库连接重建同名 relation 被 SQLSTATE `55006` 阻断三类窗口。stable release workflow 已将该真实集成设为镜像发布前置门禁。PITCHETCH `football_session` 已完成 adoption，并仅将 `target_algorithm_version`、`current_analysis_run_id` 加入 authenticated select，revision 为 2；insert/update/anonymous 未扩大。四张派生表、内部表零 CRUD 和双 Project Session 仍由 PITCHETCH 后续验收，生产 release/OTA 尚未执行。
 - RPC 已在本地建立数据库业务拒绝契约：仅业务函数调用阶段的 PostgreSQL `P0001` 在成功 rollback 后映射为 HTTP 400 `RPC_REJECTED`，客户端不接收原始数据库错误；连接、事务设置、未知 SQLSTATE 及 rollback 故障继续返回 500。该修复解除 PITCHETCH seal/time-only 等 RPC 验收矩阵的状态码阻塞，不涉及 migration、Hasura metadata 或 SDK 源码变更。
 - Data Access 已在本地支持 PostgreSQL generated/identity 列：select、insert、update 使用独立列能力，owner preset、inspection、overview 与 migration v2 共用同一契约；v1 preview/rollback 兼容边界已固定，Hasura 502 增加脱敏定位日志。真实 PostgreSQL 17 + Hasura v2.48 已验证 Generated Always、Identity Always、Identity By Default 的策略写入和回读；PITCHETCH 已重新配置相关业务表。表列表状态现按项目当前 compatibility/explicit 模式检查唯一运行时角色集合，不再暴露物理 Hasura role；非默认环境在 actor 身份未实现前显示为暂不可用。尚待应用侧运行完整验收脚本。
 - 项目成员与管理授权切片已完成本地实现：migration `022` 新增项目成员关系；平台 `admin` 收紧为登录身份；数据库当前 `super_admin`、workspace owner 和固定项目角色统一映射 capability；tenant/project/schema/backup 与项目模块路由完成资源级授权；Admin 增加成员管理和只读界面门禁。普通 PostgreSQL 与活动 PostGIS 本地库均已应用 022，PITCHETCH 用户已通过正式 API 在活动 PostGIS 库授予 `database_admin`，跨 Taro 项目及 owner-only 能力运行态验证为 403。生产 release/OTA 尚未执行。
@@ -134,9 +135,9 @@
 - 冻结 taro-app/H5/小程序上线依赖和版本矩阵，盘点真实表权限、Auth provider、GraphQL、Realtime、Storage、RPC、Functions、SDK 和部署依赖
 - 在真实应用中验证 Project Session 生命周期、数据/实时跨用户隔离、Storage 浏览器与小程序实际上传路径，以及 RPC/Functions token 选择；只修复联调发现的 Core 阻塞
 - 为目标 stable 基线补齐根级 build/lint/核心测试门禁，并明确隔离当前并发集成和环境依赖失败；不以定向测试通过替代完整门禁结论
-- 在生产同构预发布环境核对并演练 migration `018 -> 022`、数据库/Storage 备份、服务健康检查、项目成员授权、镜像回滚和必要的数据库人工恢复
+- 在生产同构预发布环境核对并演练 migration `018 -> 024`、数据库/Storage 备份、服务健康检查、项目成员授权、Data Access baseline/recovery、表删除 outbox、镜像回滚和必要的数据库人工恢复
 - 验收通过后发布固定 digest 的 stable 基线并由生产人工 apply；此前不触发实际生产 OTA，后续也不按 commit 或 Phase 子任务反复升级
-- beta/nightly 与 GitHub `releases/latest/download` 完成隔离前，不让非 stable Release 覆盖生产 manifest 入口
+- 保持 beta/nightly 为 GitHub prerelease，并验证生产 `releases/latest/download` 始终指向通过兼容回归的 stable manifest
 - taro-app 上线不等待足球应用、PostgreSQL 扩展、Swift SDK 或 Recipe；这些能力继续由真实应用证据决定优先级
 - 足球运动数据应用后续验证原生客户端、批量写入、IMU Storage 和 Trusted Backend Worker；领域模型与算法保留在应用侧
 - 暂不建设通用 Jobs、Queue、Resumable Upload 或 Worker Runtime

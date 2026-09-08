@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const policyOperationMocks = vi.hoisted(() => ({
+  previewPolicyReconcile: vi.fn(),
+  applyPolicyReconcile: vi.fn(),
+  recoverPolicyOperation: vi.fn(),
+}))
+
 vi.mock('../../apps/api/src/modules/data-access/data-access.service.js', () => ({
   DataAccessConflictError: class DataAccessConflictError extends Error {},
   DataAccessNotFoundError: class DataAccessNotFoundError extends Error {},
@@ -13,10 +19,25 @@ vi.mock('../../apps/api/src/lib/access.js', () => ({
   checkProjectAccess: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/modules/data-access/data-access-policy-operation.service.js', () => ({
+  DataAccessPolicyOperationError: class DataAccessPolicyOperationError extends Error {
+    constructor(readonly code: string, message: string) {
+      super(message)
+    }
+  },
+  applyPolicyAdoption: vi.fn(),
+  applyPolicyReconcile: policyOperationMocks.applyPolicyReconcile,
+  getActivePolicyOperation: vi.fn(),
+  previewPolicyAdoption: vi.fn(),
+  previewPolicyReconcile: policyOperationMocks.previewPolicyReconcile,
+  recoverPolicyOperation: policyOperationMocks.recoverPolicyOperation,
+}))
+
 import * as controller from '../../apps/api/src/modules/data-access/data-access.controller.js'
 import * as service from '../../apps/api/src/modules/data-access/data-access.service.js'
 import { checkProjectAccess } from '../../apps/api/src/lib/access.js'
 import { DataAccessValidationError } from '../../apps/api/src/modules/data-access/data-access-policy.js'
+import { DataAccessPolicyOperationError } from '../../apps/api/src/modules/data-access/data-access-policy-operation.service.js'
 
 function createReply() {
   const reply = {
@@ -213,7 +234,7 @@ describe('data access controller', () => {
     await controller.updateTableDataAccess({
       params: { projectId: 'proj_123', tableName: 'orders' },
       user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
-      body: policy,
+      body: { ...policy, operationId: 'operation_123' },
     } as never, reply as never)
 
     expect(reply.statusCode).toBe(409)
@@ -231,7 +252,7 @@ describe('data access controller', () => {
     await controller.updateTableDataAccess({
       params: { projectId: 'proj_123', tableName: 'orders' },
       user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
-      body: policy,
+      body: { ...policy, operationId: 'operation_123' },
     } as never, reply as never)
 
     expect(reply.statusCode).toBe(400)
@@ -283,10 +304,90 @@ describe('data access controller', () => {
     await controller.updateTableDataAccess({
       params: { projectId: 'proj_123', tableName: 'orders' },
       user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
-      body: policy,
+      body: { ...policy, operationId: 'operation_123' },
     } as never, reply as never)
 
     expect(reply.statusCode).toBe(500)
     expect(JSON.stringify(reply.payload)).not.toContain('database-secret')
+  })
+
+  it('forwards an explicit reconcile target policy', async () => {
+    policyOperationMocks.previewPolicyReconcile.mockResolvedValueOnce({ policy })
+    const reply = createReply()
+
+    await controller.previewPolicyReconcile({
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      body: { policy },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(policyOperationMocks.previewPolicyReconcile).toHaveBeenCalledWith(
+      'proj_123', 'orders', 'usr_123', { policy }
+    )
+    expect(reply.payload).toMatchObject({ success: true, data: { policy } })
+  })
+
+  it('maps reconcile preview semantic validation failures to 400', async () => {
+    policyOperationMocks.previewPolicyReconcile.mockRejectedValueOnce(
+      new DataAccessValidationError('Owner column does not exist in the table')
+    )
+    const reply = createReply()
+
+    await controller.previewPolicyReconcile({
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      body: { policy },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(400)
+    expect(reply.payload).toMatchObject({
+      success: false,
+      error: { code: 'INVALID_DATA_ACCESS_POLICY' },
+    })
+  })
+
+  it('rejects reconcile apply without the previewed target policy', async () => {
+    const reply = createReply()
+
+    await controller.applyPolicyReconcile({
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      body: {
+        operationId: 'operation_123',
+        sourceDigest: 'a'.repeat(64),
+        targetDigest: 'b'.repeat(64),
+        baselineRevision: 1,
+        projectAlias: 'pitchetch',
+        columnGrants: {
+          authenticated: { select: [], insert: [], update: [] },
+          anonymous: { select: [] },
+        },
+      },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(400)
+    expect(policyOperationMocks.applyPolicyReconcile).not.toHaveBeenCalled()
+  })
+
+  it('returns a conflict when recovery cannot verify the source', async () => {
+    policyOperationMocks.recoverPolicyOperation.mockRejectedValueOnce(
+      new DataAccessPolicyOperationError(
+        'DATA_ACCESS_RECONCILE_RECOVERY_REQUIRED',
+        'Unable to verify restored permissions'
+      )
+    )
+    const reply = createReply()
+
+    await controller.recoverPolicyOperation({
+      params: { projectId: 'proj_123', operationId: 'operation_123' },
+      body: { sourceDigest: 'a'.repeat(64), projectAlias: 'pitchetch' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(409)
+    expect(reply.payload).toMatchObject({
+      success: false,
+      error: { code: 'DATA_ACCESS_RECONCILE_RECOVERY_REQUIRED' },
+    })
   })
 })

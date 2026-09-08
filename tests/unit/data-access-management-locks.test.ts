@@ -8,7 +8,7 @@ function source(path: string): string {
 describe('data access migration management-write lock contracts', () => {
   it('serializes project schema and metadata mutations through the shared lock helper', () => {
     const table = source('apps/api/src/modules/table/table.controller.ts')
-    const dataAccess = source('apps/api/src/modules/data-access/data-access.service.ts')
+    const dataAccess = source('apps/api/src/modules/data-access/data-access-policy-operation.service.ts')
     const realtime = source('apps/api/src/modules/realtime/realtime.controller.ts')
 
     expect(table.match(/withSchemaDataAccessMutationLock/g)?.length).toBeGreaterThanOrEqual(9)
@@ -41,5 +41,6 @@ describe('data access migration management-write lock contracts', () => {
     expect(tenant).toContain('DATA_ACCESS_MIGRATION_IN_PROGRESS')
     expect(lock).toContain("value?.code === '55006'")
     expect(lock).toContain("druvia_data_access_migrations_inflight_delete_guard")
+    expect(lock).toContain("druvia_data_access_policy_operations_inflight_delete_guard")
   })
 })

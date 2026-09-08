@@ -1093,10 +1093,10 @@ PostgreSQL 备份不包含 `docker/storage_data` 的对象文件，也不包含 
   - API/Admin/Worker/Updater 健康检查
   - taro-app 核心 smoke test
   - 镜像回滚和必要的数据库人工恢复演练
-- migration `018 -> 022` 包含权限模式、迁移状态、Storage owner/preset、Project Auth identity 和项目成员授权变更；旧部署升级前必须重新核对当前数据库版本、manifest 范围、`SECRETS_ENCRYPTION_KEY`、项目成员关系和备份要求，不能只依据默认 workflow 输入。
+- migration `018 -> 024` 包含权限模式、迁移状态、Storage owner/preset、Project Auth identity、项目成员授权、表级 Data Access provenance 和表删除 outbox；`024` 创建 PostgreSQL event trigger，执行迁移的数据库角色必须具备相应权限。旧部署升级前必须重新核对当前数据库版本、manifest 范围、数据库角色权限、`SECRETS_ENCRYPTION_KEY`、项目成员关系、受管策略/删除恢复状态和备份要求，不能只依据默认 workflow 输入。
 - 正式生产只使用 `DRUVIA_UPDATE_CHANNEL=stable` 和通过上述验收的 manifest；镜像实际引用必须为 digest。
 - updater 保持被动通知和人工 apply。Actions 完成、镜像推送或 release 创建都不是生产升级授权。
-- 当前 production manifest 示例使用 GitHub `releases/latest/download`。release workflow 尚未将 beta/nightly 完整隔离为不会影响该入口的 prerelease 路径，因此隔离完成前不得让 beta/nightly 覆盖生产跟随的 latest Release。
+- 当前 production manifest 示例使用 GitHub `releases/latest/download`。release workflow 会校验 SemVer 后缀与 channel：预发布版本仅允许 `beta` 或 `nightly` 首段及后续纯数字标识，并标记为 GitHub prerelease；不得绕过 workflow 手工把非 stable Release 标记为 latest。
 
 ### 上线后的升级节奏
 
@@ -1106,6 +1106,99 @@ PostgreSQL 备份不包含 `docker/storage_data` 的对象文件，也不包含 
 - 服务端变更至少兼容当前生产客户端和下一客户端版本。小程序新版本通过审核且完成迁移后，才能移除旧接口或旧字段。
 - 数据库使用 expand-contract：先增加并双读/双写或保持兼容，再迁移客户端，最后在后续 stable 删除旧结构。
 - 任何不可逆 migration 都必须先备份。应用镜像回滚成功时，仍需单独判断数据库是否需要人工恢复。
+
+## 表级 Data Access 接管与结构刷新
+
+前置条件：目标平台数据库已应用 migration `023`、`024`，API 与 Admin 来自同一版本，Hasura 使用
+v2.48 兼容 Metadata API。OTA 只安装平台 migration 和代码，不会自动接管或刷新项目业务表。
+
+先确认数据库和 Hasura 状态：
+
+```bash
+DB_HOST=127.0.0.1 DB_PORT=<active-port> pnpm migrate status
+
+curl -sS \
+  -H "x-hasura-admin-secret: $HASURA_ADMIN_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"type":"get_inconsistent_metadata","args":{}}' \
+  "$HASURA_ENDPOINT/v1/metadata"
+```
+
+管理入口位于项目“数据访问”总览和数据表详情：
+
+- `managed`：可普通保存；保存必须携带服务端返回的 baseline revision 和新 operation ID。
+- `adoption_required`：已有受支持 scoped permission 但没有 provenance。先预览并核对 row scope、
+  owner preset 和列 grants，再输入项目别名确认接管；adoption 不写 Hasura。
+- `refresh_required`：metadata 仍等于受管基线，但数据库列能力已变化。新增列默认不选；仅勾选
+  业务确实需要的 select/insert/update 字段后确认刷新。若 owner 字段被删除，刷新预览会安全关闭
+  受影响的 owner 操作；若 owner insert 字段变为 generated/identity always，只关闭 insert。刷新中
+  只能保留原 owner 或确认收紧，不能更换 owner，也不能把原 `owner/none` 放宽为 `all`。需要更换
+  owner 时先完成刷新，再在 managed 状态通过普通保存设置。
+- `custom`：规则与受管基线不一致或结构不受支持，只读处理；不得用 reconcile 覆盖。
+- `recovery_required`：停止该项目其他 Data Access、DDL、Realtime 和删除操作，只使用页面恢复
+  入口。持久状态仍为 `applying/recovering` 但已超过 writer deadline 与 5 秒 drain window 时，
+  页面也会显示恢复入口；窗口结束前不要绕过 409 强制重试。
+  历史异常记录若处于 `applying/recovering` 且没有 deadline，在 started/updated 后超过 35 秒才作为
+  orphan 暴露恢复入口；recover API 也强制同一时间门禁，窗口内直接调用仍返回 in-progress。缺少
+  started/updated 的记录失败关闭，不能人工修改 operation 状态绕过。
+
+列删除或转为 generated/identity 后，Hasura 可能因旧 permission 引用失效列而显示 inconsistent。
+Druvia reconcile 会用 v2 export 的 `resource_version` 做 CAS，并仅替换目标表当前项目 scoped
+permissions；不得人工执行 `drop_inconsistent_metadata`，该命令会清理其他无关对象。直接通过
+Hasura Console/admin-secret 修改 scoped permission 不受 Druvia 锁保护，adoption、apply、reconcile
+和 recover 期间必须保持运维静默窗口。
+
+操作完成后必须复核：
+
+1. 表状态回到 `managed`，active operation 为空，baseline revision 按预期增加。
+2. 新增列只出现在明确勾选的 operation；owner column 仍由 preset 写入，客户端写列不包含它。
+3. generated/identity always 不在 insert/update permission。
+4. legacy、其他项目 role 和外部 role 保持不变。
+5. `get_inconsistent_metadata` 返回 `is_consistent: true`。
+
+若恢复后 operation 为 `failed`，表示 source 已验证恢复，可重新 preview；若仍为
+`recovery_required`，保留现场，不删除 operation/baseline，不执行 migration 023 down。生产使用过
+migration 023 后只做前向修复。
+
+表删除若在 PostgreSQL 已提交后无法 untrack Hasura，会保留
+`druvia_table_deletion_outbox` pending 记录并阻断同 scope 管理写入，不影响无关项目。API 启动时
+立即恢复，运行期间每 30 秒继续重试；无需重启服务。每次恢复先确认 PostgreSQL 中精确同名 relation
+仍不存在，再通过带 30 秒超时的 v2 metadata export 精确判断默认 source 中的 schema/table 是否仍
+存在；不能根据 untrack 错误文字推断已删除。migration `024` 的 event trigger 会在 pending 生命周期
+内保留同名 relation：所有数据库连接尝试创建或重命名为该名称都会以 SQLSTATE `55006` 失败。不要
+禁用该 trigger；看到此错误时应停止同 scope DDL，先查日志中的
+`operationId/schemaName/tableName` 和 Hasura 可用性，
+再等待自动收敛并确认：
+
+```sql
+SELECT operation_id, lock_scope, schema_name, table_name, attempts, last_error, updated_at
+FROM druvia_table_deletion_outbox
+ORDER BY created_at;
+```
+
+不要手工删除 outbox 或重复创建同名表。确认 Hasura 已无该表且 outbox 为空后，管理写入才会恢复。
+`024 down` 只允许 outbox 为空；生产启用后仍优先采用新编号前向修复。
+
+页面只有在 recover 返回终结的 `failed` 状态时提示恢复完成。若恢复接口返回
+`DATA_ACCESS_RECONCILE_RECOVERY_REQUIRED`，页面会重新读取持久状态并保留恢复弹窗；这不是成功，
+不得继续受 gate 阻断的管理操作。
+
+Hasura 请求发生 transport/timeout，或回退到非原子 `bulk` 后返回错误时，前序 command 可能已经
+生效。此时 Druvia 会保留 recovery gate，不会立即发送 source restore；等待 deadline/drain 后再从
+页面恢复。不要因客户端收到 502/409 就手工删除 operation，也不要直接在 Hasura Console 覆盖。
+
+普通保存请求若因断网、代理超时或页面刷新而没有得到确定响应，Admin 会为同一用户意图保留
+operation ID 和当时提交的完整请求体。再次保存相同意图时必须原样重放，不能把新读取到的 baseline
+revision 拼入旧请求；服务端只有在当前 baseline 仍指向该 operation 的完成 target 时才返回幂等成功。
+若返回 `DATA_ACCESS_POLICY_STALE`，重新读取当前策略并由用户确认后使用新 operation ID 发起新操作。
+
+stable release workflow 另有 `data-access-integration` 必需 job：它启动隔离 PostgreSQL 17 与 Hasura
+v2.48、执行 `pnpm migrate up`，再运行
+`tests/integration/data-access-generated-columns.test.ts`。该 job 失败时不得构建或推送 GHCR、自建
+Registry 镜像，也不得手工绕过为 stable manifest 补发镜像。该真实集成同时包含 PostgreSQL 提交后
+Hasura untrack 失败、untrack 已成功但 outbox 清理失败，以及 pending 期间另一数据库连接同名 relation
+重建的故障注入；必须证明前两者恢复后 metadata 收敛且记录清除，重建冲突由 event trigger 以
+SQLSTATE `55006` 阻断，outbox 清除后名称可再次使用。
 
 ## Functions invoke 配置排查
 

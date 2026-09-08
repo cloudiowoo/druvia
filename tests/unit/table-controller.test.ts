@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../apps/api/src/modules/table/table.service.js', () => ({
+  dropTable: vi.fn(),
   getHasuraStatus: vi.fn(),
   trackTableInHasura: vi.fn(),
+}))
+
+vi.mock('../../apps/api/src/modules/data-access/data-access-managed-policy.repository.js', () => ({
+  deleteManagedPolicy: vi.fn(),
 }))
 
 vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
@@ -24,6 +29,7 @@ import {
   withSchemaDataAccessMutationLock,
 } from '../../apps/api/src/modules/data-access/data-access-mutation-lock.js'
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
+import { deleteManagedPolicy } from '../../apps/api/src/modules/data-access/data-access-managed-policy.repository.js'
 
 type ReplyStub = {
   status: ReturnType<typeof vi.fn>
@@ -97,6 +103,29 @@ describe('Table Controller', () => {
       error: expect.objectContaining({ code: 'DATA_ACCESS_MIGRATION_IN_PROGRESS' }),
     }))
     expect(tableService.trackTableInHasura).not.toHaveBeenCalled()
+  })
+
+  it('deletes the table and managed baseline in the lock client transaction', async () => {
+    const client = { query: vi.fn() }
+    vi.mocked(withSchemaDataAccessMutationLock).mockImplementationOnce(
+      async (_schemaName, callback) => callback('proj_123', client as never)
+    )
+    vi.mocked(tableService.dropTable).mockImplementationOnce(
+      async (_schemaName, _tableName, options) => options?.afterDrop?.(client as never)
+    )
+    const reply = createReply()
+
+    await tableController.dropTable({
+      params: { schemaName: 'dru_test', tableName: 'orders' },
+    } as never, reply as never)
+
+    expect(tableService.dropTable).toHaveBeenCalledWith(
+      'dru_test',
+      'orders',
+      expect.objectContaining({ client })
+    )
+    expect(deleteManagedPolicy).toHaveBeenCalledWith(client, 'proj_123', 'dru_test', 'orders')
+    expect(reply.statusCode).toBe(204)
   })
 
   it('checks Hasura status with the authorized project scoped roles', async () => {

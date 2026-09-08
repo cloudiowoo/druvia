@@ -96,6 +96,7 @@ describe('project data access overview aggregation', () => {
     expect(result.tables).toEqual([
       {
         tableName: 'custom_rules',
+        managedState: 'custom',
         dataInterface: 'connected',
         authenticatedAccess: 'custom',
         anonymousAccess: 'custom',
@@ -105,6 +106,7 @@ describe('project data access overview aggregation', () => {
       },
       {
         tableName: 'drafts',
+        managedState: 'managed',
         dataInterface: 'connected',
         authenticatedAccess: 'closed',
         anonymousAccess: 'closed',
@@ -114,15 +116,17 @@ describe('project data access overview aggregation', () => {
       },
       {
         tableName: 'events',
+        managedState: 'adoption_required',
         dataInterface: 'connected',
         authenticatedAccess: 'read_write',
         anonymousAccess: 'read',
         realtime: 'configured',
         legacyAccess: { authenticated: false, anonymous: false },
-        reviewRequired: false,
+        reviewRequired: true,
       },
       {
         tableName: 'legacy_only',
+        managedState: 'managed',
         dataInterface: 'connected',
         authenticatedAccess: 'closed',
         anonymousAccess: 'closed',
@@ -132,24 +136,27 @@ describe('project data access overview aggregation', () => {
       },
       {
         tableName: 'orders',
+        managedState: 'adoption_required',
         dataInterface: 'connected',
         authenticatedAccess: 'read_only',
         anonymousAccess: 'closed',
         realtime: 'disabled',
         legacyAccess: { authenticated: false, anonymous: false },
-        reviewRequired: false,
+        reviewRequired: true,
       },
       {
         tableName: 'outbox',
+        managedState: 'adoption_required',
         dataInterface: 'connected',
         authenticatedAccess: 'write_only',
         anonymousAccess: 'closed',
         realtime: 'access_required',
         legacyAccess: { authenticated: false, anonymous: false },
-        reviewRequired: false,
+        reviewRequired: true,
       },
       {
         tableName: 'untracked',
+        managedState: 'managed',
         dataInterface: 'not_connected',
         authenticatedAccess: 'closed',
         anonymousAccess: 'closed',
@@ -164,7 +171,9 @@ describe('project data access overview aggregation', () => {
       anonymousConfiguredTables: 1,
       realtimeAccessRequiredTables: 1,
       legacyTables: 1,
-      reviewRequiredTables: 3,
+      reviewRequiredTables: 6,
+      pendingConfigurationTables: 4,
+      actionRequiredTables: 4,
     })
     expect(JSON.stringify(result)).not.toContain(roles.authenticated)
     expect(JSON.stringify(result)).not.toContain(roles.anonymous)
@@ -255,7 +264,8 @@ describe('project data access overview aggregation', () => {
 
     expect(result.tables[0]).toMatchObject({
       authenticatedAccess: 'read_write',
-      reviewRequired: false,
+      managedState: 'adoption_required',
+      reviewRequired: true,
     })
   })
 
@@ -285,5 +295,79 @@ describe('project data access overview aggregation', () => {
     })
     expect(result.summary.configuredTables).toBe(1)
     expect(result.summary.anonymousConfiguredTables).toBe(1)
+  })
+
+  it('reports capability contraction as refresh-required instead of custom', () => {
+    const baselineColumns = [...columns, 'retired_summary']
+    const result = buildProjectDataAccessOverview({
+      projectId,
+      schemaName,
+      runtimeMode: 'explicit',
+      roles,
+      inventory: [{ tableName: 'sessions', ...columnInventory, realtimeEnabled: false }],
+      tableMetadata: [table('sessions', {
+        select_permissions: [{
+          role: roles.authenticated,
+          permission: { columns: baselineColumns, filter: {}, allow_aggregations: false },
+        }],
+      })],
+      managedPolicies: [{
+        projectId,
+        tableName: 'sessions',
+        schemaName,
+        policyVersion: 1,
+        policy: {
+          authenticated: {
+            select: 'all', insert: 'none', update: 'none', delete: 'none', ownerColumn: null,
+          },
+          anonymous: { select: false },
+        },
+        columnGrants: {
+          authenticated: { select: baselineColumns, insert: [], update: [] },
+          anonymous: { select: [] },
+        },
+        capabilitiesSnapshot: {
+          readableColumns: baselineColumns,
+          insertableColumns: baselineColumns,
+          updateableColumns: baselineColumns,
+        },
+        permissionsSnapshot: [{
+          role: roles.authenticated,
+          operation: 'select',
+          permission: { columns: baselineColumns, filter: {}, allow_aggregations: false },
+        }],
+        metadataDigest: 'a'.repeat(64),
+        revision: 1n,
+        createdBy: 'usr_1',
+        updatedBy: 'usr_1',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }],
+    })
+
+    expect(result.tables[0]).toMatchObject({
+      managedState: 'refresh_required',
+      authenticatedAccess: 'read_only',
+      reviewRequired: true,
+    })
+  })
+
+  it('marks a stalled metadata write as recovery-required in the overview', () => {
+    const result = buildProjectDataAccessOverview({
+      projectId,
+      schemaName,
+      runtimeMode: 'explicit',
+      roles,
+      inventory: [{ tableName: 'sessions', ...columnInventory, realtimeEnabled: false }],
+      tableMetadata: [table('sessions')],
+      activeOperation: {
+        tableName: 'sessions',
+        status: 'recovering',
+        writeDeadlineAt: new Date(Date.now() - 5_001),
+      } as never,
+    })
+
+    expect(result.tables[0]?.managedState).toBe('recovery_required')
+    expect(result.summary.actionRequiredTables).toBe(1)
   })
 })

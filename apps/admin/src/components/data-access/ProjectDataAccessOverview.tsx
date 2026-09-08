@@ -21,6 +21,7 @@ import {
   getAuthenticatedAccessLabel,
   getDataInterfaceLabel,
   getLegacyAccessLabel,
+  getManagedDataAccessLabel,
   getRealtimeAccessLabel,
   PROJECT_DATA_ACCESS_FILTERS,
   type ProjectDataAccessFilter,
@@ -77,13 +78,14 @@ export function ProjectDataAccessOverviewPanel({
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 border-y bg-muted/10 sm:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 border-y bg-muted/10 sm:grid-cols-3 xl:grid-cols-7">
         <SummaryItem label="数据表总数" value={overview.summary.totalTables} />
         <SummaryItem label="已配置" value={overview.summary.configuredTables} />
         <SummaryItem label="匿名已配置" value={overview.summary.anonymousConfiguredTables} />
         <SummaryItem label="Realtime 待授权" value={overview.summary.realtimeAccessRequiredTables} />
         <SummaryItem label="旧规则" value={overview.summary.legacyTables} />
-        <SummaryItem label="需检查" value={overview.summary.reviewRequiredTables} />
+        <SummaryItem label="待配置" value={overview.summary.pendingConfigurationTables} />
+        <SummaryItem label="需处理" value={overview.summary.actionRequiredTables} />
       </div>
 
       {overview.tables.length === 0 ? (
@@ -123,6 +125,7 @@ export function ProjectDataAccessOverviewPanel({
                   <TableRow className="bg-muted/30 hover:bg-muted/30">
                     <TableHead>数据表</TableHead>
                     <TableHead>数据接口</TableHead>
+                    <TableHead>管理状态</TableHead>
                     <TableHead>认证用户</TableHead>
                     <TableHead>匿名读取</TableHead>
                     <TableHead>实时更新</TableHead>
@@ -178,6 +181,11 @@ function OverviewRow({
       <TableCell>
         <StatusBadge attention={table.dataInterface === 'not_connected'}>
           {getDataInterfaceLabel(table.dataInterface)}
+        </StatusBadge>
+      </TableCell>
+      <TableCell>
+        <StatusBadge attention={table.managedState !== 'managed'}>
+          {getManagedDataAccessLabel(table.managedState)}
         </StatusBadge>
       </TableCell>
       <TableCell>

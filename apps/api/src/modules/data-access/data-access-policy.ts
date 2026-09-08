@@ -5,6 +5,7 @@ import type {
   DataAccessRoleNames,
   MaterializedDataPermission,
   TableDataAccessInput,
+  DataAccessColumnGrants,
 } from './data-access.types.js'
 
 const ACCESS_MODES = new Set<AuthenticatedAccessMode>(['none', 'all', 'owner'])
@@ -16,6 +17,7 @@ export class DataAccessValidationError extends Error {}
 export interface MaterializeTableDataAccessOptions {
   roles: DataAccessRoleNames
   capabilities: DataAccessColumnCapabilities
+  columnGrants?: DataAccessColumnGrants
 }
 
 export function createClosedTableDataAccessPolicy(): TableDataAccessInput {
@@ -85,7 +87,8 @@ export function materializeTableDataAccessPolicy(
         operation,
         mode,
         options.capabilities,
-        ownerColumn
+        ownerColumn,
+        options.columnGrants?.authenticated[operation === 'delete' ? 'select' : operation]
       ),
     })
   }
@@ -96,6 +99,13 @@ export function materializeTableDataAccessPolicy(
       operation: 'select',
       permission: {
         columns: options.capabilities.readableColumns,
+        ...(options.columnGrants
+          ? { columns: validateGrantColumns(
+              options.columnGrants.anonymous.select,
+              options.capabilities.readableColumns,
+              'anonymous select'
+            ) }
+          : {}),
         filter: {},
         allow_aggregations: false,
       },
@@ -109,7 +119,8 @@ function createAuthenticatedPermission(
   operation: DataAccessOperation,
   mode: Exclude<AuthenticatedAccessMode, 'none'>,
   capabilities: DataAccessColumnCapabilities,
-  ownerColumn: string | null
+  ownerColumn: string | null,
+  grantedColumns?: string[]
 ): Record<string, unknown> {
   const rowRule = mode === 'all'
     ? {}
@@ -117,17 +128,25 @@ function createAuthenticatedPermission(
   const writableColumns = (columns: string[]) => mode === 'owner'
     ? columns.filter((column) => column !== ownerColumn)
     : columns
+  const operationColumns = (allowed: string[]) => {
+    const selected = grantedColumns === undefined
+      ? allowed
+      : validateGrantColumns(grantedColumns, allowed, operation)
+    return operation === 'insert' || operation === 'update'
+      ? writableColumns(selected)
+      : selected
+  }
 
   switch (operation) {
     case 'select':
       return {
-        columns: capabilities.readableColumns,
+        columns: operationColumns(capabilities.readableColumns),
         filter: rowRule,
         allow_aggregations: false,
       }
     case 'insert':
       return {
-        columns: writableColumns(capabilities.insertableColumns),
+        columns: operationColumns(capabilities.insertableColumns),
         check: rowRule,
         ...(mode === 'owner'
           ? { set: { [ownerColumn!]: USER_ID_SESSION_VARIABLE } }
@@ -135,11 +154,22 @@ function createAuthenticatedPermission(
       }
     case 'update':
       return {
-        columns: writableColumns(capabilities.updateableColumns),
+        columns: operationColumns(capabilities.updateableColumns),
         filter: rowRule,
         check: rowRule,
       }
     case 'delete':
       return { filter: rowRule }
   }
+}
+
+function validateGrantColumns(
+  columns: string[],
+  allowed: string[],
+  operation: string
+): string[] {
+  if (new Set(columns).size !== columns.length || columns.some((column) => !allowed.includes(column))) {
+    throw new DataAccessValidationError(`Invalid column grant for ${operation}`)
+  }
+  return [...columns].sort()
 }

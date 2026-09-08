@@ -9,6 +9,7 @@ import {
 } from './data-access-policy.js'
 import {
   inspectTableDataAccessMetadata,
+  materializeInspectedTableDataAccess,
   type HasuraTableMetadata,
   type InspectedTableDataAccess,
 } from './data-access-inspection.js'
@@ -17,14 +18,29 @@ import {
   getDataAccessInventory,
 } from './data-access-inventory.js'
 import { buildProjectDataAccessOverview } from './data-access-overview.js'
-import { withProjectDataAccessMutationLock } from './data-access-mutation-lock.js'
-import { applyHasuraMetadataCommands } from './hasura-metadata-bulk.js'
 import { buildTableColumnCapabilities } from './data-access-column-capabilities.js'
+import {
+  getManagedPolicy,
+  getProjectPolicyOperation,
+  listManagedPolicies,
+  type ManagedPolicyRecord,
+  type PolicyOperationRecord,
+} from './data-access-managed-policy.repository.js'
+import {
+  buildColumnCapabilityDrift,
+  classifyManagedPolicyState,
+  createPermissionSnapshot,
+  isPolicyOperationRecoveryRequired,
+} from './data-access-managed-policy.js'
+import {
+  toOperationState,
+  updateManagedTablePolicy,
+} from './data-access-policy-operation.service.js'
 import type {
   DataAccessColumnCapabilities,
   DataAccessRoleNames,
   ProjectDataAccessOverview,
-  TableDataAccessInput,
+  TableDataAccessUpdateInput,
   TableDataAccessState,
 } from './data-access.types.js'
 
@@ -75,9 +91,11 @@ export async function getProjectDataAccessOverview(
     throw new DataAccessNotFoundError('Project or project schema not found')
   }
 
-  const [inventory, metadata] = await Promise.all([
+  const [inventory, metadata, baselines, operation] = await Promise.all([
     loadProjectDataAccessInventory(project.schemaName),
     exportDataAccessMetadata({ projectId, schemaName: project.schemaName }),
+    listManagedPolicies(projectId, project.schemaName),
+    getProjectPolicyOperation(projectId),
   ])
   const source = metadata.sources?.find((item) => item.name === 'default')
   if (!source) {
@@ -96,6 +114,8 @@ export async function getProjectDataAccessOverview(
     },
     inventory,
     tableMetadata: source.tables ?? [],
+    managedPolicies: baselines,
+    activeOperation: operation,
   })
 }
 
@@ -116,90 +136,26 @@ export async function getTableDataAccess(
 ): Promise<TableDataAccessState> {
   const context = await loadDataAccessContext(projectId, tableName)
   const inspected = inspectContext(context)
-  return toState(context, inspected)
+  const [baseline, operation] = await Promise.all([
+    getManagedPolicy(projectId, context.schemaName, tableName),
+    getProjectPolicyOperation(projectId),
+  ])
+  return toState(context, inspected, baseline, operation)
 }
 
 export async function updateTableDataAccess(
   projectId: string,
   tableName: string,
-  input: TableDataAccessInput
+  input: TableDataAccessUpdateInput,
+  actorId = 'system'
 ): Promise<TableDataAccessState> {
-  return withProjectDataAccessMutationLock(projectId, () => (
-    updateTableDataAccessUnlocked(projectId, tableName, input)
-  ))
-}
-
-export async function updateTableDataAccessUnlocked(
-  projectId: string,
-  tableName: string,
-  input: TableDataAccessInput
-): Promise<TableDataAccessState> {
-  const context = await loadDataAccessContext(projectId, tableName)
-  const inspected = inspectContext(context)
-  if (
-    inspected.authenticatedState === 'custom'
-    || inspected.anonymousState === 'custom'
-  ) {
-    throw new DataAccessConflictError(
-      'Managed data access metadata contains custom rules and cannot be overwritten'
-    )
-  }
-
-  validateTableDataAccessInput(input, context.capabilities)
-  const tracked = await tableService.trackTableInHasura(context.schemaName, context.tableName)
-  if (!tracked) {
-    throw new DataAccessUpstreamError('Unable to connect table to data interface', {
-      operation: 'track_table', projectId, schemaName: context.schemaName, tableName,
-    })
-  }
-
-  const desired = materializeTableDataAccessPolicy(input, {
-    roles: context.roles,
-    capabilities: context.capabilities,
-  })
-  const table = { schema: context.schemaName, name: context.tableName }
-  const commands: Array<{ type: string; args: Record<string, unknown> }> = []
-
-  for (const existing of inspected.existingManaged) {
-    commands.push({
-      type: `pg_drop_${existing.operation}_permission`,
-      args: { source: 'default', table, role: existing.role },
-    })
-  }
-  for (const item of desired) {
-    commands.push({
-      type: `pg_create_${item.operation}_permission`,
-      args: {
-        source: 'default',
-        table,
-        role: item.role,
-        permission: item.permission,
-      },
-    })
-  }
-
-  if (commands.length > 0) {
-    try {
-      await applyHasuraMetadataCommands(commands)
-    } catch (error) {
-      throw new DataAccessUpstreamError('Unable to update data access metadata', {
-        operation: 'update_permissions',
-        projectId,
-        schemaName: context.schemaName,
-        tableName,
-      }, error)
-    }
-  }
-
-  return {
+  return updateManagedTablePolicy(
     projectId,
-    schemaName: context.schemaName,
     tableName,
-    columns: context.capabilities.readableColumns,
-    policy: input,
-    managedState: 'managed',
-    legacyRoles: inspected.legacyRoles,
-  }
+    input,
+    actorId,
+    () => getTableDataAccess(projectId, tableName)
+  )
 }
 
 async function loadDataAccessContext(
@@ -298,18 +254,50 @@ function inspectContext(context: DataAccessContext): InspectedTableDataAccess {
 
 function toState(
   context: DataAccessContext,
-  inspected: InspectedTableDataAccess
+  inspected: InspectedTableDataAccess,
+  baseline: ManagedPolicyRecord | null,
+  operation: PolicyOperationRecord | null
 ): TableDataAccessState {
+  const relevantOperation = operation?.tableName === context.tableName ? operation : null
+  const sourceCapabilities = baseline?.capabilitiesSnapshot ?? context.capabilities
+  const sourceInspected = baseline
+    ? inspectTableDataAccessMetadata(context.tableMetadata, context.roles, sourceCapabilities)
+    : inspected
+  const permissions = sourceInspected.containsWildcard
+    ? []
+    : sourceInspected.authenticatedState === 'custom' || sourceInspected.anonymousState === 'custom'
+      ? []
+      : createPermissionSnapshot(materializeInspectedTableDataAccess(
+          sourceInspected, context.roles, sourceCapabilities
+        ))
+  const managedState = classifyManagedPolicyState({
+    inspectedState: sourceInspected.authenticatedState === 'custom'
+      || sourceInspected.anonymousState === 'custom' ? 'custom' : 'managed',
+    hasScopedPermissions: sourceInspected.permissions.length > 0,
+    containsWildcard: sourceInspected.containsWildcard,
+    currentPermissions: permissions,
+    currentCapabilities: context.capabilities,
+    baseline,
+    recoveryRequired: isPolicyOperationRecoveryRequired(relevantOperation),
+  })
   return {
     projectId: context.projectId,
     schemaName: context.schemaName,
     tableName: context.tableName,
     columns: context.capabilities.readableColumns,
-    policy: inspected.policy,
-    managedState: inspected.authenticatedState === 'custom'
-      || inspected.anonymousState === 'custom'
-      ? 'custom'
-      : 'managed',
+    policy: baseline?.policy ?? inspected.policy,
+    managedState,
     legacyRoles: inspected.legacyRoles,
+    baselineRevision: baseline ? Number(baseline.revision) : null,
+    capabilities: {
+      readable: context.capabilities.readableColumns,
+      insertable: context.capabilities.insertableColumns,
+      updateable: context.capabilities.updateableColumns,
+    },
+    effective: inspected.columnGrants,
+    drift: baseline && managedState === 'refresh_required'
+      ? buildColumnCapabilityDrift(baseline.capabilitiesSnapshot, context.capabilities)
+      : null,
+    activeOperation: relevantOperation ? toOperationState(relevantOperation) : null,
   }
 }

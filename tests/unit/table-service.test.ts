@@ -11,13 +11,18 @@ vi.mock('../../apps/api/src/db/index.js', () => ({
 
 vi.mock('../../apps/api/src/modules/realtime/realtime.service.js', () => ({
   hasuraMetadataRequest: vi.fn(),
+  hasuraMetadataRequestWithOptions: vi.fn(),
 }))
 
 import { pool, query, queryOne } from '../../apps/api/src/db/index.js'
-import { hasuraMetadataRequest } from '../../apps/api/src/modules/realtime/realtime.service.js'
+import {
+  hasuraMetadataRequest,
+  hasuraMetadataRequestWithOptions,
+} from '../../apps/api/src/modules/realtime/realtime.service.js'
 import {
   addColumn,
   dropColumn,
+  dropTable,
   getTableMetadata,
   getHasuraStatus,
   renameColumn,
@@ -26,10 +31,49 @@ import {
 } from '../../apps/api/src/modules/table/table.service.js'
 
 describe('Table Service Hasura Reload', () => {
+  function tableMetadata(tracked = true) {
+    return {
+      resource_version: 10,
+      metadata: {
+        sources: [{
+          name: 'default',
+          tables: tracked ? [{ table: { schema: 'dru_test', name: 'orders' } }] : [],
+        }],
+      },
+    }
+  }
+
+  function deletionClient() {
+    const now = new Date('2026-09-07T00:00:00Z')
+    return {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        if (sql.includes('INSERT INTO druvia_table_deletion_outbox')) {
+          return {
+            rows: [{
+              operation_id: 'td_existing',
+              lock_scope: 'proj_123',
+              schema_name: 'dru_test',
+              table_name: 'orders',
+              status: 'pending',
+              attempts: 0,
+              last_error: null,
+              created_at: now,
+              updated_at: now,
+            }],
+          }
+        }
+        return { rows: [], values }
+      }),
+    }
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(pool.query).mockResolvedValue({ rows: [] } as never)
     vi.mocked(hasuraMetadataRequest).mockResolvedValue({ message: 'success' } as never)
+    vi.mocked(hasuraMetadataRequestWithOptions).mockImplementation(async (type) => (
+      type === 'export_metadata' ? tableMetadata() : { message: 'success' }
+    ) as never)
   })
 
   it('reloads hasura metadata after adding a column', async () => {
@@ -62,6 +106,148 @@ describe('Table Service Hasura Reload', () => {
         reload_sources: true,
       })
     )
+  })
+
+  it('commits table deletion and its provenance cleanup on the same client', async () => {
+    const client = deletionClient()
+    const afterDrop = vi.fn(async (transactionClient: typeof client) => {
+      await transactionClient.query(
+        'DELETE FROM druvia_data_access_managed_policies WHERE project_id = $1',
+        ['proj_123']
+      )
+    })
+
+    await dropTable('dru_test', 'orders', {
+      client: client as never,
+      afterDrop,
+      deletion: { operationId: 'td_new', lockScope: 'proj_123' },
+    })
+
+    expect(afterDrop).toHaveBeenCalledOnce()
+    const statements = client.query.mock.calls.map(([sql]) => sql)
+    expect(statements.slice(0, 4)).toEqual([
+      'BEGIN',
+      'DROP TABLE IF EXISTS "dru_test"."orders" CASCADE',
+      'DELETE FROM "dru_test"._meta_tables WHERE table_name = $1',
+      'DELETE FROM druvia_data_access_managed_policies WHERE project_id = $1',
+    ])
+    expect(statements[4]).toContain('INSERT INTO druvia_table_deletion_outbox')
+    expect(statements[5]).toBe('COMMIT')
+    expect(statements[6]).toContain('to_regclass')
+    expect(statements[7]).toContain('DELETE FROM druvia_table_deletion_outbox')
+    expect(pool.connect).not.toHaveBeenCalled()
+    expect(client.query.mock.invocationCallOrder[5]).toBeLessThan(
+      vi.mocked(hasuraMetadataRequestWithOptions).mock.invocationCallOrder.at(-1)!
+    )
+  })
+
+  it('does not untrack Hasura when the table transaction rolls back', async () => {
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockRejectedValueOnce(new Error('drop failed'))
+        .mockResolvedValueOnce({ rows: [] }),
+    }
+
+    await expect(dropTable('dru_test', 'orders', { client: client as never }))
+      .rejects.toThrow('drop failed')
+
+    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      'DROP TABLE IF EXISTS "dru_test"."orders" CASCADE',
+      'ROLLBACK',
+    ])
+    expect(hasuraMetadataRequest).not.toHaveBeenCalled()
+    expect(hasuraMetadataRequestWithOptions).not.toHaveBeenCalled()
+  })
+
+  it('reports an untrack failure and converges when table deletion is retried', async () => {
+    const client = deletionClient()
+    let untrackAttempts = 0
+    vi.mocked(hasuraMetadataRequestWithOptions).mockImplementation(async (type) => {
+      if (type === 'export_metadata') return tableMetadata() as never
+      if (type === 'pg_untrack_table' && untrackAttempts++ === 0) {
+        throw new Error('metadata unavailable')
+      }
+      return { message: 'success' } as never
+    })
+
+    await expect(dropTable('dru_test', 'orders', { client: client as never }))
+      .rejects.toThrow('metadata unavailable')
+    expect(client.query.mock.calls.some(([sql]) =>
+      String(sql).includes("last_error = 'TABLE_UNTRACK_FAILED'")
+    )).toBe(true)
+    expect(client.query.mock.calls.some(([sql]) =>
+      String(sql).startsWith('DELETE FROM druvia_table_deletion_outbox')
+    )).toBe(false)
+    await expect(dropTable('dru_test', 'orders', { client: client as never }))
+      .resolves.toBeUndefined()
+
+    expect(vi.mocked(hasuraMetadataRequestWithOptions).mock.calls.filter(
+      ([type]) => type === 'pg_untrack_table'
+    )).toHaveLength(2)
+    expect(client.query.mock.calls.some(([sql]) =>
+      String(sql).startsWith('DELETE FROM druvia_table_deletion_outbox')
+    )).toBe(true)
+  })
+
+  it('clears the outbox when untrack succeeded but its response was lost', async () => {
+    const client = deletionClient()
+    let exports = 0
+    vi.mocked(hasuraMetadataRequestWithOptions).mockImplementation(async (type) => {
+      if (type === 'export_metadata') return tableMetadata(exports++ === 0) as never
+      throw new Error('Hasura response was lost after apply')
+    })
+
+    await expect(dropTable('dru_test', 'orders', { client: client as never }))
+      .resolves.toBeUndefined()
+    expect(client.query.mock.calls.some(([sql]) =>
+      String(sql).startsWith('DELETE FROM druvia_table_deletion_outbox')
+    )).toBe(true)
+  })
+
+  it('keeps the deletion pending when the Hasura source is unavailable', async () => {
+    const client = deletionClient()
+    vi.mocked(hasuraMetadataRequestWithOptions).mockResolvedValueOnce({
+      resource_version: 10,
+      metadata: { sources: [] },
+    } as never)
+
+    await expect(dropTable('dru_test', 'orders', { client: client as never }))
+      .rejects.toThrow('Default Hasura source is unavailable')
+    expect(client.query.mock.calls.some(([sql]) =>
+      String(sql).startsWith('DELETE FROM druvia_table_deletion_outbox')
+    )).toBe(false)
+    expect(vi.mocked(hasuraMetadataRequestWithOptions).mock.calls.some(
+      ([type]) => type === 'pg_untrack_table'
+    )).toBe(false)
+  })
+
+  it('keeps the deletion pending when the same PostgreSQL table was recreated', async () => {
+    const client = deletionClient()
+    client.query.mockImplementation(async (sql: string, values?: unknown[]) => {
+      if (sql.includes('INSERT INTO druvia_table_deletion_outbox')) {
+        return {
+          rows: [{
+            operation_id: 'td_existing', lock_scope: 'proj_123',
+            schema_name: 'dru_test', table_name: 'orders', status: 'pending',
+            attempts: 0, last_error: null,
+            created_at: new Date('2026-09-07T00:00:00Z'),
+            updated_at: new Date('2026-09-07T00:00:00Z'),
+          }],
+        }
+      }
+      if (sql.includes('to_regclass')) return { rows: [{ exists: true }] }
+      return { rows: [], values }
+    })
+
+    await expect(dropTable('dru_test', 'orders', { client: client as never }))
+      .rejects.toThrow('same name exists')
+
+    expect(vi.mocked(hasuraMetadataRequestWithOptions)).not.toHaveBeenCalled()
+    expect(client.query.mock.calls.some(([sql]) =>
+      String(sql).startsWith('DELETE FROM druvia_table_deletion_outbox')
+    )).toBe(false)
   })
 
   it('reloads hasura metadata after renaming a column', async () => {

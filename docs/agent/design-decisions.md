@@ -179,6 +179,19 @@
   - apply 失败恢复 source snapshot/compatibility，rollback 失败恢复 applied snapshot/explicit；无法验证时持久化 recovery target，禁止继续受影响的管理写入和删除
   - Admin 只展示业务化摘要、确认、进度和恢复入口，不暴露物理 role、原始 metadata 或 Hasura secret
   - `019` 为增量恢复依据，镜像/OTA 回滚不得自动 down；人工回滚旧权限可能重新引入匿名写入和兼容模式隔离风险
+- 表级 Data Access managed-policy reconcile 采用独立 migration `023`：
+  - 每张表持久化逻辑 policy、精确 column grants、列能力和当前项目 scoped permission baseline；baseline 以 `project + schema + table` 三元组唯一，repository 和 operation 使用同一身份。无 baseline 的受支持规则必须由管理员 adoption，wildcard、custom、legacy 和 external role 不自动接管
+  - metadata 仍等于 baseline、但数据库列能力变化时进入 `refresh_required`；新增列默认不读不写，删除列及 generated/identity 能力收缩从目标 grants 中移除
+  - reconcile target policy 只能保持原记录范围或收紧为 `none`，不得借结构刷新把 `owner/none` 放宽为 `all`、开启匿名读取或更换 owner column。owner 列删除时默认关闭受影响的 owner 操作；owner insert 列变为 generated/identity always 时默认关闭 insert。需更换 owner 时先完成 reconcile 收紧，再以普通 managed policy update 显式设置。持久 column grants 必须移除关闭操作和 owner preset 列
+  - 普通保存、adoption 和 reconcile 共用持久 operation、baseline revision、source/target digest、writer epoch/deadline 和 Hasura `resource_version` fencing；baseline 与 operation 按创建时 schema 精确绑定，operation 的 schema 身份不可变，项目 schema 漂移后 apply/recover 失败关闭。只有携带结构化 Hasura error code 的确定性 4xx 拒绝不执行 source restore；5xx、transport/timeout 或非原子 bulk fallback 失败均视为未知结果，不立即恢复，等待 deadline/drain 后进入受控恢复
+  - 第二次 source/resource-version 校验必须在 operation 仍为 `preview_ready` 时完成，随后一次条件更新原子写入 `applying + writer epoch + deadline` 后才能发送 metadata。历史异常 `applying/recovering` 若没有 deadline，则以最近 started/updated 时间超过 35 秒作为 orphan recovery gate
+  - 常规权限替换只 drop/create 目标表当前项目两个 scoped role。列能力收缩已经使 Hasura metadata inconsistent 时，允许基于同一次完整 export 快照执行 CAS 保护的 `replace_metadata`，但只能改该表 scoped permission 数组并保留所有其他 metadata；禁止 `drop_inconsistent_metadata`
+  - 列收缩因 source 已 inconsistent 而使用受控 `replace_metadata` 时必须允许原快照中的无关 inconsistent object 继续存在，并验证它们没有被全局清理；空 source recovery 使用同值 `pg_set_table_customization` 推进 resource version
+  - 恢复验证按 operation 持久化的历史列能力重解析 source。recover API 自身必须强制 deadline + drain；无 deadline orphan 必须强制 started/updated + 35 秒，缺少可靠时间戳时失败关闭，不能只依赖 Admin 隐藏按钮。超过安全时间的 `applying/recovering` 才派生为可恢复；无法验证 source 时保持 recovery gate，并以非成功 API 响应通知 Admin 重新加载
+  - 恢复发送 metadata 前，当前 scoped permission 必须精确等于 operation source、target，或等于持久 source 到 target 的 drop-then-create 命令序列前缀；第三方 filter、preset、columns 或其他不可解释状态不得被 source restore 覆盖，必须保持 `recovery_required`
+  - 表删除通过 migration `024` 的持久 outbox 协调 PostgreSQL 与 Hasura：业务表、`_meta_tables`、精确 `project + schema + table` baseline 和 pending outbox 在同一事务提交，随后 untrack Hasura 并清除 outbox。失败项只阻断同 scope 管理写入，由 API 启动恢复和运行期定时重试；恢复先确认 PostgreSQL 中精确同名 relation 仍不存在，再使用带 30 秒超时的 v2 metadata export 精确确认默认 source、schema 和 table。migration `024` 的 PostgreSQL event trigger 在 pending 期间保留同名 relation，关闭 relation check 与 untrack 之间的重建竞态；所有连接上的创建/重命名冲突以 SQLSTATE `55006` 失败。不能依赖错误文本、进程重启、吞掉错误、人工删除记录或禁用该 trigger
+  - Admin 遇到 PUT 响应丢失或未知结果时，必须保留同一 operation ID 和完整不可变请求体；不得用刷新后的 baseline revision 重组旧操作。服务端仅在当前 baseline 仍等于该 operation 的已完成 target 时重放成功结果，否则返回 stale，要求用户重新读取并发起新操作
+  - stable 镜像发布前必须在隔离 PostgreSQL 17 与 Hasura v2.48 上应用全部 migration，并执行 generated/identity、adoption/reconcile、列收缩、表删除 outbox 恢复和无关 inconsistent metadata 保留的真实集成测试；仅单元测试不得解除发布门禁
 - Functions internal GraphQL 已完成 Project Actor cutover：Project User/API Key 使用与公开数据路径一致的服务端 role/session-variable 映射，Platform actor 被拒绝。平台 SQL/管理接口的跨 schema 能力仍需独立安全审计。
 - Admin 默认使用“数据接口、数据访问、实时更新”等应用概念；Hasura role、metadata 和 secret 只属于高级诊断或服务端实现。
 - 直接 Storage Project User 授权采用 bucket 三预设与独立公开开关：`admin_only` 禁止 Project User，`owner_only` 仅对象 owner 可见可写，`authenticated_read` 登录用户可读全部但只能写自己的对象；API Key 不获得受保护对象能力。
@@ -262,7 +275,8 @@
   - 先完成其真实 Auth、GraphQL、Realtime、Storage、RPC、Functions 和部署链路
   - 只把真实阻塞、安全或正确性问题提升为当前 Core 工作
 - taro-app 生产只跟随完成兼容回归的 `stable` release，并由运维人工 apply；不启用自动 apply。
-- 当前 release workflow 虽接受 `stable / beta / nightly`，但 GitHub `releases/latest/download` 尚未按 prerelease channel 完整隔离。生产使用该 latest URL 时，beta/nightly 不得覆盖同一入口；隔离完成前只将 stable 发布到生产跟随的 Release 路径。
+- release workflow 由 SemVer 后缀推导并校验 `stable / beta / nightly`，beta/nightly 必须发布为 GitHub prerelease；生产 `releases/latest/download` 只跟随 stable。不得绕过 workflow 手工把非 stable Release 标记为 latest。
+- release workflow 在登录 Registry 和 push 任何镜像前，使用与 manifest generator 相同的严格 SemVer/channel 解析器完成预检；预发布首段只接受 `beta` 或 `nightly`，后续标识只接受数字，并拒绝 `alpha`、`rc`、`preview` 及混合通道后缀。无效版本或 channel 矛盾必须在创建镜像 tag 前失败。
 - 生产镜像使用 release manifest 中的 digest，版本 tag 不得覆盖复用。后续 Phase 功能可以持续开发，但只有进入新的 stable manifest 后才成为生产可选升级。
 - 紧急 patch 只包含安全、数据一致性、生产故障或 taro-app 兼容修复，不夹带无关 Phase 功能或非必要 migration。
 - 服务端至少维持“当前生产客户端 + 下一待发布客户端”的兼容窗口，兼顾小程序审核与客户端发布滞后：

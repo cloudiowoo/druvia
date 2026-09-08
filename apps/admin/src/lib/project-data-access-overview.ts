@@ -16,6 +16,7 @@ export type ProjectDataAccessFilter =
 
 export interface ProjectTableDataAccessOverview {
   tableName: string
+  managedState: 'managed' | 'refresh_required' | 'adoption_required' | 'custom' | 'recovery_required'
   dataInterface: DataInterfaceStatus
   authenticatedAccess: AuthenticatedAccessStatus
   anonymousAccess: AnonymousAccessStatus
@@ -38,6 +39,8 @@ export interface ProjectDataAccessOverview {
     realtimeAccessRequiredTables: number
     legacyTables: number
     reviewRequiredTables: number
+    pendingConfigurationTables: number
+    actionRequiredTables: number
   }
   tables: ProjectTableDataAccessOverview[]
 }
@@ -55,6 +58,18 @@ export const PROJECT_DATA_ACCESS_FILTERS: Array<{
 
 export function getDataInterfaceLabel(status: DataInterfaceStatus): string {
   return status === 'connected' ? '已连接' : '未连接'
+}
+
+export function getManagedDataAccessLabel(
+  state: ProjectTableDataAccessOverview['managedState']
+): string {
+  return {
+    managed: '已配置',
+    refresh_required: '结构已变化',
+    adoption_required: '需要接管',
+    custom: '自定义策略',
+    recovery_required: '需要恢复',
+  }[state]
 }
 
 export function getAuthenticatedAccessLabel(status: AuthenticatedAccessStatus): string {

@@ -13,6 +13,8 @@ import {
   generateSubscriptionExample,
   getRealtimeConfig,
   getTableSubscriptions,
+  HasuraMetadataRequestError,
+  hasuraMetadataRequestWithOptions,
 } from '../../apps/api/src/modules/realtime/realtime.service.js'
 
 const compatibilityScope = {
@@ -209,6 +211,21 @@ describe('Realtime permission isolation', () => {
     expect(vi.mocked(query).mock.calls.some(([sql]) =>
       String(sql).includes('INSERT INTO "dru_test"._meta_tables')
     )).toBe(false)
+  })
+
+  it('preserves Hasura HTTP status and structured error code', async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      text: vi.fn().mockResolvedValue('{"code":"unavailable","error":"gateway timeout"}'),
+    } as never)
+
+    const error = await hasuraMetadataRequestWithOptions('export_metadata', {}, { version: 2 })
+      .catch((cause) => cause)
+
+    expect(error).toBeInstanceOf(HasuraMetadataRequestError)
+    expect(error).toMatchObject({ status: 503, code: 'unavailable' })
+    expect(error.isDefinitiveRejection).toBe(false)
   })
 
   it('generates a client-safe SDK example without Hasura admin credentials', () => {
