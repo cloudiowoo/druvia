@@ -285,6 +285,16 @@ jobs:
           tests/unit/secret-encryption.test.ts
           tests/unit/project-auth.controller.test.ts
           tests/unit/project-auth.service.test.ts
+          tests/unit/project-account-deletion-schema.test.ts
+          tests/unit/project-account-deletion-service.test.ts
+          tests/unit/project-account-deletion.controller.test.ts
+          tests/unit/project-account-deletion-hook.test.ts
+          tests/unit/project-account-deletion-executor.test.ts
+          tests/unit/project-account-deletion-restore.test.ts
+          tests/unit/project-session-state.test.ts
+          tests/unit/backup-service.test.ts
+          tests/unit/release-compose-files.test.ts
+          tests/unit/release-pipeline.test.ts
           tests/unit/project-service.test.ts
           tests/unit/admin/apple-auth-provider.test.tsx
           tests/sdk/project-auth.test.ts
@@ -418,7 +428,7 @@ jobs:
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
           DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: '24'
+          DRUVIA_MIGRATION_TO: '25'
           DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
           DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs
@@ -440,7 +450,7 @@ jobs:
           DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
           DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: '24'
+          DRUVIA_MIGRATION_TO: '25'
           DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
           DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs

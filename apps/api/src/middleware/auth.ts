@@ -5,6 +5,11 @@ import { config } from '../config/index.js';
 import { checkSchemaAccess } from '../lib/access.js';
 import { mergeApiLogContext } from '../lib/log-context.js';
 import { validateApiKey } from '../modules/api-keys/api-keys.service.js';
+import {
+  ProjectRuntimeBlockedError,
+  assertProjectRuntimeAvailable,
+  assertProjectSessionUsable,
+} from '../modules/project-auth/project-session-state.js';
 
 export interface PlatformJwtUser {
   kind: 'platform_user';
@@ -113,6 +118,21 @@ function verifyToken(token: string): RequestUser {
   };
 }
 
+function sendProjectRuntimeError(reply: FastifyReply, error: ProjectRuntimeBlockedError) {
+  return reply.status(error.statusCode).send({
+    success: false,
+    error: { code: error.code, message: 'Project access is temporarily unavailable' },
+  });
+}
+
+function assertRequestUserUsable(user: RequestUser): Promise<void> | undefined {
+  if (isProjectUser(user)) {
+    return assertProjectSessionUsable({ projectId: user.projectId, projectUserId: user.sub });
+  } else if (isApiKeyUser(user)) {
+    return assertProjectRuntimeAvailable(user.projectId);
+  }
+}
+
 // 生成 JWT Token
 export function signToken(payload: Omit<JwtPayload, 'iat' | 'exp' | 'kind'>, expiresIn: string | number = '7d'): string {
   if (!config.jwt.secret) {
@@ -171,8 +191,11 @@ export async function authenticate(
     try {
       request.user = verifyToken(token);
       mergeUserLogContext(request.user);
+      const stateCheck = assertRequestUserUsable(request.user);
+      if (stateCheck) await stateCheck;
       return;
-    } catch {
+    } catch (error) {
+      if (error instanceof ProjectRuntimeBlockedError) return sendProjectRuntimeError(reply, error);
       return reply.status(401).send({
         success: false,
         error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' },
@@ -193,6 +216,13 @@ export async function authenticate(
         apiKeyPrefix: result.apiKeyPrefix,
       };
       mergeUserLogContext(request.user);
+      try {
+        const stateCheck = assertRequestUserUsable(request.user);
+        if (stateCheck) await stateCheck;
+      } catch (error) {
+        if (error instanceof ProjectRuntimeBlockedError) return sendProjectRuntimeError(reply, error);
+        throw error;
+      }
       return;
     }
     return reply.status(401).send({
@@ -211,7 +241,7 @@ export async function authenticate(
 // 可选认证中间件 - 有 token 则解析，无 token 则跳过
 export async function optionalAuth(
   request: FastifyRequest,
-  _reply: FastifyReply
+  reply: FastifyReply
 ): Promise<void> {
   const authHeader = request.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
@@ -219,7 +249,14 @@ export async function optionalAuth(
     try {
       request.user = verifyToken(token);
       mergeUserLogContext(request.user);
-    } catch { /* 忽略 */ }
+      const stateCheck = assertRequestUserUsable(request.user);
+      if (stateCheck) await stateCheck;
+    } catch (error) {
+      if (error instanceof ProjectRuntimeBlockedError) {
+        sendProjectRuntimeError(reply, error);
+      }
+      // Invalid optional credentials remain anonymous.
+    }
     return;
   }
 
@@ -235,7 +272,32 @@ export async function optionalAuth(
         apiKeyPrefix: result.apiKeyPrefix,
       };
       mergeUserLogContext(request.user);
+      try {
+        const stateCheck = assertRequestUserUsable(request.user);
+        if (stateCheck) await stateCheck;
+      } catch (error) {
+        if (error instanceof ProjectRuntimeBlockedError) {
+          sendProjectRuntimeError(reply, error);
+          return;
+        }
+        throw error;
+      }
     }
+  }
+}
+
+// Account deletion confirm must authenticate the original session without granting data access.
+export async function authenticateAccountDeletion(
+  request: FastifyRequest,
+  _reply: FastifyReply,
+): Promise<void> {
+  const authHeader = request.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return;
+  try {
+    request.user = verifyToken(authHeader.slice(7));
+    mergeUserLogContext(request.user);
+  } catch {
+    // The service requires a valid matching Project Session for the first confirm.
   }
 }
 

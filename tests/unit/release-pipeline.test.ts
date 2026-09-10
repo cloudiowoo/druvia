@@ -35,7 +35,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '17',
-      DRUVIA_MIGRATION_TO: '24',
+      DRUVIA_MIGRATION_TO: '25',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
       DRUVIA_MIGRATION_REVERSIBLE: 'false',
     }, {
@@ -58,7 +58,7 @@ describe('release manifest generator', () => {
       migrations: {
         required: true,
         from: 17,
-        to: 24,
+        to: 25,
         requiresBackup: true,
         reversible: false,
       },
@@ -294,7 +294,7 @@ describe('release workflow', () => {
     expect(workflow).toContain('prerelease: ${{ env.RELEASE_PRERELEASE }}');
   });
 
-  it('marks migration 024 as the safe default for tag and manual releases', () => {
+  it('marks migration 025 as the safe default for tag and manual releases', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
     expect(workflow).not.toContain("\n      migration_required:");
@@ -304,9 +304,30 @@ describe('release workflow', () => {
     expect(workflow).not.toContain("\n      migration_reversible:");
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_FROM: \$\{\{ inputs\.migration_from \|\| '18' \}\}/g)).toHaveLength(2);
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '24'/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: '25'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REVERSIBLE: 'false'/g)).toHaveLength(2);
+  });
+
+  it('gates release images on account deletion and restore fence regressions', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+    const gate = workflow.indexOf('name: Verify Apple Project Auth provider');
+    const firstImageBuild = workflow.indexOf('uses: docker/build-push-action');
+
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(firstImageBuild);
+    for (const requiredTest of [
+      'tests/unit/project-account-deletion-schema.test.ts',
+      'tests/unit/project-account-deletion-service.test.ts',
+      'tests/unit/project-account-deletion.controller.test.ts',
+      'tests/unit/project-account-deletion-hook.test.ts',
+      'tests/unit/project-account-deletion-executor.test.ts',
+      'tests/unit/project-account-deletion-restore.test.ts',
+      'tests/unit/project-session-state.test.ts',
+      'tests/unit/backup-service.test.ts',
+    ]) {
+      expect(workflow).toContain(requiredTest);
+    }
   });
 
   it('gates release images on project membership authorization', () => {

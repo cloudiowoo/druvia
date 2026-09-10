@@ -128,6 +128,12 @@ interface AppleLifecycleEvent {
   projectUserId: string | null;
 }
 
+interface AccountDeletionConfig {
+  enabled: boolean;
+  cleanupReady: boolean;
+  updatedAt: string | null;
+}
+
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '-';
   return new Date(dateStr).toLocaleString('zh-CN');
@@ -161,6 +167,9 @@ export default function AuthPage() {
   const [retryingIdentityId, setRetryingIdentityId] = useState<number | null>(null);
   const [acknowledgeTarget, setAcknowledgeTarget] = useState<AppleLifecycleEvent | null>(null);
   const [acknowledgingEvent, setAcknowledgingEvent] = useState(false);
+  const [accountDeletionConfig, setAccountDeletionConfig] = useState<AccountDeletionConfig | null>(null);
+  const [accountDeletionLoading, setAccountDeletionLoading] = useState(true);
+  const [accountDeletionSaving, setAccountDeletionSaving] = useState(false);
 
   // Users state
   const [users, setUsers] = useState<ProjectUser[]>([]);
@@ -225,11 +234,31 @@ export default function AuthPage() {
     setAppleStateLoading(false);
   }, [projectId]);
 
+  const fetchAccountDeletionConfig = useCallback(async () => {
+    setAccountDeletionLoading(true);
+    const result = await api.getProjectAccountDeletionConfig(projectId);
+    if (result.success && result.data) setAccountDeletionConfig(result.data);
+    setAccountDeletionLoading(false);
+  }, [projectId]);
+
   useEffect(() => {
     fetchProviders();
     fetchConfig();
     fetchAppleState();
-  }, [fetchProviders, fetchConfig, fetchAppleState]);
+    fetchAccountDeletionConfig();
+  }, [fetchProviders, fetchConfig, fetchAppleState, fetchAccountDeletionConfig]);
+
+  const handleAccountDeletionToggle = async (enabled: boolean) => {
+    setAccountDeletionSaving(true);
+    const result = await api.updateProjectAccountDeletionConfig(projectId, enabled);
+    if (result.success && result.data) {
+      setAccountDeletionConfig(result.data);
+      toast({ title: enabled ? '账户删除已启用' : '账户删除已停用' });
+    } else {
+      toast({ title: '保存失败', description: result.error?.message, variant: 'destructive' });
+    }
+    setAccountDeletionSaving(false);
+  };
 
   useEffect(() => {
     fetchUsers();
@@ -701,6 +730,31 @@ export default function AuthPage() {
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="border rounded-lg mt-4">
+            <div className="p-4 border-b bg-muted/50 flex items-center justify-between gap-4">
+              <div>
+                <h3 className="font-medium">账户删除</h3>
+                <p className="text-sm text-muted-foreground">
+                  业务清理：{accountDeletionConfig?.cleanupReady ? '已就绪' : '未就绪'}
+                </p>
+              </div>
+              {accountDeletionLoading ? (
+                <Skeleton className="h-6 w-10" />
+              ) : (
+                <Switch
+                  aria-label="启用账户删除"
+                  checked={accountDeletionConfig?.enabled ?? false}
+                  onCheckedChange={handleAccountDeletionToggle}
+                  disabled={accountDeletionSaving || (!accountDeletionConfig?.cleanupReady && !accountDeletionConfig?.enabled)}
+                />
+              )}
+            </div>
+            <div className="px-4 py-3 text-sm flex items-center gap-2">
+              <CheckCircle2 className={`h-4 w-4 ${accountDeletionConfig?.enabled ? 'text-green-600' : 'text-muted-foreground'}`} />
+              {accountDeletionConfig?.enabled ? '项目用户可在应用内删除自己的账户' : '项目用户自助删除未启用'}
+            </div>
           </div>
 
           <div className="border rounded-lg mt-4">

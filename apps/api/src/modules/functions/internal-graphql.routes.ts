@@ -7,6 +7,11 @@ import {
 } from '../data-access/project-data-actor.js';
 import type { ApiKeyIdentity, ProjectJwtUser } from '../../middleware/auth.js';
 import type { ProjectActorContext } from '../../lib/project-actor.js';
+import {
+  ProjectRuntimeBlockedError,
+  assertProjectRuntimeAvailable,
+  assertProjectSessionUsable,
+} from '../project-auth/project-session-state.js';
 
 const INTERNAL_TOKEN_HEADER = 'x-druvia-internal-token';
 
@@ -86,6 +91,23 @@ export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
           code: 'PROJECT_ACTOR_REQUIRED',
           message: 'Function GraphQL requires a project application actor',
         },
+      });
+    }
+
+    try {
+      if (projectActor.kind === 'project_user') {
+        await assertProjectSessionUsable({
+          projectId: projectActor.projectId,
+          projectUserId: projectActor.sub,
+        });
+      } else {
+        await assertProjectRuntimeAvailable(projectActor.projectId);
+      }
+    } catch (error) {
+      if (!(error instanceof ProjectRuntimeBlockedError)) throw error;
+      return reply.status(error.statusCode).send({
+        success: false,
+        error: { code: error.code, message: 'Project access is temporarily unavailable' },
       });
     }
 

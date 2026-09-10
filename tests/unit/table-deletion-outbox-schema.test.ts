@@ -29,12 +29,8 @@ describe('migration 024 table deletion outbox contract', () => {
     expect(sql).toContain('DROP EVENT TRIGGER IF EXISTS druvia_guard_pending_table_deletion_relation_reuse')
   })
 
-  it('registers migration 024 as the release ceiling', () => {
+  it('keeps migration 024 registered after later release migrations', () => {
     const runner = readFileSync('apps/api/src/cli/migrate.ts', 'utf8')
-    const workflow = readFileSync('.github/workflows/release.yml', 'utf8')
-    const generator = readFileSync('scripts/release/generate-manifest.mjs', 'utf8')
     expect(runner).toContain("24: 'druvia_table_deletion_outbox'")
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '24'/g)).toHaveLength(2)
-    expect(generator).toContain('const REQUIRED_MIGRATION_TARGET = 24')
   })
 })

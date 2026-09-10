@@ -14,6 +14,7 @@ import {
   acquireProjectAuthIdentityLock,
   deleteProjectAuthProviderTokens,
   findProjectAuthIdentity,
+  findProjectAuthIdentityById,
   findProjectAuthIdentityByProjectUser,
   listProjectAuthProviderTokens,
   markProjectAuthIdentityDeletionPending,
@@ -22,6 +23,7 @@ import {
   recordProjectAuthEvent,
   updateProjectAuthEmailForwardingStatus,
 } from './project-identity.repository.js';
+import { createAccountDeletionFromAppleNotification } from './project-account-deletion.service.js';
 
 export async function revokeAppleProjectUser(projectId: string, projectUserId: string): Promise<void> {
   const adapter = await getAppleAdapter(projectId, { requireEnabled: false });
@@ -120,7 +122,10 @@ export async function processAppleNotification(
     };
     await acquireProjectAuthIdentityLock(client, identityKey);
     const identity = await findProjectAuthIdentity(client, identityKey);
-    const eventStatus = notification.eventType === 'account-deleted' && identity
+    const staleAccountDeletion = notification.eventType === 'account-deleted'
+      && identity !== null
+      && notification.occurredAt < identity.createdAt;
+    const eventStatus = notification.eventType === 'account-deleted' && identity && !staleAccountDeletion
       ? 'application_action_pending'
       : 'handled';
     const inserted = await recordProjectAuthEvent(client, {
@@ -145,10 +150,26 @@ export async function processAppleNotification(
           await markProjectAuthIdentityRevoked(client, identity.id);
           await deleteProjectAuthProviderTokens(client, identity.id);
           break;
-        case 'account-deleted':
-          await markProjectAuthIdentityDeletionPending(client, identity.id);
-          await deleteProjectAuthProviderTokens(client, identity.id);
+        case 'account-deleted': {
+          if (staleAccountDeletion) break;
+          const converged = await createAccountDeletionFromAppleNotification(client, {
+            projectId,
+            eventId: notification.eventId,
+            identity,
+          });
+          if (converged) {
+            await client.query(
+              `UPDATE druvia_project_auth_events
+               SET status = 'handled', acknowledged_at = NOW()
+               WHERE provider = 'apple' AND issuer = $1 AND event_id = $2`,
+              [notification.issuer, notification.eventId],
+            );
+          } else {
+            await markProjectAuthIdentityDeletionPending(client, identity.id);
+            await deleteProjectAuthProviderTokens(client, identity.id);
+          }
           break;
+        }
         case 'email-enabled':
           await updateProjectAuthEmailForwardingStatus(client, identity.id, 'enabled');
           break;
@@ -246,8 +267,11 @@ export async function acknowledgeAppleLifecycleEvent(
       identity_id: string | number | null;
       project_user_id: string | null;
       status: string;
+      event_type: string;
+      issuer: string;
+      event_id: string;
     }>(
-      `SELECT identity_id, project_user_id, status
+      `SELECT identity_id, project_user_id, status, event_type, issuer, event_id
        FROM druvia_project_auth_events
        WHERE id = $1 AND project_id = $2 AND provider = 'apple'
        FOR UPDATE`,
@@ -262,25 +286,30 @@ export async function acknowledgeAppleLifecycleEvent(
     if (event.status !== 'application_action_pending' || !event.identity_id || !event.project_user_id) {
       throw new ProjectAuthError('LIFECYCLE_EVENT_INVALID', 'Lifecycle event cannot be acknowledged', 409);
     }
+    if (event.event_type !== 'account-deleted') {
+      throw new ProjectAuthError('LIFECYCLE_EVENT_INVALID', 'Lifecycle event cannot be acknowledged', 409);
+    }
     const identityId = Number(event.identity_id);
     await acquireProjectAuthIdentityIdLock(client, identityId);
-    await client.query(
-      'DELETE FROM druvia_project_refresh_tokens WHERE identity_id = $1',
-      [identityId],
-    );
-    await deleteProjectAuthProviderTokens(client, identityId);
-    await client.query(
-      `DELETE FROM ${project.schemaName}.users WHERE id = $1`,
-      [event.project_user_id],
-    );
-    await client.query(
-      'DELETE FROM druvia_project_auth_identities WHERE id = $1',
-      [identityId],
-    );
+    const identity = await findProjectAuthIdentityById(client, identityId);
+    if (!identity || identity.projectId !== projectId || identity.projectUserId !== event.project_user_id) {
+      throw new ProjectAuthError('LIFECYCLE_EVENT_INVALID', 'Lifecycle event identity is unavailable', 409);
+    }
+    const converged = await createAccountDeletionFromAppleNotification(client, {
+      projectId,
+      eventId: event.event_id,
+      identity,
+    });
+    if (!converged) {
+      throw new ProjectAuthError(
+        'ACCOUNT_DELETION_NOT_CONFIGURED',
+        'Project account deletion is not enabled',
+        409,
+      );
+    }
     await client.query(
       `UPDATE druvia_project_auth_events
-       SET status = 'acknowledged', acknowledged_at = NOW(),
-           identity_id = NULL, project_user_id = NULL
+       SET status = 'acknowledged', acknowledged_at = NOW()
        WHERE id = $1`,
       [eventId],
     );

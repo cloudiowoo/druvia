@@ -103,6 +103,26 @@ describe('release-mode compose and Dockerfiles', () => {
     expect(localEnv).not.toContain('../apps/api/data/storage');
   });
 
+  it('runs the account deletion executor inside API in local, production and release modes', () => {
+    for (const path of [
+      'docker/docker-compose.local.yml',
+      'docker/docker-compose.prod.yml',
+      'docker/docker-compose.release.yml',
+    ]) {
+      const compose = read(path);
+      expect(compose).toContain('ACCOUNT_DELETION_STATUS_SECRET: ${ACCOUNT_DELETION_STATUS_SECRET:-}');
+      expect(compose).toContain('ACCOUNT_DELETION_FENCE_SECRET: ${ACCOUNT_DELETION_FENCE_SECRET:-}');
+      expect(compose).toContain('ACCOUNT_DELETION_EXECUTOR_ENABLED: ${ACCOUNT_DELETION_EXECUTOR_ENABLED:-true}');
+      expect(compose).not.toContain('account-deletion-executor:');
+    }
+  });
+
+  it('mounts migrations into the local API so the packaged CLI can run', () => {
+    const compose = read('docker/docker-compose.local.yml');
+
+    expect(compose).toContain('../migrations:/app/migrations:ro');
+  });
+
   it('renews production certificates against the active release deployment when available', () => {
     const renewScript = read('docker/certbot/renew-prod-certs.sh');
 

@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { query, queryOne, projectLock, schemaLock } = vi.hoisted(() => ({
+const { query, queryOne, projectLock, schemaLock, projectAuthLock } = vi.hoisted(() => ({
   query: vi.fn(),
   queryOne: vi.fn(),
   projectLock: vi.fn(),
   schemaLock: vi.fn(),
+  projectAuthLock: vi.fn(),
 }))
 
 vi.mock('../../apps/api/src/db/index.js', () => ({ query, queryOne, pool: {} }))
@@ -15,6 +16,9 @@ vi.mock('../../apps/api/src/lib/logger.js', () => ({
 vi.mock('../../apps/api/src/modules/data-access/data-access-mutation-lock.js', () => ({
   withProjectDataAccessMutationLock: projectLock,
   withSchemaDataAccessMutationLock: schemaLock,
+}))
+vi.mock('../../apps/api/src/modules/project-auth/project-identity.repository.js', () => ({
+  withProjectAuthProjectLock: projectAuthLock,
 }))
 
 import {
@@ -35,8 +39,11 @@ function backupRow(projectId: string | null) {
 describe('backup restore migration lock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    query.mockReset()
+    queryOne.mockReset()
     projectLock.mockResolvedValue(undefined)
     schemaLock.mockResolvedValue(undefined)
+    projectAuthLock.mockResolvedValue(undefined)
   })
 
   it('serializes project backups with the deployment-wide exclusive lock', async () => {
@@ -50,15 +57,38 @@ describe('backup restore migration lock', () => {
     expect(schemaLock).not.toHaveBeenCalled()
   })
 
-  it('serializes legacy schema-only backups through schema resolution', async () => {
-    queryOne.mockResolvedValue(backupRow(null))
+  it('holds the project auth lock for the restore callback', async () => {
+    const lockClient = { query: vi.fn(), release: vi.fn() }
+    queryOne.mockResolvedValue(backupRow('proj_1'))
+    projectLock.mockImplementation(async (_projectId, callback) => callback(lockClient))
 
     await restoreBackup('bkp_1')
 
-    expect(schemaLock).toHaveBeenCalledWith(
-      'dru_project', expect.any(Function), { globalMode: 'exclusive' }
+    expect(projectAuthLock).toHaveBeenCalledWith(lockClient, 'proj_1', expect.any(Function))
+  })
+
+  it('serializes legacy schema-only backups through schema resolution', async () => {
+    queryOne
+      .mockResolvedValueOnce(backupRow(null))
+      .mockResolvedValueOnce({ project_id: 'proj_legacy' })
+
+    await restoreBackup('bkp_1')
+
+    expect(projectLock).toHaveBeenCalledWith(
+      'proj_legacy', expect.any(Function), { globalMode: 'exclusive' }
     )
+    expect(schemaLock).not.toHaveBeenCalled()
+  })
+
+  it('rejects legacy schema-only restore when the schema cannot be mapped to one project', async () => {
+    queryOne
+      .mockResolvedValueOnce(backupRow(null))
+      .mockResolvedValueOnce(null)
+
+    await expect(restoreBackup('bkp_1')).rejects.toThrow('BACKUP_SCOPE_MISMATCH')
+
     expect(projectLock).not.toHaveBeenCalled()
+    expect(schemaLock).not.toHaveBeenCalled()
   })
 
   it('filters workspace backup listings by unique matching schema scope before pagination', async () => {

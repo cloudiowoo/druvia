@@ -1,6 +1,12 @@
 import Fastify from 'fastify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../apps/api/src/modules/project-auth/project-session-state.js', () => ({
+  ProjectRuntimeBlockedError: class ProjectRuntimeBlockedError extends Error {},
+  assertProjectRuntimeAvailable: vi.fn().mockResolvedValue(undefined),
+  assertProjectSessionUsable: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../apps/api/src/db/index.js', () => ({
   pool: {
     query: vi.fn(),

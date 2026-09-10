@@ -163,6 +163,8 @@ describe('Apple Project Auth service', () => {
       subject: 'external-apple-subject',
       audience: 'com.example.pitchetch',
       status: 'active',
+      generation: 1,
+      createdAt: new Date(),
     });
     client.query.mockImplementation(async (sql: string) => {
       if (sql.includes('.users (')) {
@@ -240,6 +242,90 @@ describe('Apple Project Auth service', () => {
     expect(client.query).toHaveBeenLastCalledWith('COMMIT');
     expect(session.expiresIn).toBe(3_600);
     expect(session.user.email).toBeNull();
+  });
+
+  it('advances identity generation and discards pending revoke material after a completed deletion', async () => {
+    client.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('.users (')) {
+        return {
+          rows: [{
+            id: 'generated-user-id', email: null, username: 'Ada Lovelace', avatar_url: null,
+            provider: 'apple', provider_id: null, status: 'active', last_login_at: new Date(),
+            created_at: new Date(),
+          }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes('SELECT MAX(generation) AS generation')) {
+        return { rows: [{ generation: 2 }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+
+    await appleLogin('proj_123', credential);
+
+    expect(createProjectAuthIdentity).toHaveBeenCalledWith(client, expect.objectContaining({ generation: 3 }));
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'superseded'"),
+      expect.any(Array),
+    );
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM druvia_project_account_deletion_provider_tokens'),
+      expect.any(Array),
+    );
+  });
+
+  it('does not issue a new generation while an old Apple revoke call is in flight', async () => {
+    client.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('.users (')) {
+        return {
+          rows: [{
+            id: 'generated-user-id', email: null, username: 'Ada Lovelace', avatar_url: null,
+            provider: 'apple', provider_id: null, status: 'active', last_login_at: new Date(),
+            created_at: new Date(),
+          }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("token.status = 'in_flight'")) {
+        return { rows: [{ status: 'in_flight' }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+
+    await expect(appleLogin('proj_123', credential)).rejects.toEqual(
+      expect.objectContaining<ProjectAuthError>({ code: 'PROVIDER_REAUTH_REQUIRED' }),
+    );
+
+    expect(createProjectAuthIdentity).not.toHaveBeenCalled();
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+    expect(adapter.revoke).toHaveBeenCalled();
+  });
+
+  it('does not issue a new generation while the prior deletion fence is incomplete', async () => {
+    client.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('fence.completed_at IS NULL')) {
+        return { rows: [{ status: 'processing' }], rowCount: 1 };
+      }
+      if (sql.includes('.users (')) {
+        return {
+          rows: [{
+            id: 'generated-user-id', email: null, username: 'Ada Lovelace', avatar_url: null,
+            provider: 'apple', provider_id: null, status: 'active', last_login_at: new Date(),
+            created_at: new Date(),
+          }],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+
+    await expect(appleLogin('proj_123', credential)).rejects.toEqual(
+      expect.objectContaining<ProjectAuthError>({ code: 'PROVIDER_REAUTH_REQUIRED' }),
+    );
+
+    expect(createProjectAuthIdentity).not.toHaveBeenCalled();
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK');
   });
 
   it('reuses the same Project User for a repeated Apple subject', async () => {

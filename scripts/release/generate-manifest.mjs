@@ -10,7 +10,7 @@ const SEMVER_PATTERN = new RegExp(
 );
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const CHANNELS = new Set(['stable', 'beta', 'nightly']);
-const REQUIRED_MIGRATION_TARGET = 24;
+const REQUIRED_MIGRATION_TARGET = 25;
 
 function required(env, key) {
   const value = env[key];

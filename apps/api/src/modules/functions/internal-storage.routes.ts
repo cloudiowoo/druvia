@@ -3,6 +3,11 @@ import * as storageService from '../storage/storage.service.js';
 import { verifyInternalFunctionToken, type InternalFunctionTokenPayload } from './internal-token.js';
 import { normalizeStorageObjectPath } from '../storage/storage-path.js';
 import { toStorageObjectResponse } from '../storage/storage-response.js';
+import {
+  ProjectRuntimeBlockedError,
+  assertProjectRuntimeAvailable,
+  assertProjectSessionUsable,
+} from '../project-auth/project-session-state.js';
 
 const INTERNAL_TOKEN_HEADER = 'x-druvia-internal-token';
 const INTERNAL_STORAGE_BODY_LIMIT = 70 * 1024 * 1024;
@@ -75,6 +80,25 @@ function decodeBase64Strict(dataBase64: string): Buffer | null {
   }
 }
 
+async function assertInternalActorUsable(tokenPayload: InternalFunctionTokenPayload): Promise<void> {
+  if (tokenPayload.actor.actorType === 'project_user') {
+    await assertProjectSessionUsable({
+      projectId: tokenPayload.projectId,
+      projectUserId: tokenPayload.actor.projectUserId,
+    });
+    return;
+  }
+  await assertProjectRuntimeAvailable(tokenPayload.projectId);
+}
+
+function sendRuntimeBlocked(reply: import('fastify').FastifyReply, error: unknown) {
+  if (!(error instanceof ProjectRuntimeBlockedError)) throw error;
+  return reply.status(error.statusCode).send({
+    success: false,
+    error: { code: error.code, message: 'Project access is temporarily unavailable' },
+  });
+}
+
 export async function internalFunctionsStorageRoutes(app: FastifyInstance) {
   app.post<{
     Body: InternalStorageUploadBody;
@@ -101,6 +125,12 @@ export async function internalFunctionsStorageRoutes(app: FastifyInstance) {
           success: false,
           error: { code: 'UNAUTHORIZED', message: 'Invalid internal token' },
         });
+      }
+
+      try {
+        await assertInternalActorUsable(tokenPayload);
+      } catch (error) {
+        return sendRuntimeBlocked(reply, error);
       }
 
       const { bucket, path, contentType, dataBase64 } = request.body ?? {};
@@ -201,6 +231,12 @@ export async function internalFunctionsStorageRoutes(app: FastifyInstance) {
         success: false,
         error: { code: 'UNAUTHORIZED', message: 'Invalid internal token' },
       });
+    }
+
+    try {
+      await assertInternalActorUsable(tokenPayload);
+    } catch (error) {
+      return sendRuntimeBlocked(reply, error);
     }
 
     const { bucket, path, ignoreMissing = false } = request.body ?? {};

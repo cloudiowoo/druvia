@@ -12,6 +12,10 @@ import {
   MAX_STORAGE_OBJECT_BYTES,
   normalizeAllowedStorageMimeTypes,
 } from './storage-validation.js';
+import {
+  ProjectRuntimeBlockedError,
+  assertProjectSessionUsable,
+} from '../project-auth/project-session-state.js';
 
 const DEFAULT_TICKET_TTL_SECONDS = 300;
 
@@ -193,6 +197,14 @@ async function getProjectSchemaName(projectId: string): Promise<string> {
 }
 
 async function ensureProjectUserExists(projectId: string, userId: string): Promise<void> {
+  try {
+    await assertProjectSessionUsable({ projectId, projectUserId: userId });
+  } catch (error) {
+    if (error instanceof ProjectRuntimeBlockedError) {
+      throw new StorageTrustedAccessError(error.code, 'Project user is unavailable', error.statusCode);
+    }
+    throw error;
+  }
   const schemaName = await getProjectSchemaName(projectId);
   const hasStatusColumn = await queryOne<{ column_name: string }>(
     `SELECT column_name

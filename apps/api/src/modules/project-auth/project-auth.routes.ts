@@ -1,13 +1,29 @@
 import type { FastifyInstance } from 'fastify';
-import { authenticate, optionalAuth } from '../../middleware/auth.js';
+import { authenticate, authenticateAccountDeletion, optionalAuth } from '../../middleware/auth.js';
 import {
   appleLoginRateLimiter,
   appleNotificationRateLimiter,
   appleRevokeRateLimiter,
 } from '../../middleware/ratelimit.js';
 import * as controller from './project-auth.controller.js';
+import * as accountDeletionController from './project-account-deletion.controller.js';
 
 export async function projectAuthRoutes(app: FastifyInstance) {
+  app.post('/projects/:projectId/auth/account-deletions/intents', {
+    preHandler: [authenticate, appleLoginRateLimiter],
+  }, accountDeletionController.createIntent as never);
+  app.post('/projects/:projectId/auth/account-deletions/:deletionId/confirm', {
+    preHandler: [authenticateAccountDeletion, appleLoginRateLimiter],
+  }, accountDeletionController.confirm as never);
+  app.get('/projects/:projectId/auth/account-deletions/:deletionId', {
+    preHandler: appleLoginRateLimiter,
+  }, accountDeletionController.status as never);
+  app.get('/projects/:projectId/auth/account-deletion', {
+    preHandler: authenticate,
+  }, accountDeletionController.getConfig as never);
+  app.put('/projects/:projectId/auth/account-deletion', {
+    preHandler: authenticate,
+  }, accountDeletionController.updateConfig as never);
   app.post('/projects/:projectId/auth/apple/login', {
     preHandler: appleLoginRateLimiter,
   }, controller.appleLogin as never);

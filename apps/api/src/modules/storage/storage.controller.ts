@@ -11,6 +11,10 @@ import {
 } from '../../lib/project-actor.js';
 import { validateTrustedBackendKey } from '../trusted-backend-keys/trusted-backend-keys.service.js';
 import {
+  ProjectRuntimeBlockedError,
+  assertProjectSessionUsable,
+} from '../project-auth/project-session-state.js';
+import {
   issueRemoveTicket,
   issueUploadTicket,
   StorageTrustedAccessError,
@@ -171,6 +175,26 @@ function getStorageTicketHeader(request: FastifyRequest): string | null {
   const ticket = request.headers['x-druvia-storage-ticket'];
   const rawTicket = Array.isArray(ticket) ? ticket[0] : ticket;
   return rawTicket || null;
+}
+
+async function assertStorageTicketUserUsable(
+  ticket: { projectId: string; projectUserId: string },
+  reply: FastifyReply,
+): Promise<boolean> {
+  try {
+    await assertProjectSessionUsable({
+      projectId: ticket.projectId,
+      projectUserId: ticket.projectUserId,
+    });
+    return true;
+  } catch (error) {
+    if (!(error instanceof ProjectRuntimeBlockedError)) throw error;
+    reply.status(error.statusCode).send({
+      success: false,
+      error: { code: error.code, message: 'Project user is unavailable' },
+    });
+    return false;
+  }
 }
 
 // ============================================
@@ -688,6 +712,7 @@ export async function uploadWithTicket(
     }, 'trusted storage upload rejected');
     return sendTrustedStorageError(reply, error);
   }
+  if (!(await assertStorageTicketUserUsable(ticket, reply))) return;
 
   const objectPath = request.query.path ? sanitizeObjectPath(request.query.path) : null;
   if (!objectPath) {
@@ -845,6 +870,7 @@ export async function removeWithTicket(
     }, 'trusted storage remove rejected');
     return sendTrustedStorageError(reply, error);
   }
+  if (!(await assertStorageTicketUserUsable(ticket, reply))) return;
 
   const objectPath = request.body?.path ? sanitizeObjectPath(request.body.path) : null;
   if (!objectPath) {

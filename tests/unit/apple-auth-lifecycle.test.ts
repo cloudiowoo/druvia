@@ -26,6 +26,10 @@ vi.mock('../../apps/api/src/modules/project-auth/project-auth.service.js', () =>
   getAppleAdapter: vi.fn(),
 }));
 
+vi.mock('../../apps/api/src/modules/project-auth/project-account-deletion.service.js', () => ({
+  createAccountDeletionFromAppleNotification: vi.fn(),
+}));
+
 vi.mock('../../apps/api/src/lib/secret-encryption.js', () => ({
   decryptSecret: vi.fn(() => 'decrypted-provider-refresh-token'),
 }));
@@ -35,6 +39,7 @@ vi.mock('../../apps/api/src/modules/project-auth/project-identity.repository.js'
   acquireProjectAuthIdentityLock: vi.fn(),
   acquireProjectAuthIdentityIdLock: vi.fn(),
   findProjectAuthIdentity: vi.fn(),
+  findProjectAuthIdentityById: vi.fn(),
   findProjectAuthIdentityByProjectUser: vi.fn(),
   listProjectAuthProviderTokens: vi.fn(),
   markProjectAuthIdentityRevokePending: vi.fn(),
@@ -52,6 +57,7 @@ import {
   acquireProjectAuthProjectLock,
   deleteProjectAuthProviderTokens,
   findProjectAuthIdentity,
+  findProjectAuthIdentityById,
   findProjectAuthIdentityByProjectUser,
   listProjectAuthProviderTokens,
   markProjectAuthIdentityDeletionPending,
@@ -65,6 +71,7 @@ import {
   processAppleNotification,
   revokeAppleProjectUser,
 } from '../../apps/api/src/modules/project-auth/apple-lifecycle.service.js';
+import { createAccountDeletionFromAppleNotification } from '../../apps/api/src/modules/project-auth/project-account-deletion.service.js';
 
 const identity = {
   id: 12,
@@ -75,6 +82,8 @@ const identity = {
   subject: 'external-subject',
   audience: 'com.example.pitchetch',
   status: 'active' as const,
+  generation: 1,
+  createdAt: new Date('2026-09-09T00:00:00.000Z'),
 };
 
 const adapter = {
@@ -118,6 +127,8 @@ describe('Apple auth lifecycle', () => {
     adapter.revoke.mockResolvedValue(undefined);
     vi.mocked(recordProjectAuthEvent).mockResolvedValue(true);
     vi.mocked(findProjectAuthIdentity).mockResolvedValue(identity);
+    vi.mocked(findProjectAuthIdentityById).mockResolvedValue(identity);
+    vi.mocked(createAccountDeletionFromAppleNotification).mockResolvedValue(false);
   });
 
   it('allows revoke to load Apple credentials after the provider is disabled', async () => {
@@ -223,6 +234,51 @@ describe('Apple auth lifecycle', () => {
     expect(deleteProjectAuthProviderTokens).toHaveBeenCalledWith(client, 12);
   });
 
+  it('acknowledges an account-deleted event only after it converges to a deletion operation', async () => {
+    vi.mocked(createAccountDeletionFromAppleNotification).mockResolvedValue(true);
+    const verifier = {
+      verify: vi.fn().mockResolvedValue({
+        issuer: 'https://appleid.apple.com',
+        audience: 'com.example.pitchetch',
+        eventId: 'event-delete-converged',
+        eventType: 'account-deleted',
+        subject: 'external-subject',
+        occurredAt: new Date(),
+      }),
+    };
+
+    await processAppleNotification('proj_123', signedPayload, { verifier });
+
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'handled'"),
+      ['https://appleid.apple.com', 'event-delete-converged'],
+    );
+    expect(markProjectAuthIdentityDeletionPending).not.toHaveBeenCalled();
+  });
+
+  it('rolls back an account-deleted event when managed deletion cannot be persisted', async () => {
+    vi.mocked(createAccountDeletionFromAppleNotification).mockRejectedValue(
+      new ProjectAuthError('ACCOUNT_DELETION_NOT_CONFIGURED', 'cleanup contract invalid', 409),
+    );
+    const verifier = {
+      verify: vi.fn().mockResolvedValue({
+        issuer: 'https://appleid.apple.com',
+        audience: 'com.example.pitchetch',
+        eventId: 'event-delete-failed',
+        eventType: 'account-deleted',
+        subject: 'external-subject',
+        occurredAt: new Date(),
+      }),
+    };
+
+    await expect(processAppleNotification('proj_123', signedPayload, { verifier }))
+      .rejects.toMatchObject({ code: 'ACCOUNT_DELETION_NOT_CONFIGURED' });
+
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+    expect(markProjectAuthIdentityDeletionPending).not.toHaveBeenCalled();
+    expect(deleteProjectAuthProviderTokens).not.toHaveBeenCalled();
+  });
+
   it('records a notification for an unknown subject without creating lifecycle work', async () => {
     vi.mocked(findProjectAuthIdentity).mockResolvedValue(null);
     const verifier = {
@@ -246,26 +302,86 @@ describe('Apple auth lifecycle', () => {
     expect(markProjectAuthIdentityDeletionPending).not.toHaveBeenCalled();
   });
 
-  it('keeps an account deletion event pending when business-user cleanup fails', async () => {
+  it('ignores an account deletion notification that predates the current identity generation', async () => {
+    const verifier = {
+      verify: vi.fn().mockResolvedValue({
+        issuer: 'https://appleid.apple.com',
+        audience: 'com.example.pitchetch',
+        eventId: 'event-old-generation',
+        eventType: 'account-deleted',
+        subject: 'external-subject',
+        occurredAt: new Date('2026-09-08T23:59:59.000Z'),
+      }),
+    };
+
+    await processAppleNotification('proj_123', signedPayload, { verifier });
+
+    expect(recordProjectAuthEvent).toHaveBeenCalledWith(client, expect.objectContaining({
+      status: 'handled',
+    }));
+    expect(markProjectAuthIdentityDeletionPending).not.toHaveBeenCalled();
+    expect(deleteProjectAuthProviderTokens).not.toHaveBeenCalled();
+  });
+
+  it('keeps account deletion pending when lifecycle ack cannot create a managed operation', async () => {
     client.query.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM druvia_project_auth_events')) {
         return {
-          rows: [{ identity_id: 12, project_user_id: 'user-123', status: 'application_action_pending' }],
+          rows: [{
+            identity_id: 12,
+            project_user_id: 'user-123',
+            status: 'application_action_pending',
+            event_type: 'account-deleted',
+            issuer: 'https://appleid.apple.com',
+            event_id: 'event-delete',
+          }],
           rowCount: 1,
         };
       }
-      if (sql.includes('DELETE FROM dru_default_pitchetch.users')) {
-        throw new Error('domain cleanup failed');
+      return { rows: [], rowCount: 1 };
+    });
+    vi.mocked(createAccountDeletionFromAppleNotification).mockResolvedValue(false);
+
+    await expect(acknowledgeAppleLifecycleEvent('proj_123', 7))
+      .rejects.toMatchObject({ code: 'ACCOUNT_DELETION_NOT_CONFIGURED' });
+
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('.users WHERE'))).toBe(false);
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes("SET status = 'acknowledged'")))
+      .toBe(false);
+  });
+
+  it('acknowledges account deletion only after lifecycle ack creates a managed operation', async () => {
+    client.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM druvia_project_auth_events')) {
+        return {
+          rows: [{
+            identity_id: 12,
+            project_user_id: 'user-123',
+            status: 'application_action_pending',
+            event_type: 'account-deleted',
+            issuer: 'https://appleid.apple.com',
+            event_id: 'event-delete',
+          }],
+          rowCount: 1,
+        };
       }
       return { rows: [], rowCount: 1 };
     });
+    vi.mocked(createAccountDeletionFromAppleNotification).mockResolvedValue(true);
 
-    await expect(acknowledgeAppleLifecycleEvent('proj_123', 7))
-      .rejects.toThrow('domain cleanup failed');
+    await acknowledgeAppleLifecycleEvent('proj_123', 7);
 
-    expect(client.query).toHaveBeenCalledWith('ROLLBACK');
-    expect(client.query.mock.calls.some(([sql]) => String(sql).includes("SET status = 'acknowledged'")))
-      .toBe(false);
+    expect(createAccountDeletionFromAppleNotification).toHaveBeenCalledWith(client, {
+      projectId: 'proj_123',
+      eventId: 'event-delete',
+      identity,
+    });
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('.users WHERE'))).toBe(false);
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'acknowledged'"),
+      [7],
+    );
   });
 
   it('paginates pending lifecycle events with an opaque cursor and a hard limit', async () => {

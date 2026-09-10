@@ -38,6 +38,10 @@ import {
   recoverPendingTableDeletions,
   startTableDeletionRecoveryLoop,
 } from './modules/table/table-deletion-recovery.service.js';
+import {
+  getAccountDeletionExecutorHealth,
+  startAccountDeletionExecutor,
+} from './modules/project-auth/project-account-deletion.executor.js';
 
 export const appCorsOptions: FastifyCorsOptions = {
   origin:
@@ -48,7 +52,15 @@ export const appCorsOptions: FastifyCorsOptions = {
         : false,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-druvia-storage-ticket', 'x-druvia-trusted-backend-key'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'apikey',
+    'Idempotency-Key',
+    'X-Druvia-Deletion-Token',
+    'x-druvia-storage-ticket',
+    'x-druvia-trusted-backend-key',
+  ],
 };
 
 export function buildApp(options: { trustProxy?: boolean } = {}) {
@@ -81,6 +93,7 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
         paths: [
           'req.headers.authorization',
           'req.headers.apikey',
+          'req.headers.x-druvia-deletion-token',
           'authorization',
           'apikey',
           'password',
@@ -95,6 +108,8 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
           'req.body.rawNonce',
           'req.body.payload',
           'providerRefreshToken',
+          'statusToken',
+          'reauthNonce',
         ],
         remove: true,
       },
@@ -143,8 +158,26 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
   });
 
   // Health check
-  app.get('/health', async () => {
-    return { status: 'ok', timestamp: new Date().toISOString() };
+  app.get('/health', async (_request, reply) => {
+    const accountDeletionHealth = await getAccountDeletionExecutorHealth();
+    const accountDeletionExecutor = accountDeletionHealth.healthy;
+    if (!accountDeletionExecutor) reply.status(503);
+    return {
+      status: accountDeletionExecutor ? 'ok' : 'degraded',
+      accountDeletionExecutor,
+      accountDeletionOverdueOperations: accountDeletionHealth.overdueOperations,
+      accountDeletionAttentionRequiredOperations: accountDeletionHealth.attentionRequiredOperations,
+      timestamp: new Date().toISOString(),
+    };
+  });
+  app.get('/health/account-deletion-executor', async (_request, reply) => {
+    const health = await getAccountDeletionExecutorHealth();
+    if (!health.healthy) reply.status(503);
+    return {
+      status: health.healthy ? 'ok' : 'unavailable',
+      overdueOperations: health.overdueOperations,
+      attentionRequiredOperations: health.attentionRequiredOperations,
+    };
   });
 
   // Register routes
@@ -194,7 +227,9 @@ async function start() {
         }
       },
     });
+    const stopAccountDeletionExecutor = await startAccountDeletionExecutor();
     app.addHook('onClose', async () => stopTableDeletionRecovery());
+    app.addHook('onClose', stopAccountDeletionExecutor);
     await app.listen({ port: config.port, host: config.host });
     app.log.info(
       { host: config.host, port: config.port },

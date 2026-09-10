@@ -16,6 +16,12 @@ vi.mock('../../apps/api/src/db/index.js', async (importOriginal) => ({
   queryOne: vi.fn(),
 }));
 
+vi.mock('../../apps/api/src/modules/project-auth/project-session-state.js', () => ({
+  ProjectRuntimeBlockedError: class ProjectRuntimeBlockedError extends Error {},
+  assertProjectRuntimeAvailable: vi.fn().mockResolvedValue(undefined),
+  assertProjectSessionUsable: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { buildApp } from '../../apps/api/src/index.js';
 import { config } from '../../apps/api/src/config/index.js';
 import { queryOne } from '../../apps/api/src/db/index.js';

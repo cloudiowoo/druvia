@@ -639,6 +639,28 @@ export async function deleteObject(
   }
 }
 
+export async function deleteObjectsOwnedByProjectUser(
+  projectId: string,
+  projectUserId: string,
+): Promise<number> {
+  let deleted = 0;
+  while (true) {
+    const rows = await query<{ bucket_id: string; name: string }>(
+      `SELECT o.bucket_id, o.name
+       FROM druvia_storage_objects o
+       JOIN druvia_storage_buckets b ON b.bucket_id = o.bucket_id
+       WHERE b.project_id = $1 AND o.owner_project_user_id = $2
+       ORDER BY o.id
+       LIMIT 100`,
+      [projectId, projectUserId],
+    );
+    if (rows.length === 0) return deleted;
+    for (const row of rows) {
+      if (await deleteObject(row.bucket_id, row.name)) deleted += 1;
+    }
+  }
+}
+
 export async function getSignedUrl(object: StorageObject, expiresIn: number = 3600): Promise<string> {
   if (!object.storagePath) {
     throw new Error('Object has no storage path');

@@ -49,6 +49,7 @@ describe('project auth identity repository', () => {
       subject: 'external-subject',
       audience: 'com.example.app',
       status: 'active',
+      generation: 1,
     }]);
 
     const identity = await createProjectAuthIdentity(client, {
@@ -63,7 +64,7 @@ describe('project auth identity repository', () => {
     expect(identity.id).toBe(12);
     expect(client.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO druvia_project_auth_identities'),
-      ['project-1', 'user-1', 'apple', 'https://appleid.apple.com', 'external-subject', 'com.example.app'],
+      ['project-1', 'user-1', 'apple', 'https://appleid.apple.com', 'external-subject', 'com.example.app', 1],
     );
   });
 

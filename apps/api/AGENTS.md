@@ -34,6 +34,8 @@
 - Apple Project Auth 使用平台级 identity binding：Apple subject 只能存在于 `druvia_project_auth_identities`，不得写入项目业务 `users.provider_id`、email 或日志。
 - Apple `.p8` 与 provider refresh token 必须使用独立 `SECRETS_ENCRYPTION_KEY` 加密；缺失或无效时 Apple 配置和运行必须失败，不得回退 `JWT_SECRET`。禁用 provider 只阻止新登录，已有 refresh 校验与 revoke 仍需可用。
 - Apple 登录、refresh、revoke、notification、用户/provider/项目删除必须遵守 project lock 先于 identity/user lock 的顺序；有 active/pending identity、provider token 或待处理 lifecycle event 时不得直接删除用户、provider 或项目。
+- Project Account Self-Deletion 只支持 active Apple Project User。intent 的目标只取 Project Session `sub`；confirm 以 deletion token、服务端 nonce、新鲜 Apple credential 和当前 identity generation 共同绑定。accepted 后 GraphQL、Realtime、Storage、RPC、Functions、refresh、login 和 trusted issue 都必须查询 authoritative operation/runtime gate，不得只信任 JWT。
+- 账户删除执行器嵌入 API 并使用 PostgreSQL lease/renew/CAS；Hook schema/function/contract 来自 operation 不可变快照，契约摘要校验与函数调用必须绑定同一数据库 statement，且除 owner 外任何角色都不得持有 EXECUTE。临时失败退避，deadline 或 contract drift 保留原失败 phase 并进入 `attention_required`。删除 phase、Apple revoke、新 generation 登录与 project schema restore 必须共享 project-auth 项目锁，claim 必须在锁内复验 runtime gate 和 token 状态。Apple revoke 独立重试，不得阻塞业务删除完成；新 generation 必须等待旧 fence 完成，只能 supersede 尚未发出的旧 revoke，不能与 in-flight revoke 并发。project schema restore 对恢复后的 Hook 重新执行完整安全预检，再以恢复后摘要重放历史 fence。
 - 公开项目 GraphQL 路由 `/api/v1/projects/:projectId/graphql` 只接受同项目 `project_user` 或 `apikey`：
   - `platform_user` 必须返回 `PROJECT_ACTOR_REQUIRED`，不能恢复为 Hasura admin passthrough
   - 客户端 `x-hasura-*` 头和角色声明不能进入执行上下文
@@ -86,6 +88,7 @@
 - migration `021_project_auth_identities` 必须先于包含 Apple Project Auth 的 API/Admin 启动；release manifest migration ceiling 不得低于 `21`。
 - migration `022_project_members` 必须先于包含项目成员授权的 API/Admin 启动；成员表非空时不得执行 down，release manifest migration ceiling 不得低于 `22`。
 - migration `023_data_access_managed_policies` 与 `024_table_deletion_outbox` 必须先于包含受管策略 adoption/reconcile 和可恢复表删除的 API/Admin 启动；存在 baseline、operation 或 pending deletion 时不得 down，release manifest migration ceiling 不得低于 `24`。
+- migration `025_project_account_deletions` 必须先于包含账户删除、session/runtime gate 或 fence replay 的 API/Admin 启动；存在 accepted/completed operation、Provider revoke material 或 restore gate 时不得 down，release manifest migration ceiling 不得低于 `25`。
 - managed baseline 的数据库主键、repository 读写和 operation 身份必须统一使用 `project + schema + table`，不得退化为只按项目和表名寻址。
 - 表删除必须将业务表、`_meta_tables`、精确 `project + schema + table` baseline 和 deletion outbox 写入同一 PostgreSQL 事务；提交后再 untrack Hasura。pending outbox 必须阻断同 scope 管理写入，并由启动恢复及运行期定时重试清除，不能依赖进程重启或人工删记录。migration `024` 的 event trigger 必须在 pending 期间保留同名 relation，所有数据库连接上的创建/重命名冲突都应以 SQLSTATE `55006` 失败；执行该 migration 的数据库角色必须具备创建 event trigger 的权限。
 - migration CLI 只能在迁移 SQL 同时存在最外层 `BEGIN` 与 `COMMIT` 时剥离包装；孤立事务边界必须保留并由 PostgreSQL 报错。

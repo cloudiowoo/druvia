@@ -210,11 +210,24 @@
 - 权威映射位于平台表 `(project_id, provider, issuer, subject) -> project_user_id`；Apple subject 和 provider refresh token 不进入项目业务 Schema 或 Hasura actor claims。
 - Apple `.p8` 与 provider refresh token 使用独立 `SECRETS_ENCRYPTION_KEY` 加密。provider 禁用只阻止新登录，已有 session 的每日上游校验、撤销和 decommission 继续保留。
 - Druvia refresh token 绑定 identity 与 audience；Apple 上游校验在消费 Druvia token 前执行，暂时失败不消费 token，`invalid_grant` 则撤销 identity 和全部关联会话。
-- revoke 使用 `revoke_pending -> Apple revoke -> revoked` 两阶段状态；Apple notification 只信任固定 issuer/JWKS、allowlisted audience 和幂等 `jti`。`account-deleted` 先冻结会话并保留待处理事件，应用领域数据清理完成后才由管理员确认删除 Project User。
+- revoke 使用 `revoke_pending -> Apple revoke -> revoked` 两阶段状态；Apple notification 只信任固定 issuer/JWKS、allowlisted audience 和幂等 `jti`。已启用并通过 cleanup preflight 的项目将 `account-deleted` 收敛到统一账户删除 operation；未启用项目只保留 `deletion_pending` 阻断和待处理事件，旧 lifecycle ack 不得直接删除用户，必须在配置就绪后原子创建统一 operation。
 - Apple 登录及 lifecycle mutation 与用户/provider/项目删除共享项目级 advisory lock，并固定 project lock 先于 identity/user lock。未完成 revoke 或 lifecycle action 时禁止破坏性删除。
 - lifecycle event list/ack 可由平台管理员或同项目 trusted backend key 调用；服务端 key 必须显式持有 `project_auth_lifecycle:manage`，该删除能力不属于默认 trusted key scopes。
 - migration `021_project_auth_identities` 是运行前置条件；GHCR 与自建 Registry 的 stable manifest 必须使用相同镜像 digest 对应构建，并将 migration ceiling 设置为至少 `21`。
 - 当前仅完成本地 mock Apple 协议和 Druvia 侧开发门禁；真实 Apple Developer 配置、真机登录、公网 notification 和 PITCHETCH actor 验收属于独立非生产验收，不据此宣称生产就绪。
+
+## Project User 自助账户删除
+
+- 首版只支持 active Apple Project User，采用 `public` schema 中的 PostgreSQL 持久 operation、恢复 fence、Provider revoke material 和 project runtime gate；不建设通用 Job/Webhook 平台，也不新增 Compose service。
+- 删除目标只来自当前 Project Session `sub`。首次 confirm 必须同时验证 operation 专用 status token、服务端派生 nonce、新鲜 Apple credential、相同 subject 和 identity generation；accepted 后不可取消，status token 只能读取该 operation。
+- 接受事务原子写入 fence、identity `deletion_pending`、refresh token 撤销和加密 revoke material。外部/内部 GraphQL、Realtime、Storage、RPC、Functions、Project Session 签发及 trusted ticket 必须回查 operation/runtime gate，使旧 Access Token 对新请求失败关闭。
+- 项目业务删除由项目 schema 中固定签名的 `druvia_delete_project_user_data(text, uuid) -> jsonb` 负责。启用前必须验证 owner 等于项目隔离数据库角色、`SECURITY DEFINER`、固定 `search_path`、除 owner 外无人拥有 EXECUTE、非 superuser/bypassrls/createrole；Druvia 不枚举应用业务表。
+- API 内执行器以 PostgreSQL lease、续约、CAS 和退避推进 business、Storage、Project User/identity 清理。Apple revoke 独立重试；Provider 暂时失败不阻止账户数据删除完成，只保留加密最小材料。
+- completed 后同一 Apple subject 可建立新的 Project User 和递增 generation；任何未完成 fence 都必须阻止创建新 identity，generation 取该 fingerprint 全部历史 fence 最大值加一。尚未发出的旧 revoke material 在新授权事务内 supersede 并删除；旧 revoke 已 in-flight 时拒绝新登录；早于当前 identity `created_at` 的迟到 account-deleted notification 不得影响新 generation。
+- Druvia project schema restore 必须在排他锁内先持久写 runtime gate，再执行 restore、重新验证恢复后 Hook 的完整安全合约、以恢复后摘要执行 fence replay并清理旧 users；历史 operation 摘要不要求与旧备份中的合法 Hook 版本相同。失败保留 `recovery_required`。整库 restore 会同时回滚 `public` fence，因此外部 deletion ledger 建成前只声明内建 project schema restore 受保护。
+- migration `025_project_account_deletions`、API 内执行器和 release migration ceiling `25` 必须同一 stable release 交付。production 启动前必须设置并稳定备份两条彼此独立、且不与其他签名密钥复用的 account deletion secret。
+- 删除执行器 phase、Provider revoke、新 Apple generation 和 project schema restore 使用同一 project-auth 项目锁；候选读取不构成 claim，必须在锁内以 lease/status/runtime gate CAS 复验。Hook 的函数定义、ACL、owner 角色能力和跨 schema 写权限形成持久摘要，摘要复验与函数调用在同一 PostgreSQL statement 内完成。
+- executor heartbeat 正常但存在 overdue 或 `attention_required` operation 时，主健康检查和专用健康检查均失败；这类 backlog 不能只作为展示指标。
 
 ## 平台项目成员与管理授权
 

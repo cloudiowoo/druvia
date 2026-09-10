@@ -27,6 +27,12 @@ vi.mock('../../apps/api/src/modules/trusted-backend-keys/trusted-backend-keys.se
   validateTrustedBackendKey: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/modules/project-auth/project-session-state.js', () => ({
+  ProjectRuntimeBlockedError: class ProjectRuntimeBlockedError extends Error {},
+  assertProjectRuntimeAvailable: vi.fn().mockResolvedValue(undefined),
+  assertProjectSessionUsable: vi.fn().mockResolvedValue(undefined),
+}))
+
 import { buildApp } from '../../apps/api/src/index.js'
 import { signProjectUserToken } from '../../apps/api/src/middleware/auth.js'
 import {

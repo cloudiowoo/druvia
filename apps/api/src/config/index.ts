@@ -48,6 +48,44 @@ export function resolveFunctionsConfig(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
+export function resolveAccountDeletionConfig(env: NodeJS.ProcessEnv = process.env) {
+  const statusSecret = env.ACCOUNT_DELETION_STATUS_SECRET || '';
+  const fenceSecret = env.ACCOUNT_DELETION_FENCE_SECRET || '';
+  const executorEnabled = parseBooleanEnv(env.ACCOUNT_DELETION_EXECUTOR_ENABLED, true);
+  const production = (env.NODE_ENV || 'development') === 'production';
+
+  if (production) {
+    if (Buffer.byteLength(statusSecret, 'utf8') < 32) {
+      throw new Error('ACCOUNT_DELETION_STATUS_SECRET must contain at least 32 UTF-8 bytes in production');
+    }
+    if (Buffer.byteLength(fenceSecret, 'utf8') < 32) {
+      throw new Error('ACCOUNT_DELETION_FENCE_SECRET must contain at least 32 UTF-8 bytes in production');
+    }
+    const protectedSecrets = [
+      env.JWT_SECRET,
+      env.PROJECT_AUTH_JWT_SECRET,
+      env.HASURA_JWT_SECRET,
+      env.FUNCTIONS_INTERNAL_TOKEN_SECRET,
+      env.DENO_WORKER_SECRET,
+      env.STORAGE_TRUSTED_TICKET_SECRET,
+    ].filter((value): value is string => Boolean(value));
+    if (statusSecret === fenceSecret || protectedSecrets.includes(statusSecret) || protectedSecrets.includes(fenceSecret)) {
+      throw new Error('Account deletion secrets must be distinct from each other and other signing secrets');
+    }
+  }
+
+  return {
+    statusSecret,
+    fenceSecret,
+    executorEnabled,
+    intentTtlSeconds: Math.max(60, parseInt(env.ACCOUNT_DELETION_INTENT_TTL_SECONDS || '600', 10)),
+    reauthMaxAgeSeconds: Math.max(60, parseInt(env.ACCOUNT_DELETION_REAUTH_MAX_AGE_SECONDS || '300', 10)),
+    executorPollMs: Math.max(1_000, parseInt(env.ACCOUNT_DELETION_EXECUTOR_POLL_MS || '5000', 10)),
+    executorLeaseSeconds: Math.max(30, parseInt(env.ACCOUNT_DELETION_EXECUTOR_LEASE_SECONDS || '120', 10)),
+    cleanupStatementTimeoutMs: Math.max(1_000, parseInt(env.ACCOUNT_DELETION_CLEANUP_TIMEOUT_MS || '30000', 10)),
+  };
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   host: process.env.HOST || '0.0.0.0',
@@ -77,6 +115,7 @@ export const config = {
     tokenSecret: process.env.PROJECT_AUTH_JWT_SECRET || process.env.JWT_SECRET || '',
     defaultAccessTokenTtlSeconds: parseInt(process.env.PROJECT_AUTH_ACCESS_TOKEN_TTL_SECONDS || '3600', 10),
   },
+  accountDeletion: resolveAccountDeletionConfig(),
   storage: {
     trustedTicketSecret: process.env.STORAGE_TRUSTED_TICKET_SECRET || '',
     trustedTicketMaxTtlSeconds: parseInt(process.env.STORAGE_TRUSTED_TICKET_MAX_TTL_SECONDS || '900', 10),

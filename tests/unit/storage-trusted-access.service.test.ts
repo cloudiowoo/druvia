@@ -8,6 +8,11 @@ vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
   getProjectById: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/modules/project-auth/project-session-state.js', () => ({
+  ProjectRuntimeBlockedError: class ProjectRuntimeBlockedError extends Error {},
+  assertProjectSessionUsable: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../apps/api/src/modules/storage/storage.service.js', async () => {
   const actual = await vi.importActual<typeof import('../../apps/api/src/modules/storage/storage.service.js')>(
     '../../apps/api/src/modules/storage/storage.service.js'

@@ -11,6 +11,7 @@ import {
   type AuthResult,
 } from '../../adapters/auth/index.js';
 import { pool, query, queryOne } from '../../db/index.js';
+import { config } from '../../config/index.js';
 import { decryptSecret, encryptSecret, SecretEncryptionConfigError } from '../../lib/secret-encryption.js';
 import { createApiLogger } from '../../lib/logger.js';
 import { signProjectUserToken } from '../../middleware/auth.js';
@@ -29,6 +30,12 @@ import {
   upsertProjectAuthProviderToken,
   type ProjectAuthIdentity,
 } from './project-identity.repository.js';
+import { fingerprintAccountDeletionSubject } from './project-account-deletion.crypto.js';
+import {
+  ProjectRuntimeBlockedError,
+  assertProjectRuntimeAvailable,
+  assertProjectSessionUsable,
+} from './project-session-state.js';
 
 type ProjectUserRow = {
   id: string;
@@ -503,6 +510,14 @@ export async function issueProjectSession(
   provider: string,
   authConfig: Awaited<ReturnType<typeof authAdminService.getAuthConfig>>
 ): Promise<ProjectSession> {
+  try {
+    await assertProjectSessionUsable({ projectId, projectUserId: user.id });
+  } catch (error) {
+    if (error instanceof ProjectRuntimeBlockedError) {
+      throw new ProjectAuthError(error.code, 'Project session is unavailable', error.statusCode);
+    }
+    throw error;
+  }
   const expiresIn = authConfig.jwtExpiresIn;
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
   const token = signProjectUserToken({
@@ -538,6 +553,15 @@ export async function issueTrustedProjectSession(
   projectId: string,
   userId: string
 ): Promise<ProjectSession> {
+  try {
+    await assertProjectRuntimeAvailable(projectId);
+    await assertProjectSessionUsable({ projectId, projectUserId: userId });
+  } catch (error) {
+    if (error instanceof ProjectRuntimeBlockedError) {
+      throw new ProjectAuthError(error.code, 'Project session is unavailable', error.statusCode);
+    }
+    throw error;
+  }
   const { schemaName, authConfig } = await getProjectContext(projectId);
   const capabilities = await getSchemaCapabilities(schemaName);
   const user = await touchProjectUserLastLoginAt(schemaName, capabilities, userId);
@@ -774,6 +798,14 @@ async function issueAppleProjectSession(
   audience: string,
   authConfig: Awaited<ReturnType<typeof authAdminService.getAuthConfig>>,
 ): Promise<ProjectSession> {
+  try {
+    await assertProjectSessionUsable({ projectId, projectUserId: user.id });
+  } catch (error) {
+    if (error instanceof ProjectRuntimeBlockedError) {
+      throw new ProjectAuthError(error.code, 'Project session is unavailable', error.statusCode);
+    }
+    throw error;
+  }
   const expiresIn = Math.min(authConfig.jwtExpiresIn, 3_600);
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
   const token = signProjectUserToken({
@@ -905,10 +937,104 @@ export async function appleLogin(
         email: authentication.user.email,
         nickname: authentication.user.nickname,
       });
+      let generation = 1;
+      if (Buffer.byteLength(config.accountDeletion.fenceSecret, 'utf8') >= 32) {
+        const subjectFingerprint = fingerprintAccountDeletionSubject({
+          secret: config.accountDeletion.fenceSecret,
+          projectId,
+          provider: 'apple',
+          issuer: identityKey.issuer,
+          subject: identityKey.subject,
+        });
+        const incompleteDeletion = await client.query<{ status: string }>(
+          `SELECT operation.status
+           FROM druvia_project_account_deletion_fences fence
+           JOIN druvia_project_account_deletions operation
+             ON operation.deletion_id = fence.deletion_id
+           WHERE fence.project_id = $1 AND fence.provider = 'apple' AND fence.issuer = $2
+             AND fence.subject_fingerprint = $3 AND fence.completed_at IS NULL
+             AND operation.status IN ('accepted', 'processing', 'attention_required')
+           LIMIT 1`,
+          [projectId, identityKey.issuer, subjectFingerprint],
+        );
+        if (incompleteDeletion.rows[0]) {
+          throw new ProjectAuthError(
+            'PROVIDER_REAUTH_REQUIRED',
+            'Previous account deletion is still in progress',
+            409,
+          );
+        }
+        const inFlightRevocation = await client.query<{ status: string }>(
+          `SELECT token.status
+           FROM druvia_project_account_deletion_provider_tokens token
+           JOIN druvia_project_account_deletions operation
+             ON operation.deletion_id = token.deletion_id
+           JOIN druvia_project_account_deletion_fences fence
+             ON fence.deletion_id = operation.deletion_id
+           WHERE fence.project_id = $1 AND fence.provider = 'apple' AND fence.issuer = $2
+             AND fence.subject_fingerprint = $3 AND fence.completed_at IS NOT NULL
+             AND token.status = 'in_flight'
+           LIMIT 1`,
+          [projectId, identityKey.issuer, subjectFingerprint],
+        );
+        if (inFlightRevocation.rows[0]) {
+          throw new ProjectAuthError(
+            'PROVIDER_REAUTH_REQUIRED',
+            'Previous Apple authorization cleanup is still in progress',
+            409,
+          );
+        }
+        await client.query(
+          `UPDATE druvia_project_account_deletion_provider_tokens token
+           SET status = 'superseded', updated_at = NOW(), lease_token = NULL, lease_until = NULL
+           FROM druvia_project_account_deletions operation
+           JOIN druvia_project_account_deletion_fences fence
+             ON fence.deletion_id = operation.deletion_id
+           WHERE token.deletion_id = operation.deletion_id
+             AND fence.project_id = $1 AND fence.provider = 'apple' AND fence.issuer = $2
+             AND fence.subject_fingerprint = $3 AND fence.completed_at IS NOT NULL
+             AND token.status = 'pending'`,
+          [projectId, identityKey.issuer, subjectFingerprint],
+        );
+        await client.query(
+          `UPDATE druvia_project_account_deletions operation
+           SET provider_revocation_status = 'superseded'
+           FROM druvia_project_account_deletion_fences fence
+           WHERE fence.deletion_id = operation.deletion_id
+             AND fence.project_id = $1 AND fence.provider = 'apple' AND fence.issuer = $2
+             AND fence.subject_fingerprint = $3 AND fence.completed_at IS NOT NULL
+             AND operation.provider_revocation_status IN ('pending', 'in_flight')
+             AND NOT EXISTS (
+               SELECT 1 FROM druvia_project_account_deletion_provider_tokens token
+               WHERE token.deletion_id = operation.deletion_id AND token.status <> 'superseded'
+             )`,
+          [projectId, identityKey.issuer, subjectFingerprint],
+        );
+        await client.query(
+          `DELETE FROM druvia_project_account_deletion_provider_tokens token
+           USING druvia_project_account_deletions operation,
+                 druvia_project_account_deletion_fences fence
+           WHERE token.deletion_id = operation.deletion_id
+             AND fence.deletion_id = operation.deletion_id
+             AND fence.project_id = $1 AND fence.provider = 'apple' AND fence.issuer = $2
+             AND fence.subject_fingerprint = $3 AND fence.completed_at IS NOT NULL
+             AND token.status = 'superseded'`,
+          [projectId, identityKey.issuer, subjectFingerprint],
+        );
+        const generationResult = await client.query<{ generation: number | null }>(
+          `SELECT MAX(generation) AS generation
+           FROM druvia_project_account_deletion_fences
+           WHERE project_id = $1 AND provider = 'apple' AND issuer = $2
+             AND subject_fingerprint = $3`,
+          [projectId, identityKey.issuer, subjectFingerprint],
+        );
+        generation = (generationResult.rows[0]?.generation ?? 0) + 1;
+      }
       identity = await createProjectAuthIdentity(client, {
         ...identityKey,
         projectUserId: userRow.id,
         audience: authentication.providerSession.audience,
+        generation,
       });
     }
 
@@ -994,8 +1120,8 @@ export async function refreshProjectSession(
   const { schemaName, authConfig } = await getProjectContext(projectId);
   const capabilities = await getSchemaCapabilities(schemaName);
   const tokenHash = hashToken(refreshToken);
-  const candidates = await query<{ provider: string; identity_id: string | number | null }>(
-    `SELECT provider, identity_id
+  const candidates = await query<{ provider: string; identity_id: string | number | null; user_id: string }>(
+    `SELECT provider, identity_id, user_id
      FROM druvia_project_refresh_tokens
      WHERE project_id = $1 AND token_hash = $2
        AND revoked = false AND expires_at > NOW()
@@ -1003,6 +1129,16 @@ export async function refreshProjectSession(
     [projectId, tokenHash],
   );
   const candidate = candidates[0];
+  if (candidate) {
+    try {
+      await assertProjectSessionUsable({ projectId, projectUserId: candidate.user_id });
+    } catch (error) {
+      if (error instanceof ProjectRuntimeBlockedError) {
+        throw new ProjectAuthError(error.code, 'Project session is unavailable', error.statusCode);
+      }
+      throw error;
+    }
+  }
   if (candidate?.provider === 'apple' && candidate.identity_id) {
     return refreshAppleProjectSession({
       projectId,

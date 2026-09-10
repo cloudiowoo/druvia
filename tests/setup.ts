@@ -47,6 +47,8 @@ applyDefaultEnv(
 
 // Set test environment variables before any imports.
 applyDefaultEnv('JWT_SECRET', 'test-secret-key-for-testing-only-32chars')
+applyDefaultEnv('ACCOUNT_DELETION_STATUS_SECRET', 'test-account-deletion-status-secret-32chars')
+applyDefaultEnv('ACCOUNT_DELETION_FENCE_SECRET', 'test-account-deletion-fence-secret-32chars')
 applyDefaultEnv('DB_HOST', 'localhost')
 applyDefaultEnv('DB_PORT', '5432')
 applyDefaultEnv('DB_USER', 'postgres')

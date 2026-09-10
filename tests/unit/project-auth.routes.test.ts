@@ -16,6 +16,7 @@ describe('Project Auth routes', () => {
     const app = {
       get: vi.fn(),
       post: vi.fn(),
+      put: vi.fn(),
     };
 
     await projectAuthRoutes(app as never);

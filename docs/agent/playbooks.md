@@ -1248,9 +1248,76 @@ SQLSTATE `55006` 阻断，outbox 清除后名称可再次使用。
 - SDK：调用 `client.projectAuth.appleLogin(...)`；成功后沿用 Project Session 的 access/refresh、`refresh()` 和 `logout()`，应用不保存 Apple provider refresh token。
 - 用户撤销：同项目 Apple Project Session 调用 `POST /api/v1/projects/:projectId/auth/apple/revoke`。暂时失败保留 `revoke_pending`，管理员可在认证页重试。
 - Server notification：`POST /api/v1/projects/:projectId/auth/apple/notifications`，不接受 Druvia JWT/API key，只接受 Apple 签名 payload。真实验收前必须配置公网 TLS 地址。
-- `account-deleted` 先进入待处理状态。应用服务完成领域数据删除后，管理员在认证页确认；确认动作会删除 Project User、session、provider token 和 identity。
+- 已启用 Project Account Self-Deletion 且 cleanup preflight 通过时，`account-deleted` 自动收敛到统一删除 operation；未启用项目继续进入既有待处理 lifecycle 兼容路径。
 - 应用服务也可使用同项目 trusted backend key 调用 lifecycle event list/ack；必须显式授予 `project_auth_lifecycle:manage`，该高风险 scope 不在 trusted key 默认权限中，不能下发到客户端。
 - 可重试错误：`PROVIDER_RATE_LIMITED`、`PROVIDER_UNAVAILABLE`。需要重新授权：`PROVIDER_REAUTH_REQUIRED`。配置/Schema 问题由管理员处理，不由客户端循环重试。
+
+### Project Account Self-Deletion
+
+#### 部署前置
+
+1. 在启动包含该功能的新 API 前生成并备份两条独立密钥，不能复用 `JWT_SECRET`、`SECRETS_ENCRYPTION_KEY`、Hasura、Functions、Worker 或 Storage ticket secret：
+
+```bash
+openssl rand -hex 32 # ACCOUNT_DELETION_STATUS_SECRET
+openssl rand -hex 32 # ACCOUNT_DELETION_FENCE_SECRET
+```
+
+2. 将密钥写入部署私有 `.env`，不要提交。两条值必须随数据库恢复保持稳定；丢失 status secret 会使既有状态凭证失效，丢失 fence secret 会破坏跨 generation 身份匹配。
+3. 应用 migration `025` 后再启动 API。local Compose 已只读挂载 `/app/migrations`，可执行：
+
+```bash
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+docker compose --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  run --rm api node apps/api/dist/cli/migrate.js up
+```
+
+双库并行时，该命令跟随 `DRUVIA_LOCAL_DB_HOST`。另一库也必须在切换前显式设置 `DB_HOST=postgres` 或 `DB_HOST=postgres-postgis` 分别执行 migration；两套 migration 状态不会自动同步。生产/release 使用各自既有 Compose 命令，manifest migration ceiling 必须为 `25`。
+
+4. 重建 API 以注入新环境变量，并确认执行器健康：
+
+```bash
+curl -fsS http://localhost:3001/health
+curl -fsS http://localhost:3001/health/account-deletion-executor
+```
+
+`accountDeletionExecutor=false`、overdue 或 `attentionRequiredOperations > 0` 都会使主健康检查或专用健康检查失败，并必须进入运维告警。关闭执行器的 API 不应承载生产流量。
+
+#### 项目 Cleanup Hook
+
+项目在自己的 schema 提供精确签名 `druvia_delete_project_user_data(text, uuid) RETURNS jsonb`。函数必须由 `druvia_projects.db_user` 拥有，使用 `SECURITY DEFINER` 和固定 `search_path = pg_catalog, <project_schema>`，并撤销 PUBLIC EXECUTE：
+
+```sql
+ALTER FUNCTION <project_schema>.druvia_delete_project_user_data(text, uuid)
+  OWNER TO <project_db_user>;
+REVOKE ALL ON FUNCTION <project_schema>.druvia_delete_project_user_data(text, uuid)
+  FROM PUBLIC;
+```
+
+函数 body、删除顺序、法定保留字段和设备 wipe ledger 由应用项目负责。必须以 `deletion_id` 建幂等 ledger，只删除传入 `project_user_id` 的业务数据，并在全部业务清理和待执行设备 wipe 状态已持久化后返回 `{"completed": true}`。不要通过调用真实用户数据来探测函数；Druvia 启用开关只做签名、owner、完整函数 ACL、固定 search path、高权限角色继承和跨 schema 写权限静态检查。除 owner 外不得向 PUBLIC 或任何其他角色授予 EXECUTE。正常执行会在同一 PostgreSQL statement 内复验 operation 持久 contract hash 后调用函数，摘要变化会进入 `attention_required`。
+
+在 Admin 的 Project Auth 页面确认“业务清理：已就绪”，再启用“账户删除”。启用需要项目 `auth:manage` capability；存在未终结 operation 时不能禁用。
+
+#### App 调用流程
+
+1. 以当前 Apple Project Session 调用 `POST /api/v1/projects/:projectId/auth/account-deletions/intents`，请求体为空，携带 UUID `Idempotency-Key`。
+2. App 在 Keychain 保存 `deletionId` 和 `statusToken`，将服务端 `reauthNonce` 的 SHA-256 交给 Apple AuthenticationServices。
+3. 以同一 Project Session、`X-Druvia-Deletion-Token` 和 Apple reauth credential 调用 `POST .../:deletionId/confirm`。首次成功返回 `202` 后立即停止同步/Realtime 并清除当前设备 Session。
+4. Access Token 失效、App 重启或响应丢失后，以 deletion token 调用 `GET .../:deletionId`。accepted/completed 的 confirm 重放也不需要再次提交 Apple credential。
+
+客户端不得发送 user ID、identity ID、Apple subject、Platform Token、Trusted Backend Key 或 Hasura 凭证。status token 只能放在专用请求头，不得放入 URL、日志或遥测。
+
+#### 失败与恢复
+
+- transient Hook、Storage 或 Apple revoke 错误由 API 内执行器持久退避重试；API 重启后从 PostgreSQL lease 继续。
+- contract drift 或超过 24 小时仍失败会进入 `attention_required` 并保留原失败 phase。先修复 Hook/Storage/配置并核对 operation，再由数据库管理员在维护窗口把该 operation 从 `attention_required` 原子改回 `processing`、设置 `next_attempt_at = NOW()`；不得改 project/user/schema/function/generation 或删除 fence。
+- Apple `account-deleted` 在账户删除未启用或 Hook 未就绪时只会保留 `deletion_pending` 与待处理事件。lifecycle ack 不会直接删除业务用户；完成配置后再次 ack，服务端才会原子创建受管 operation/fence。
+- 内建 project backup restore 会同时持有 Data Access 排他锁和 project-auth 项目锁，先写 runtime gate，再执行 `pg_restore`，对恢复后的 Hook 重新执行 owner/ACL/search path/跨 schema 权限安全预检，并使用恢复后摘要重放全部 `accepted / processing / attention_required / completed` fence 后开放项目。历史 operation 摘要可以不同于旧备份中的合法 Hook 版本。执行器 claim 会在同一项目锁内复验 runtime gate，不会与恢复并发修改同一项目。legacy schema-only backup 必须能唯一映射到同一 workspace/project，否则以 `BACKUP_SCOPE_MISMATCH` 拒绝。
+- 直接运行外部 `pg_restore` 不会自动建立 runtime gate。涉及已启用账户删除的项目时，必须停掉 API/Admin/Hasura，改用经过审查的恢复流程，并在开放流量前重放 fence。
+- 当前没有独立于主数据库的 deletion ledger。整库灾难恢复会同时回滚 `public` operation/fence，因此不能宣称可防止旧账户复活；生产启用前若要求该保证，必须先建设外部 append-only ledger 及 restore 前 import/reconcile 门禁。
+- 已建立的 Hasura WebSocket 不能由本功能即时强制断开；App 主动断开和优先清除业务数据只缩短窗口，不构成服务端强制终止证明。
 
 ### Decommission 与恢复
 

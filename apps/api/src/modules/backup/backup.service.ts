@@ -14,8 +14,13 @@ import {
 } from './backup-command.js';
 import {
   withProjectDataAccessMutationLock,
-  withSchemaDataAccessMutationLock,
 } from '../data-access/data-access-mutation-lock.js';
+import {
+  beginProjectRestoreGate,
+  markProjectRestoreRecoveryRequired,
+  replayProjectAccountDeletionFences,
+} from '../project-auth/project-account-deletion-restore.service.js';
+import { withProjectAuthProjectLock } from '../project-auth/project-identity.repository.js';
 
 const logger = createApiLogger({ module: 'backup' });
 
@@ -164,9 +169,9 @@ async function runCommandForRestore(
       logger.error('pg_restore stderr', { schemaName, command: spec.command }, String(stderr));
     });
 
-    child.on('close', (_code) => {
-      // pg_restore may return non-zero even on success with warnings
-      resolve();
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`pg_restore exited with code ${code}`));
     });
 
     child.on('error', reject);
@@ -361,12 +366,37 @@ export async function restoreBackup(backupId: string): Promise<void> {
     throw new Error('Backup is not completed');
   }
 
-  const restore = () => restoreBackupUnlocked(backup);
-  if (backup.projectId) {
-    await withProjectDataAccessMutationLock(backup.projectId, restore, { globalMode: 'exclusive' });
-  } else {
-    await withSchemaDataAccessMutationLock(backup.schemaName, () => restore(), { globalMode: 'exclusive' });
-  }
+  const legacyScope = backup.projectId
+    ? null
+    : await queryOne<{ project_id: string }>(
+      `${VALID_BACKUP_SCOPE_CTE}
+       SELECT project_id
+       FROM unique_schema_scopes
+       WHERE schema_name = $1 AND tenant_id = $2`,
+      [backup.schemaName, backup.tenantId],
+    );
+  const projectId = backup.projectId ?? legacyScope?.project_id;
+  if (!projectId) throw new Error('BACKUP_SCOPE_MISMATCH');
+
+  const restore = async (lockClient: import('pg').PoolClient) => withProjectAuthProjectLock(
+    lockClient,
+    projectId,
+    async () => {
+      await beginProjectRestoreGate(projectId, backup.backupId);
+      try {
+        await restoreBackupUnlocked(backup);
+        await replayProjectAccountDeletionFences(projectId, backup.backupId);
+      } catch (error) {
+        await markProjectRestoreRecoveryRequired(
+          projectId,
+          backup.backupId,
+          'ACCOUNT_DELETION_FENCE_REPLAY_REQUIRED',
+        );
+        throw error;
+      }
+    },
+  );
+  await withProjectDataAccessMutationLock(projectId, restore, { globalMode: 'exclusive' });
 }
 
 export async function restoreBackupUnlocked(backup: Backup): Promise<void> {

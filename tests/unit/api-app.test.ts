@@ -11,6 +11,12 @@ vi.mock('../../apps/api/src/lib/redis.js', () => ({
   },
 }))
 
+vi.mock('../../apps/api/src/modules/project-auth/project-session-state.js', () => ({
+  ProjectRuntimeBlockedError: class ProjectRuntimeBlockedError extends Error {},
+  assertProjectRuntimeAvailable: vi.fn().mockResolvedValue(undefined),
+  assertProjectSessionUsable: vi.fn().mockResolvedValue(undefined),
+}))
+
 import { appCorsOptions, buildApp } from '../../apps/api/src/index.js'
 import { authenticate, signProjectUserToken, signToken } from '../../apps/api/src/middleware/auth.js'
 import { getApiLogContext } from '../../apps/api/src/lib/log-context.js'

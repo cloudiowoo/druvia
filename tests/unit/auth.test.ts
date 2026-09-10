@@ -6,6 +6,12 @@ vi.mock('../../apps/api/src/modules/api-keys/api-keys.service.js', () => ({
   validateApiKey: validateApiKeyMock,
 }));
 
+vi.mock('../../apps/api/src/modules/project-auth/project-session-state.js', () => ({
+  ProjectRuntimeBlockedError: class ProjectRuntimeBlockedError extends Error {},
+  assertProjectRuntimeAvailable: vi.fn().mockResolvedValue(undefined),
+  assertProjectSessionUsable: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   authenticate,
   optionalAuth,

@@ -17,6 +17,8 @@ export interface ProjectAuthIdentity {
   subject: string;
   audience: string | null;
   status: ProjectAuthIdentityStatus;
+  generation: number;
+  createdAt: Date;
 }
 
 export interface ProjectAuthIdentitySummary {
@@ -39,6 +41,8 @@ interface ProjectAuthIdentityRow {
   subject: string;
   audience: string | null;
   status: ProjectAuthIdentityStatus;
+  generation: number;
+  created_at: Date;
 }
 
 function toIdentity(row: ProjectAuthIdentityRow): ProjectAuthIdentity {
@@ -51,6 +55,8 @@ function toIdentity(row: ProjectAuthIdentityRow): ProjectAuthIdentity {
     subject: row.subject,
     audience: row.audience,
     status: row.status,
+    generation: row.generation,
+    createdAt: row.created_at ?? new Date(0),
   };
 }
 
@@ -159,7 +165,7 @@ export async function findProjectAuthIdentity(
   input: { projectId: string; provider: string; issuer: string; subject: string },
 ): Promise<ProjectAuthIdentity | null> {
   const result = await client.query<ProjectAuthIdentityRow>(
-    `SELECT id, project_id, project_user_id, provider, issuer, subject, audience, status
+    `SELECT id, project_id, project_user_id, provider, issuer, subject, audience, status, generation, created_at
      FROM druvia_project_auth_identities
      WHERE project_id = $1 AND provider = $2 AND issuer = $3 AND subject = $4`,
     [input.projectId, input.provider, input.issuer, input.subject],
@@ -172,7 +178,7 @@ export async function findProjectAuthIdentityById(
   identityId: number,
 ): Promise<ProjectAuthIdentity | null> {
   const result = await client.query<ProjectAuthIdentityRow>(
-    `SELECT id, project_id, project_user_id, provider, issuer, subject, audience, status
+    `SELECT id, project_id, project_user_id, provider, issuer, subject, audience, status, generation, created_at
      FROM druvia_project_auth_identities
      WHERE id = $1`,
     [identityId],
@@ -186,7 +192,7 @@ export async function findProjectAuthIdentityByProjectUser(
   projectUserId: string,
 ): Promise<ProjectAuthIdentity | null> {
   const result = await client.query<ProjectAuthIdentityRow>(
-    `SELECT id, project_id, project_user_id, provider, issuer, subject, audience, status
+    `SELECT id, project_id, project_user_id, provider, issuer, subject, audience, status, generation, created_at
      FROM druvia_project_auth_identities
      WHERE project_id = $1 AND project_user_id = $2 AND provider = 'apple'
      ORDER BY id LIMIT 1`,
@@ -239,13 +245,14 @@ export async function createProjectAuthIdentity(
     issuer: string;
     subject: string;
     audience: string;
+    generation?: number;
   },
 ): Promise<ProjectAuthIdentity> {
   const result = await client.query<ProjectAuthIdentityRow>(
     `INSERT INTO druvia_project_auth_identities
-       (project_id, project_user_id, provider, issuer, subject, audience)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, project_id, project_user_id, provider, issuer, subject, audience, status`,
+       (project_id, project_user_id, provider, issuer, subject, audience, generation)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, project_id, project_user_id, provider, issuer, subject, audience, status, generation, created_at`,
     [
       input.projectId,
       input.projectUserId,
@@ -253,6 +260,7 @@ export async function createProjectAuthIdentity(
       input.issuer,
       input.subject,
       input.audience,
+      input.generation ?? 1,
     ],
   );
   const row = result.rows[0];
@@ -270,7 +278,7 @@ export async function reactivateProjectAuthIdentity(
      SET status = 'active', audience = $2, revoked_at = NULL,
          updated_at = NOW(), last_authenticated_at = NOW()
      WHERE id = $1 AND status IN ('active', 'revoked')
-     RETURNING id, project_id, project_user_id, provider, issuer, subject, audience, status`,
+     RETURNING id, project_id, project_user_id, provider, issuer, subject, audience, status, generation, created_at`,
     [identityId, audience],
   );
   return result.rows[0] ? toIdentity(result.rows[0]) : null;
@@ -466,6 +474,15 @@ export async function assertProjectAuthProjectDeletionAllowed(projectId: string)
          WHERE e.project_id = $1
            AND e.status = 'application_action_pending'
        )
+       OR EXISTS (
+         SELECT 1 FROM druvia_project_account_deletions d
+         WHERE d.project_id = $1 AND d.status NOT IN ('expired', 'completed')
+       )
+       OR EXISTS (
+         SELECT 1 FROM druvia_project_account_deletion_provider_tokens t
+         JOIN druvia_project_account_deletions d ON d.deletion_id = t.deletion_id
+         WHERE d.project_id = $1 AND t.status <> 'superseded'
+       )
      ) AS blocked`,
     [projectId]
   );
@@ -494,6 +511,15 @@ export async function assertAppleProviderDeletionAllowed(projectId: string): Pro
        OR EXISTS (
          SELECT 1 FROM druvia_project_auth_events
          WHERE project_id = $1 AND status = 'application_action_pending'
+       )
+       OR EXISTS (
+         SELECT 1 FROM druvia_project_account_deletions
+         WHERE project_id = $1 AND status NOT IN ('expired', 'completed')
+       )
+       OR EXISTS (
+         SELECT 1 FROM druvia_project_account_deletion_provider_tokens t
+         JOIN druvia_project_account_deletions d ON d.deletion_id = t.deletion_id
+         WHERE d.project_id = $1 AND t.status <> 'superseded'
        )
      ) AS blocked`,
     [projectId],

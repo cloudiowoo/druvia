@@ -1341,6 +1341,22 @@ class ApiClient {
     );
   }
 
+  async getProjectAccountDeletionConfig(projectId: string) {
+    return this.request<{
+      enabled: boolean;
+      cleanupReady: boolean;
+      updatedAt: string | null;
+    }>('GET', `/api/v1/projects/${projectId}/auth/account-deletion`);
+  }
+
+  async updateProjectAccountDeletionConfig(projectId: string, enabled: boolean) {
+    return this.request<{
+      enabled: boolean;
+      cleanupReady: boolean;
+      updatedAt: string | null;
+    }>('PUT', `/api/v1/projects/${projectId}/auth/account-deletion`, { enabled });
+  }
+
   async listAppleLifecycleEvents(projectId: string) {
     return this.request<{
       items: Array<{
