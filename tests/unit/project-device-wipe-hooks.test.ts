@@ -19,7 +19,8 @@ const validContract = {
   owner_createrole: false,
   owner_replication: false,
   security_definer: true,
-  function_config: ['search_path=pg_catalog, dru_default_pitchetch'],
+  function_config: ['search_path=pg_catalog, dru_default_pitchetch, pg_temp'],
+  fixed_search_path: true,
   public_execute: false,
   non_owner_execute: false,
   owner_role_membership: false,
@@ -74,6 +75,19 @@ describe('project device wipe Hook contracts', () => {
     expect(client.query.mock.calls[1]?.[0]).toMatch(/pg_extension/)
   })
 
+  it('guards sequence privilege checks from PostgreSQL predicate reordering', async () => {
+    const client = inspectionClient()
+
+    await inspectDeviceWipeHookContracts(client as never, 'proj_1', names)
+
+    const contractSql = client.query.mock.calls[1]?.[0] as string
+    const guardedSequenceChecks = contractSql.match(
+      /CASE\s+WHEN other_sequence\.relkind = 'S'\s+THEN has_sequence_privilege\([\s\S]*?\)\s+ELSE false\s+END/g,
+    )
+
+    expect(guardedSequenceChecks).toHaveLength(2)
+  })
+
   it.each([
     ['superuser owner', { owner_superuser: true }],
     ['non security-definer function', { security_definer: false }],
@@ -87,6 +101,14 @@ describe('project device wipe Hook contracts', () => {
     ['cross-schema sequence access', { owner_cross_schema_sequence_access: true }],
     ['cross-schema create', { owner_cross_schema_create: true }],
     ['cross-schema security-definer execute', { owner_cross_schema_definer_execute: true }],
+    ['database-normalized search path mismatch', { fixed_search_path: false }],
+    ['missing pg_temp search path', { function_config: ['search_path=pg_catalog, dru_default_pitchetch'] }],
+    ['pg_temp before trusted schemas', { function_config: ['search_path=pg_temp, pg_catalog, dru_default_pitchetch'] }],
+    ['extra public schema in search path', { function_config: ['search_path=pg_catalog, dru_default_pitchetch, public, pg_temp'] }],
+    ['duplicate search path settings', { function_config: [
+      'search_path=pg_catalog, dru_default_pitchetch, pg_temp',
+      'search_path=public',
+    ] }],
     ['mutable search path', { function_config: ['search_path=public'] }],
   ])('rejects %s', async (_label, override) => {
     await expect(inspectDeviceWipeHookContracts(
@@ -109,7 +131,9 @@ describe('project device wipe Hook contracts', () => {
     })).resolves.toBeUndefined()
 
     expect(client.query).toHaveBeenCalledWith(
-      expect.stringMatching(/WITH contract AS MATERIALIZED[\s\S]*validated AS MATERIALIZED[\s\S]*druvia_register_device_wipe_binding/),
+      expect.stringMatching(
+        /WITH contract AS MATERIALIZED[\s\S]*WHERE contract_hash = \$1\s+AND fixed_search_path[\s\S]*druvia_register_device_wipe_binding/,
+      ),
       expect.arrayContaining(['a'.repeat(64), '00000000-0000-4000-8000-000000000001', 'A'.repeat(43), 1]),
     )
   })

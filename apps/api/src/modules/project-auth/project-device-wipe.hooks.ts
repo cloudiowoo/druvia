@@ -5,6 +5,10 @@ import {
   type DeviceWipeHookNames,
   type DeviceWipeMandateSource,
 } from './project-device-wipe.types.js';
+import {
+  fixedProjectFunctionSearchPathSql,
+  hasFixedProjectFunctionSearchPath,
+} from './project-function-security.js';
 
 interface HookContractRow {
   owner_name: string;
@@ -14,6 +18,7 @@ interface HookContractRow {
   owner_replication: boolean;
   security_definer: boolean;
   function_config: string[] | null;
+  fixed_search_path: boolean;
   public_execute: boolean;
   non_owner_execute: boolean;
   owner_role_membership: boolean;
@@ -60,6 +65,7 @@ function hookContractSelect(signature: string): string {
       owner_role.rolreplication AS owner_replication,
       proc.prosecdef AS security_definer,
       proc.proconfig AS function_config,
+      ${fixedProjectFunctionSearchPathSql()} AS fixed_search_path,
       EXISTS (
         SELECT 1
         FROM aclexplode(COALESCE(proc.proacl, acldefault('f', proc.proowner))) function_grant
@@ -143,7 +149,11 @@ function hookContractSelect(signature: string): string {
               AND extension_dependency.objid = other_sequence.oid
               AND extension_dependency.deptype = 'e'
           )
-          AND has_sequence_privilege(owner_role.oid, other_sequence.oid, 'USAGE,SELECT,UPDATE')
+          AND CASE
+            WHEN other_sequence.relkind = 'S'
+              THEN has_sequence_privilege(owner_role.oid, other_sequence.oid, 'USAGE,SELECT,UPDATE')
+            ELSE false
+          END
       ) AS owner_cross_schema_sequence_access,
       EXISTS (
         SELECT 1
@@ -259,7 +269,11 @@ function hookContractSelect(signature: string): string {
                 AND extension_dependency.objid = other_sequence.oid
                 AND extension_dependency.deptype = 'e'
             )
-            AND has_sequence_privilege(owner_role.oid, other_sequence.oid, 'USAGE,SELECT,UPDATE')
+            AND CASE
+              WHEN other_sequence.relkind = 'S'
+                THEN has_sequence_privilege(owner_role.oid, other_sequence.oid, 'USAGE,SELECT,UPDATE')
+              ELSE false
+            END
         )::text,
         EXISTS (
           SELECT 1
@@ -304,8 +318,6 @@ function validateContract(
   dbUser: string,
   schemaName: string,
 ): HookContractRow {
-  const searchPath = row?.function_config?.find((entry) => entry.startsWith('search_path='));
-  const normalizedSearchPath = searchPath?.replace(/\s/g, '').toLowerCase();
   if (
     !row
     || row.owner_name !== dbUser
@@ -323,7 +335,8 @@ function validateContract(
     || !row.security_definer
     || row.public_execute
     || row.non_owner_execute
-    || normalizedSearchPath !== `search_path=pg_catalog,${schemaName}`.toLowerCase()
+    || !row.fixed_search_path
+    || !hasFixedProjectFunctionSearchPath(row.function_config, schemaName)
     || !HASH_PATTERN.test(row.contract_hash)
   ) {
     throw hookNotConfigured('Project device wipe Hook security contract is invalid');
@@ -370,7 +383,8 @@ function invocationContractCte(schemaName: string, functionName: string, signatu
     .replace(/\$1::text/g, `'${schemaName.replace(/'/g, "''")}'::text`)
     .replace(/\$2::text/g, `'${functionName.replace(/'/g, "''")}'::text`);
   return `contract AS MATERIALIZED (${select}),
-    validated AS MATERIALIZED (SELECT 1 FROM contract WHERE contract_hash = $1)`;
+    validated AS MATERIALIZED (SELECT 1 FROM contract WHERE contract_hash = $1
+      AND fixed_search_path)`;
 }
 
 function assertInvocationInput(input: {

@@ -1287,16 +1287,18 @@ curl -fsS http://localhost:3001/health/account-deletion-executor
 
 #### 项目 Cleanup Hook
 
-项目在自己的 schema 提供精确签名 `druvia_delete_project_user_data(text, uuid) RETURNS jsonb`。函数必须由 `druvia_projects.db_user` 拥有，使用 `SECURITY DEFINER` 和固定 `search_path = pg_catalog, <project_schema>`，并撤销 PUBLIC EXECUTE：
+项目在自己的 schema 提供精确签名 `druvia_delete_project_user_data(text, uuid) RETURNS jsonb`。函数必须由 `druvia_projects.db_user` 拥有，使用 `SECURITY DEFINER` 和固定 `search_path = pg_catalog, <project_schema>, pg_temp`；`pg_temp` 必须显式置于末尾，并撤销 PUBLIC EXECUTE：
 
 ```sql
 ALTER FUNCTION <project_schema>.druvia_delete_project_user_data(text, uuid)
   OWNER TO <project_db_user>;
+ALTER FUNCTION <project_schema>.druvia_delete_project_user_data(text, uuid)
+  SET search_path = pg_catalog, <project_schema>, pg_temp;
 REVOKE ALL ON FUNCTION <project_schema>.druvia_delete_project_user_data(text, uuid)
   FROM PUBLIC;
 ```
 
-函数 body、删除顺序、法定保留字段和设备 wipe ledger 由应用项目负责。必须以 `deletion_id` 建幂等 ledger，只删除传入 `project_user_id` 的业务数据，并在全部业务清理和待执行设备 wipe 状态已持久化后返回 `{"completed": true}`。不要通过调用真实用户数据来探测函数；Druvia 启用开关只做签名、owner、完整函数 ACL、固定 search path、高权限角色继承和跨 schema 写权限静态检查。除 owner 外不得向 PUBLIC 或任何其他角色授予 EXECUTE。正常执行会在同一 PostgreSQL statement 内复验 operation 持久 contract hash 后调用函数，摘要变化会进入 `attention_required`。
+函数 body、删除顺序、法定保留字段和设备 wipe ledger 由应用项目负责。必须以 `deletion_id` 建幂等 ledger，只删除传入 `project_user_id` 的业务数据，并在全部业务清理和待执行设备 wipe 状态已持久化后返回 `{"completed": true}`。不要通过调用真实用户数据来探测函数；Druvia 启用开关只做签名、owner、完整函数 ACL、固定 search path、高权限角色继承和跨 schema 写权限静态检查。除 owner 外不得向 PUBLIC 或任何其他角色授予 EXECUTE。正常执行会在同一 PostgreSQL statement 内复验 operation 持久 contract hash 与当前固定 search path 后调用函数；任一不符都会停止调用并进入 `attention_required`。
 
 在 Admin 的 Project Auth 页面确认“业务清理：已就绪”，再启用“账户删除”。启用需要项目 `auth:manage` capability；存在未终结 operation 时不能禁用。
 
@@ -1357,10 +1359,10 @@ druvia_list_device_wipe_mandates(text, bigint) RETURNS jsonb
 druvia_ack_device_wipe_mandate(text, bigint, uuid, jsonb) RETURNS jsonb
 ```
 
-函数必须由项目 `db_user` 拥有，使用 `SECURITY DEFINER`、固定 `search_path=pg_catalog,<project_schema>`，并撤销 PUBLIC 及非 owner EXECUTE。该 `db_user` 不能继承任何其他角色，也不能被任何非 superuser 角色直接或间接继承，并且不得拥有 `REPLICATION`；它不能在其他非系统 schema 拥有非 extension relation/column/sequence 权限或 CREATE，也不能执行其他 schema 中可直接调用的非 extension `SECURITY DEFINER` 函数。PostGIS 等由数据库管理员安装的 extension 自有对象不计为业务越权；`RETURNS trigger/event_trigger` 不可由普通 SQL 直接调用，也不计入 definer execute，但外部表 `TRIGGER` 权限仍会阻止启用。当前 MVP 因此只支持一个 `db_user` 隔离到一个项目 schema；共享该用户的多环境项目应保持设备擦除禁用，不能放宽检查绕过。业务 migration 必须在删除事务提交前创建 account/session mandate。
+函数必须由项目 `db_user` 拥有，使用 `SECURITY DEFINER`、固定 `search_path=pg_catalog,<project_schema>,pg_temp`（`pg_temp` 必须显式置末尾），并撤销 PUBLIC 及非 owner EXECUTE。该 `db_user` 不能继承任何其他角色，也不能被任何非 superuser 角色直接或间接继承，并且不得拥有 `REPLICATION`；它不能在其他非系统 schema 拥有非 extension relation/column/sequence 权限或 CREATE，也不能执行其他 schema 中可直接调用的非 extension `SECURITY DEFINER` 函数。PostGIS 等由数据库管理员安装的 extension 自有对象不计为业务越权；`RETURNS trigger/event_trigger` 不可由普通 SQL 直接调用，也不计入 definer execute，但外部表 `TRIGGER` 权限仍会阻止启用。当前 MVP 因此只支持一个 `db_user` 隔离到一个项目 schema；共享该用户的多环境项目应保持设备擦除禁用，不能放宽检查绕过。业务 migration 必须在删除事务提交前创建 account/session mandate。
 5. 重建 API/Admin 后，在项目“认证”页的“设备擦除指令”面板确认三个 Hook 已就绪，再启用。Apple provider 可以保持 disabled；本地 session-scope 联调不依赖 Apple。
 
-启用前若返回 Hook security contract invalid，应由数据库管理员审计并撤销其他业务 schema 中授予该 `db_user` 或 `PUBLIC` 的权限，尤其是 `SECURITY DEFINER` 函数的 EXECUTE；不得在 Druvia 中增加白名单绕过。当前本地共享库的 `dru_default_taroapp` 仍有向 `PUBLIC` 开放的此类函数，PITCHETCH 在清理这些 ACL 前会按预期失败关闭。
+启用前若返回 Hook security contract invalid，应由数据库管理员审计并撤销其他业务 schema 中授予该 `db_user` 或 `PUBLIC` 的权限，尤其是 `SECURITY DEFINER` 函数的 EXECUTE；不得在 Druvia 中增加白名单绕过。当前活动本地库已由 Taro migration 清除这类 PUBLIC EXECUTE，并通过跨项目 callable 检查；更换数据库或从旧备份恢复后必须重新执行 catalog 验证。
 
 ### 联调顺序
 

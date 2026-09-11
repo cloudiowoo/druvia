@@ -34,7 +34,8 @@ const validContract = {
   owner_bypassrls: false,
   owner_createrole: false,
   security_definer: true,
-  function_config: ['search_path=pg_catalog, drU_default_pitchetch'],
+  function_config: ['search_path=pg_catalog, drU_default_pitchetch, pg_temp'],
+  fixed_search_path: true,
   function_acl: '{dru_dru_default_pitchetch_user=X/dru_dru_default_pitchetch_user}',
   public_execute: false,
   non_owner_execute: false,
@@ -68,6 +69,14 @@ describe('project account deletion cleanup contract', () => {
     ['explicit non-owner execute', { non_owner_execute: true }],
     ['privileged inherited role', { owner_privileged_membership: true }],
     ['cross-schema write access', { owner_cross_schema_write: true }],
+    ['database-normalized search path mismatch', { fixed_search_path: false }],
+    ['missing pg_temp search path', { function_config: ['search_path=pg_catalog, dru_default_pitchetch'] }],
+    ['pg_temp before trusted schemas', { function_config: ['search_path=pg_temp, pg_catalog, dru_default_pitchetch'] }],
+    ['extra public schema in search path', { function_config: ['search_path=pg_catalog, dru_default_pitchetch, public, pg_temp'] }],
+    ['duplicate search path settings', { function_config: [
+      'search_path=pg_catalog, dru_default_pitchetch, pg_temp',
+      'search_path=public',
+    ] }],
     ['mutable search path', { function_config: ['search_path=public'] }],
   ])('rejects %s', async (_label, override) => {
     const client = clientWith({ ...validContract, ...override })
@@ -87,7 +96,9 @@ describe('project account deletion cleanup contract', () => {
     })
 
     expect(client.query).toHaveBeenCalledWith(
-      expect.stringMatching(/WITH contract AS MATERIALIZED[\s\S]*validated AS MATERIALIZED[\s\S]*FROM validated/),
+      expect.stringMatching(
+        /WITH contract AS MATERIALIZED[\s\S]*WHERE contract_hash = \$5\s+AND fixed_search_path[\s\S]*FROM validated/,
+      ),
       [
         'user_1',
         '05558e52-357a-485b-920a-0ab441a2ad96',

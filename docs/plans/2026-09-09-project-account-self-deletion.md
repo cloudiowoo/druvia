@@ -355,7 +355,8 @@ pending_confirmation -> accepted -> processing -> completed
 
 `project_schema`、`cleanup_function`、`cleanup_contract_hash`、Project User、provider/issuer 和 generation
 在 operation 创建后不可变。hash 覆盖 `pg_get_functiondef`、owner、ACL 和安全属性；执行器执行前重算，
-发生变化则进入 `attention_required`，避免执行期间修改函数导致删除范围漂移。
+并在调用同一 statement 中再次要求固定 search path 合同成立。hash 或 search path 不符时不调用函数并进入
+`attention_required`，避免旧持久摘要绕过升级后的安全合同或执行期间修改函数导致删除范围漂移。
 `accepted/processing/attention_required` 均是不可恢复的账户状态。数据库 partial unique index 保证同一
 Project User 最多存在一个非终结 operation，`expired/completed` 为终态；`source + source_reference`
 partial unique index 保证同一
@@ -436,6 +437,8 @@ CREATE FUNCTION dru_default_pitchetch.druvia_delete_project_user_data(
   p_deletion_id uuid
 ) RETURNS jsonb
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, dru_default_pitchetch, pg_temp
 AS $$
 BEGIN
   -- 按 PITCHETCH 外键和保留策略删除业务数据；不得删除 users 或 Druvia public 表。
@@ -450,7 +453,7 @@ $$;
 - 在单个数据库事务内完成；错误时整体 rollback。
 - function 使用 `SECURITY DEFINER`，owner 必须是项目专属 `db_user`；owner 必须是非 superuser、
   非 `BYPASSRLS`、非 `CREATEROLE` 的隔离角色，只持有目标项目 schema 权限。
-- function 固定 `search_path = pg_catalog, <project_schema>`，撤销 `PUBLIC EXECUTE` 且除 owner 外不得向
+- function 固定 `search_path = pg_catalog, <project_schema>, pg_temp`，其中 `pg_temp` 必须显式置末尾；撤销 `PUBLIC EXECUTE` 且除 owner 外不得向
   其他角色授予 EXECUTE；启用配置时审计 owner、role attributes、完整 ACL、`prosecdef`、`proconfig`
   和精确参数/返回类型，任一不符即失败关闭。
 - 先建立需要保留的设备 wipe task，再删除设备注册和业务数据。

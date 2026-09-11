@@ -158,14 +158,14 @@ Arguments are respectively the Project User ID, binding HMAC and revision for re
 Each function must:
 
 - be owned by the project's unprivileged, non-replication `db_user`;
-- be `SECURITY DEFINER` with immutable `search_path=pg_catalog,<project_schema>`;
+- be `SECURITY DEFINER` with immutable `search_path=pg_catalog,<project_schema>,pg_temp`, with `pg_temp` explicitly last;
 - expose no `PUBLIC` or non-owner `EXECUTE` grant;
 - inherit no other role and be directly or indirectly assumable by no non-superuser role;
 - have no non-extension relation, column or sequence privileges and no `CREATE` privilege in any other non-system schema;
 - have no executable non-extension `SECURITY DEFINER` function in another non-system schema;
 - return JSONB with the exact expected shape.
 
-Registration returns `{ "registered": true }`. Query returns a JSON array of `{ "deletionId", "scope", "sessionId" }`, where scope is `account` or `session` and only session scope has `sessionId`. Acknowledge returns `{ "acknowledged": true }`. Druvia treats malformed output or contract drift as unavailable and does not expose database details to the caller.
+Registration returns `{ "registered": true }`. Query returns a JSON array of `{ "deletionId", "scope", "sessionId" }`, where scope is `account` or `session` and only session scope has `sessionId`. Acknowledge returns `{ "acknowledged": true }`. Druvia treats malformed output or contract drift as unavailable and does not expose database details to the caller. Every invocation rechecks both the persisted contract hash and the fixed search-path predicate in the same statement, so a legacy persisted hash cannot keep an old search path executable.
 
 Objects owned by a database-admin-installed PostgreSQL extension, such as PostGIS catalog relations, are excluded from the business cross-schema check. Trigger-only functions returning `trigger` or `event_trigger` are also excluded from the cross-schema definer-execute check because PostgreSQL cannot invoke them through ordinary SQL; cross-schema relation `TRIGGER` privilege remains prohibited. Role isolation is checked in both directions: the owner cannot inherit another role, and no non-superuser role can inherit or assume the owner. The MVP deliberately fails closed when one `db_user` spans multiple project/environment schemas or can execute another callable business schema security-definer function. Such a project must leave Device Wipe disabled. A dedicated NOLOGIN Hook-owner role and its create/restore/drop lifecycle are deferred to a separate migration; operators must not weaken the checks as a deployment workaround.
 
@@ -249,9 +249,11 @@ The down migration refuses rollback when any device-wipe config, key, binding or
 
 ## 8. External PITCHETCH Follow-up
 
-PITCHETCH must add a forward migration after V10 that upgrades its V8 device-wipe tables and implements the three Hook contracts. It must preserve the existing transaction order that inserts mandates before account/session deletion, encode the same 32-byte HMAC as base64url on the wire (hex is acceptable only as an internal DB representation), and add a Druvia/PITCHETCH shared fixture for canonical JSON and Ed25519 verification.
+PITCHETCH V12 now upgrades its device-wipe tables and implements the three Hook contracts. It preserves the application-owned migration boundary and has been applied idempotently to the active local PostGIS database. The remaining application contract work is to preserve the transaction order that inserts mandates before account/session deletion, encode the same 32-byte HMAC as base64url on the wire (hex is acceptable only as an internal DB representation), and maintain a Druvia/PITCHETCH shared fixture for canonical JSON and Ed25519 verification.
 
-The current local shared database also requires ACL cleanup before enablement: `dru_default_pitchetch_user` can presently execute non-extension `SECURITY DEFINER` functions exposed by `dru_default_taroapp` through `PUBLIC`. Druvia correctly rejects that Hook owner. The owning application/database migration must revoke those public grants and verify its intended callers; PITCHETCH must not receive cross-project grants as a workaround.
+Taro App has applied its own forward ACL-hardening migration to the active shared local database. Catalog verification reports 17 Taro `SECURITY DEFINER` functions, zero `PUBLIC EXECUTE`, zero callable definers from the PITCHETCH role, no `execute_sql(text)`, and a fixed `pg_catalog,<taro_schema>,pg_temp` search path for all 17 functions. The former shared-local-database ACL blocker is therefore cleared without granting PITCHETCH cross-project access.
+
+PITCHETCH Device Wipe development may continue on the current local Druvia database. Its first production deployment still uses a physically isolated Druvia database without the Taro App schema; that topology is a deployment boundary, not a reason to weaken Hook checks. Any future colocated deployment must preserve the same application-owned migration and catalog gates.
 
 Real Apple account-deletion and Watch/iPhone acceptance remain deferred until the Apple Developer account is available. Session-scope deletion, session-independent lookup, receipt idempotency, restore suppression and cross-user isolation are testable locally without Apple.
 
@@ -263,8 +265,11 @@ Real Apple account-deletion and Watch/iPhone acceptance remain deferred until th
 - `docker exec druvia-nginx nginx -t`: passed after the sensitive-route logging and forwarding changes.
 - Live Nginx probes confirmed malformed request targets do not emit raw or multiply encoded handles; valid off-namespace and query-only handle paths are logged only as `[REDACTED]`. The rebuilt API likewise redacts query-only, off-namespace and deeply encoded handles before Fastify request logging.
 - The rebuilt local API and Admin containers report healthy; direct API and Nginx-proxied health checks both return HTTP 200.
-- Local API receives the bounded 5-second/30-second Hook timeout defaults and connects to `postgres-postgis`; the two Device Wipe secrets remain absent from the private local env, so project enablement intentionally stays unavailable until operators provision stable distinct values.
+- Local API receives the bounded 5-second/30-second Hook timeout defaults, connects to `postgres-postgis`, and has two stable, distinct Device Wipe secrets configured in the Git-ignored private `docker/.env`; secret values are not recorded in repository documentation.
 - Active local PostGIS reports migration version `26`; the inactive ordinary PostgreSQL remains at `25` and must be migrated if selected again.
+- Active local PostGIS verifies Taro ACL hardening: 17 security-definer functions, zero `PUBLIC EXECUTE`, zero PITCHETCH-callable definer, no `execute_sql(text)`, and `pg_temp` explicitly last in every fixed search path.
+- PITCHETCH V12 is present in the application migration ledger. All three Device Wipe Hooks use the dedicated project owner, `SECURITY DEFINER`, exact `pg_catalog,<project_schema>,pg_temp` search paths and no public execution; the owner role passes membership, assumption, replication and cross-schema privilege checks.
+- Druvia contract inspection now guards `has_sequence_privilege` with a relation-kind `CASE`, preventing PostgreSQL predicate reordering from evaluating it against non-sequence catalog rows. `DRUVIA_RUN_DEVICE_WIPE_HOOK_INTEGRATION=1 DB_HOST=127.0.0.1 DB_PORT=5632 pnpm vitest run tests/integration/project-device-wipe-hooks.test.ts` passed against PostgreSQL with an ordinary foreign-schema relation and produced all three contract hashes; the same gated test now runs in the release integration job after core migrations. The rebuilt local API reports `hooksReady=true`. PITCHETCH was enabled once through the management API and created its first Ed25519 key, then was disabled without deleting that verification material; current state is `enabled=false`, one active signing key and one verification key.
 - Isolated PostGIS migration verification completed the full up path through `026` and the empty-state down path back to `025`.
 - Four critical-review rounds closed timeout/error-chain, Compose secret propagation, Redis fail-open, database-user lifecycle and trigger-only contract-inspection gaps; the final independent review reported no reproducible Critical or Important findings.
 - `git diff --check`: passed.

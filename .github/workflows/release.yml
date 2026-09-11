@@ -103,6 +103,17 @@ jobs:
           DRUVIA_RUN_DATA_ACCESS_COLUMN_INTEGRATION: '1'
         run: pnpm vitest run tests/integration/data-access-generated-columns.test.ts
 
+      - name: Verify Device Wipe Hook inspection against PostgreSQL
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_USER: postgres
+          DB_NAME: druvia
+          POSTGRES_PASSWORD: integration-password
+          JWT_SECRET: integration-test-secret-at-least-32-characters
+          DRUVIA_RUN_DEVICE_WIPE_HOOK_INTEGRATION: '1'
+        run: pnpm vitest run tests/integration/project-device-wipe-hooks.test.ts
+
   release:
     needs: data-access-integration
     runs-on: ubuntu-latest

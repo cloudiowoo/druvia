@@ -338,6 +338,23 @@ describe('release workflow', () => {
     }
   });
 
+  it('runs the Device Wipe Hook PostgreSQL regression with import-safe test configuration', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+    const gate = workflow.indexOf('name: Verify Device Wipe Hook inspection against PostgreSQL');
+    const releaseJob = workflow.indexOf('\n  release:', gate);
+    const step = workflow.slice(gate, releaseJob);
+
+    expect(gate).toBeGreaterThan(0);
+    expect(step).toContain("DRUVIA_RUN_DEVICE_WIPE_HOOK_INTEGRATION: '1'");
+    expect(step).toContain('JWT_SECRET: integration-test-secret-at-least-32-characters');
+    expect(step).toContain('DB_HOST: 127.0.0.1');
+    expect(step).toContain("DB_PORT: '5432'");
+    expect(step).toContain('DB_USER: postgres');
+    expect(step).toContain('DB_NAME: druvia');
+    expect(step).toContain('POSTGRES_PASSWORD: integration-password');
+    expect(step).toContain('tests/integration/project-device-wipe-hooks.test.ts');
+  });
+
   it('gates release images on project membership authorization', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
     const gate = workflow.indexOf('name: Verify project membership authorization');

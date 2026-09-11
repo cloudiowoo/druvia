@@ -26,6 +26,10 @@ import {
 import { getAppleAdapter, ProjectAuthError } from './project-auth.service.js';
 import { ProjectRuntimeBlockedError, assertProjectSessionUsable } from './project-session-state.js';
 import {
+  fixedProjectFunctionSearchPathSql,
+  hasFixedProjectFunctionSearchPath,
+} from './project-function-security.js';
+import {
   acquireProjectAuthIdentityIdLock,
   acquireProjectAuthProjectLock,
   findProjectAuthIdentityById,
@@ -87,6 +91,7 @@ function cleanupContractSelect(schemaParameter: string, functionParameter: strin
             owner_role.rolcreaterole AS owner_createrole,
             proc.prosecdef AS security_definer,
             proc.proconfig AS function_config,
+            ${fixedProjectFunctionSearchPathSql()} AS fixed_search_path,
             proc.proacl::text AS function_acl,
             has_function_privilege('public', proc.oid, 'EXECUTE') AS public_execute,
             EXISTS (
@@ -205,6 +210,7 @@ export async function inspectAccountDeletionCleanupContract(
     owner_createrole: boolean;
     security_definer: boolean;
     function_config: string[] | null;
+    fixed_search_path: boolean;
     function_acl: string | null;
     public_execute: boolean;
     non_owner_execute: boolean;
@@ -217,9 +223,6 @@ export async function inspectAccountDeletionCleanupContract(
     [schemaName, functionName],
   );
   const contract = contractResult.rows[0];
-  const searchPath = contract?.function_config?.find((entry) => entry.startsWith('search_path='));
-  const normalizedSearchPath = searchPath?.replace(/\s/g, '').toLowerCase();
-  const expectedSearchPath = `search_path=pg_catalog,${schemaName}`.toLowerCase();
   if (
     !contract
     || contract.owner_name !== dbUser
@@ -231,7 +234,8 @@ export async function inspectAccountDeletionCleanupContract(
     || !contract.security_definer
     || contract.public_execute
     || contract.non_owner_execute
-    || normalizedSearchPath !== expectedSearchPath
+    || !contract.fixed_search_path
+    || !hasFixedProjectFunctionSearchPath(contract.function_config, schemaName)
   ) {
     throw new ProjectAuthError(
       'ACCOUNT_DELETION_NOT_CONFIGURED',
@@ -265,6 +269,7 @@ export async function executeAccountDeletionCleanupContract(
        ${cleanupContractSelect('$3', '$4')}
      ), validated AS MATERIALIZED (
        SELECT 1 FROM contract WHERE contract_hash = $5
+         AND fixed_search_path
      )
      SELECT ${quoteIdentifier(input.schemaName)}.${quoteIdentifier(input.functionName)}($1::text, $2::uuid) AS result
      FROM validated`,
