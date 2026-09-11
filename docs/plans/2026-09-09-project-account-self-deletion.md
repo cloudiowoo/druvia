@@ -557,22 +557,22 @@ Apple login 规则：
 
 ## 12. 设备本地擦除
 
-Druvia Core 当前没有设备身份模型，不在平台表中伪造 PITCHETCH 设备关系。
+migration `025` 的 `localWipeRequired` 仍是发起设备的粗粒度即时提示。跨 Session、App 重装或原
+Project Session 已失效后的可靠投递由后续 migration `026` Device Wipe extension 承担，完整契约见
+`docs/plans/2026-09-10-project-device-wipe-mandates.md`。
 
-PITCHETCH 负责：
+职责边界为：
 
-- 在业务 schema 维护设备登记及不可逆 device ID hash。
-- cleanup Hook 在删除设备登记前创建 `account_deletion_device_wipes` 记录。
-- 若使用 APNs，wipe task 可在独立加密列短期保留投递所需的最小 push token，投递确认或期限到达后立即
-  删除；日志和普通查询只暴露 device hash，不暴露 push token。
-- 通过 PITCHETCH 后台投递 APNs；离线设备的兜底路径是在下一次 API 请求或 refresh 收到
-  `ACCOUNT_DELETION_IN_PROGRESS` 后立即清除 Keychain、SQLite、文件缓存和离线队列。
-- 当前发起设备在收到 `202` 后立即擦除；若响应丢失，则使用 deletion status token 查询后擦除。
-- wipe task 不得外键级联到已删除 users 行；除短期加密 push token 外，只保留 deletion ID、device hash、
-  `pending/ack` 和时间，不保留用户内容。
+- PITCHETCH 在业务 schema 维护原始设备关系和删除 obligation，并在业务删除事务提交前创建 mandate。
+- Druvia 从有效 Project Session 派生注册 owner，签发独立 binding 查询凭证，保存不可变 Ed25519 签名
+  envelope 与幂等回执；不保存原始设备 identity，也不允许客户端枚举或指定其他用户。
+- PITCHETCH 客户端验证签名、擦除 Keychain/SQLite/文件缓存/离线队列并提交 receipt；APNs 只能作为
+  唤醒优化，不能替代 sessionless pull。
+- 项目应用的 device/binding/mandate/receipt 表保持普通 Hasura 客户端零 CRUD，通过三条受检 Hook 与
+  Druvia 对接。
 
-Druvia 状态接口只返回 `localWipeRequired`，不接受客户端指定其他用户或设备 owner。多设备 task 的
-创建、投递和 ack 属于 PITCHETCH 验收证据。
+PITCHETCH migration、双用户/多设备、本机重装、公钥轮换和真实 Watch/iPhone 验收仍属于应用侧证据，
+不得因 Druvia 平台切片完成而标记为端到端生产就绪。
 
 ## 13. 文件边界
 

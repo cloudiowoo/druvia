@@ -69,6 +69,16 @@ export interface BackupListItem {
   createdAt: Date;
 }
 
+export function projectRestoreRecoveryReason(error: unknown): string {
+  const code = (error as { code?: string }).code;
+  if (
+    code === 'DEVICE_WIPE_BINDING_REPLAY_REQUIRED'
+    || code === 'DEVICE_WIPE_RECEIPT_REPLAY_REQUIRED'
+    || code === 'DEVICE_WIPE_RESTORE_TIMEOUT'
+  ) return code;
+  return 'ACCOUNT_DELETION_FENCE_REPLAY_REQUIRED';
+}
+
 function toBackup(row: BackupRow): Backup {
   return {
     id: row.id,
@@ -390,7 +400,7 @@ export async function restoreBackup(backupId: string): Promise<void> {
         await markProjectRestoreRecoveryRequired(
           projectId,
           backup.backupId,
-          'ACCOUNT_DELETION_FENCE_REPLAY_REQUIRED',
+          projectRestoreRecoveryReason(error),
         );
         throw error;
       }

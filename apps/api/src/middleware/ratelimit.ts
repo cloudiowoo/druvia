@@ -1,9 +1,31 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { createHash } from 'node:crypto';
 import type { RequestUser } from './auth.js';
 import { redis } from '../lib/redis.js';
 import { createApiLogger } from '../lib/logger.js';
 
 const logger = createApiLogger({ module: 'ratelimit' });
+const ATOMIC_RATE_LIMIT_SCRIPT = `
+local window_seconds = tonumber(ARGV[1])
+local current = redis.call('INCR', KEYS[1])
+local ttl = redis.call('TTL', KEYS[1])
+if current == 1 or ttl < 0 then
+  redis.call('EXPIRE', KEYS[1], window_seconds)
+  ttl = window_seconds
+end
+return {current, ttl}
+`;
+
+async function consumeAtomicRateLimit(key: string, windowSeconds: number) {
+  const result = await redis.eval(ATOMIC_RATE_LIMIT_SCRIPT, 1, key, String(windowSeconds));
+  if (
+    !Array.isArray(result)
+    || result.length !== 2
+    || !Number.isFinite(Number(result[0]))
+    || !Number.isFinite(Number(result[1]))
+  ) throw new Error('Invalid Redis rate limit response');
+  return { current: Number(result[0]), ttl: Number(result[1]) };
+}
 
 export interface RateLimitConfig {
   windowMs: number;      // Time window in milliseconds
@@ -181,6 +203,80 @@ export const appleNotificationRateLimiter = createAppleProjectRateLimiter({
   maxRequests: 120,
   windowSeconds: 60,
 });
+
+export async function deviceWipeBindingRateLimiter(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const projectId = (request.params as { projectId?: string })?.projectId ?? 'invalid';
+  const maxRequests = 30;
+  try {
+    const { current, ttl } = await consumeAtomicRateLimit(
+      `ratelimit:device-wipe-binding:${request.ip}`,
+      15 * 60,
+    );
+    setRateLimitHeaders(reply, maxRequests, current, ttl, current > maxRequests);
+    if (current > maxRequests) {
+      return reply.status(429).send({
+        success: false,
+        error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests, please try again later' },
+      });
+    }
+  } catch (error) {
+    logger.error('device wipe binding rate limiter error', {
+      requestId: request.id,
+      projectId,
+      projectUserId: undefined,
+    }, error);
+    return reply.status(503).send({
+      success: false,
+      error: {
+        code: 'DEVICE_WIPE_RATE_LIMIT_UNAVAILABLE',
+        message: 'Device wipe request is temporarily unavailable',
+      },
+    });
+  }
+}
+
+export async function deviceWipeLookupRateLimiter(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const params = request.params as { projectId?: string; bindingHandle?: string };
+  const projectId = /^[A-Za-z0-9_-]{1,128}$/.test(params?.projectId ?? '')
+    ? params.projectId!
+    : 'invalid';
+  const bindingHandle = /^dwb_[A-Za-z0-9_-]{1,43}$/.test(params?.bindingHandle ?? '')
+    ? params.bindingHandle!
+    : 'invalid';
+  const bindingDigest = createHash('sha256').update(bindingHandle).digest('hex').slice(0, 32);
+  const tiers = [
+    { key: `ratelimit:device-wipe-lookup:ip:${request.ip}`, maxRequests: 600 },
+    { key: `ratelimit:device-wipe-lookup:project:${projectId}:${request.ip}`, maxRequests: 240 },
+    { key: `ratelimit:device-wipe-lookup:binding:${bindingDigest}:${request.ip}`, maxRequests: 120 },
+  ];
+  try {
+    for (const tier of tiers) {
+      const { current, ttl } = await consumeAtomicRateLimit(tier.key, 60);
+      setRateLimitHeaders(reply, tier.maxRequests, current, ttl, current > tier.maxRequests);
+      if (current > tier.maxRequests) {
+        return reply.status(429).send({
+          success: false,
+          error: { code: 'DEVICE_WIPE_RATE_LIMITED', message: 'Device wipe request rate exceeded' },
+        });
+      }
+    }
+  } catch (error) {
+    logger.error('device wipe rate limiter error', { requestId: request.id, projectId }, error);
+    return reply.status(503).send({
+      success: false,
+      error: {
+        code: 'DEVICE_WIPE_RATE_LIMIT_UNAVAILABLE',
+        message: 'Device wipe request is temporarily unavailable',
+      },
+    });
+  }
+}
 
 // File upload rate limiter
 export const uploadRateLimiter = createRateLimiter({

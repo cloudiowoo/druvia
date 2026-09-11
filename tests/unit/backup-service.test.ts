@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { query, queryOne, projectLock, schemaLock, projectAuthLock } = vi.hoisted(() => ({
+const {
+  query, queryOne, projectLock, schemaLock, projectAuthLock, replayFences, markRecovery,
+} = vi.hoisted(() => ({
   query: vi.fn(),
   queryOne: vi.fn(),
   projectLock: vi.fn(),
   schemaLock: vi.fn(),
   projectAuthLock: vi.fn(),
+  replayFences: vi.fn(),
+  markRecovery: vi.fn(),
 }))
 
 vi.mock('../../apps/api/src/db/index.js', () => ({ query, queryOne, pool: {} }))
@@ -20,10 +24,16 @@ vi.mock('../../apps/api/src/modules/data-access/data-access-mutation-lock.js', (
 vi.mock('../../apps/api/src/modules/project-auth/project-identity.repository.js', () => ({
   withProjectAuthProjectLock: projectAuthLock,
 }))
+vi.mock('../../apps/api/src/modules/project-auth/project-account-deletion-restore.service.js', () => ({
+  beginProjectRestoreGate: vi.fn(),
+  markProjectRestoreRecoveryRequired: markRecovery,
+  replayProjectAccountDeletionFences: replayFences,
+}))
 
 import {
   listBackups,
   listBackupsForProjects,
+  projectRestoreRecoveryReason,
   restoreBackup,
 } from '../../apps/api/src/modules/backup/backup.service.js'
 
@@ -44,6 +54,8 @@ describe('backup restore migration lock', () => {
     projectLock.mockResolvedValue(undefined)
     schemaLock.mockResolvedValue(undefined)
     projectAuthLock.mockResolvedValue(undefined)
+    replayFences.mockResolvedValue(undefined)
+    markRecovery.mockResolvedValue(undefined)
   })
 
   it('serializes project backups with the deployment-wide exclusive lock', async () => {
@@ -89,6 +101,21 @@ describe('backup restore migration lock', () => {
 
     expect(projectLock).not.toHaveBeenCalled()
     expect(schemaLock).not.toHaveBeenCalled()
+  })
+
+  it('classifies device wipe replay failures with a dedicated recovery reason', () => {
+    const error = new Error('device wipe replay failed')
+    error.name = 'ProjectDeviceWipeRestoreError'
+    Object.assign(error, { code: 'DEVICE_WIPE_RECEIPT_REPLAY_REQUIRED' })
+
+    expect(projectRestoreRecoveryReason(error)).toBe('DEVICE_WIPE_RECEIPT_REPLAY_REQUIRED')
+    Object.assign(error, { code: 'DEVICE_WIPE_BINDING_REPLAY_REQUIRED' })
+    expect(projectRestoreRecoveryReason(error)).toBe('DEVICE_WIPE_BINDING_REPLAY_REQUIRED')
+    Object.assign(error, { code: 'DEVICE_WIPE_RESTORE_TIMEOUT' })
+    expect(projectRestoreRecoveryReason(error)).toBe('DEVICE_WIPE_RESTORE_TIMEOUT')
+    expect(projectRestoreRecoveryReason(new Error('account replay failed'))).toBe(
+      'ACCOUNT_DELETION_FENCE_REPLAY_REQUIRED',
+    )
   })
 
   it('filters workspace backup listings by unique matching schema scope before pagination', async () => {

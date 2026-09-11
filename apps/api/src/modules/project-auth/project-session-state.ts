@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { queryOne } from '../../db/index.js';
 
 export class ProjectRuntimeBlockedError extends Error {
@@ -13,13 +14,16 @@ export class ProjectRuntimeBlockedError extends Error {
   }
 }
 
-export async function assertProjectRuntimeAvailable(projectId: string): Promise<void> {
-  const gate = await queryOne<{ status: 'restoring' | 'recovery_required' }>(
-    `SELECT status
+export async function assertProjectRuntimeAvailable(
+  projectId: string,
+  client?: Pick<PoolClient, 'query'>,
+): Promise<void> {
+  const sql = `SELECT status
      FROM druvia_project_runtime_gates
-     WHERE project_id = $1`,
-    [projectId],
-  );
+     WHERE project_id = $1`;
+  const gate = client
+    ? (await client.query<{ status: 'restoring' | 'recovery_required' }>(sql, [projectId])).rows[0] ?? null
+    : await queryOne<{ status: 'restoring' | 'recovery_required' }>(sql, [projectId]);
   if (gate) {
     throw new ProjectRuntimeBlockedError('PROJECT_RESTORE_IN_PROGRESS', 503);
   }

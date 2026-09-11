@@ -44,13 +44,9 @@ describe('migration 025 project account deletion contract', () => {
     expect(sql).toContain("ERRCODE = '55006'")
   })
 
-  it('registers migration 025 as the bootstrap and release ceiling', () => {
+  it('keeps migration 025 registered after later release migrations', () => {
     const runner = readFileSync('apps/api/src/cli/migrate.ts', 'utf8')
-    const workflow = readFileSync('.github/workflows/release.yml', 'utf8')
-    const generator = readFileSync('scripts/release/generate-manifest.mjs', 'utf8')
 
     expect(runner).toContain("25: 'druvia_project_account_deletions'")
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '25'/g)).toHaveLength(2)
-    expect(generator).toContain('const REQUIRED_MIGRATION_TARGET = 25')
   })
 })

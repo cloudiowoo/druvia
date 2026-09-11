@@ -1,13 +1,35 @@
 import { pool } from '../../db/index.js';
+import { config } from '../../config/index.js';
 import {
   executeAccountDeletionCleanupContract,
   inspectAccountDeletionCleanupContract,
 } from './project-account-deletion.service.js';
+import {
+  replayProjectDeviceWipeReceipts,
+  replayProjectDeviceWipeRegistrations,
+} from './project-device-wipe-restore.service.js';
+import { deviceWipeErrorChainHasCode } from './project-device-wipe.types.js';
 import { withProjectAuthProjectLock } from './project-identity.repository.js';
 
 function quoteIdentifier(value: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error('Invalid account deletion restore identifier');
   return `"${value.replace(/"/g, '""')}"`;
+}
+
+export class ProjectDeviceWipeRestoreTimeoutError extends Error {
+  readonly code = 'DEVICE_WIPE_RESTORE_TIMEOUT';
+
+  constructor(cause?: unknown) {
+    super('Project device wipe restore Hook timed out', { cause });
+    this.name = 'ProjectDeviceWipeRestoreTimeoutError';
+  }
+}
+
+async function setDeviceWipeRestoreTimeout(client: import('pg').PoolClient): Promise<void> {
+  await client.query(
+    "SELECT set_config('statement_timeout', $1, true)",
+    [`${config.deviceWipe.restoreHookStatementTimeoutMs}ms`],
+  );
 }
 
 export async function beginProjectRestoreGate(projectId: string, operationId: string): Promise<void> {
@@ -49,6 +71,7 @@ export async function replayProjectAccountDeletionFences(
       [projectId, operationId],
     );
     if (!gate.rows[0]) throw new Error('PROJECT_RESTORE_GATE_MISSING');
+    await setDeviceWipeRestoreTimeout(client);
     const operations = await client.query<{
       deletion_id: string;
       project_schema: string;
@@ -66,6 +89,7 @@ export async function replayProjectAccountDeletionFences(
       [projectId],
     );
     const restoredContract = await inspectAccountDeletionCleanupContract(client, projectId);
+    await replayProjectDeviceWipeRegistrations(client, projectId);
     for (const operation of operations.rows) {
       if (
         operation.project_schema !== restoredContract.schemaName
@@ -85,6 +109,8 @@ export async function replayProjectAccountDeletionFences(
         [operation.project_user_id],
       );
     }
+    await setDeviceWipeRestoreTimeout(client);
+    await replayProjectDeviceWipeReceipts(client, projectId);
     await client.query(
       `DELETE FROM druvia_project_runtime_gates
        WHERE project_id = $1 AND operation_id = $2 AND status = 'restoring'`,
@@ -92,7 +118,14 @@ export async function replayProjectAccountDeletionFences(
     );
     await client.query('COMMIT');
   } catch (error) {
-    await client.query('ROLLBACK');
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      throw rollbackError;
+    }
+    if (deviceWipeErrorChainHasCode(error, '57014')) {
+      throw new ProjectDeviceWipeRestoreTimeoutError(error);
+    }
     throw error;
   } finally {
     client.release();

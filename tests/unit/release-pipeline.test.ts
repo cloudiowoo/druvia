@@ -35,7 +35,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '17',
-      DRUVIA_MIGRATION_TO: '25',
+      DRUVIA_MIGRATION_TO: '26',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
       DRUVIA_MIGRATION_REVERSIBLE: 'false',
     }, {
@@ -58,7 +58,7 @@ describe('release manifest generator', () => {
       migrations: {
         required: true,
         from: 17,
-        to: 25,
+        to: 26,
         requiresBackup: true,
         reversible: false,
       },
@@ -121,7 +121,7 @@ describe('release manifest generator', () => {
     }, { composePath })).rejects.toThrow(/RELEASE_CHANNEL_MISMATCH/);
   });
 
-  it('rejects release manifests that can skip migration 024 or its backup', async () => {
+  it('rejects release manifests that can skip migration 026 or its backup', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'druvia-release-'));
     const composePath = join(dir, 'docker-compose.release.yml');
     await writeFile(composePath, 'services:\n  api:\n    image: test\n', 'utf8');
@@ -138,7 +138,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '18',
-      DRUVIA_MIGRATION_TO: '24',
+      DRUVIA_MIGRATION_TO: '26',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
     };
 
@@ -146,7 +146,7 @@ describe('release manifest generator', () => {
       ...baseEnv, DRUVIA_MIGRATION_REQUIRED: 'false',
     }, { composePath })).rejects.toThrow(/UNSAFE_MIGRATION_CONTRACT/);
     await expect(buildReleaseManifest({
-      ...baseEnv, DRUVIA_MIGRATION_TO: '21',
+      ...baseEnv, DRUVIA_MIGRATION_TO: '25',
     }, { composePath })).rejects.toThrow(/UNSAFE_MIGRATION_CONTRACT/);
     await expect(buildReleaseManifest({
       ...baseEnv, DRUVIA_MIGRATION_REQUIRES_BACKUP: 'false',
@@ -294,7 +294,7 @@ describe('release workflow', () => {
     expect(workflow).toContain('prerelease: ${{ env.RELEASE_PRERELEASE }}');
   });
 
-  it('marks migration 025 as the safe default for tag and manual releases', () => {
+  it('marks migration 026 as the safe default for tag and manual releases', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
     expect(workflow).not.toContain("\n      migration_required:");
@@ -304,7 +304,7 @@ describe('release workflow', () => {
     expect(workflow).not.toContain("\n      migration_reversible:");
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_FROM: \$\{\{ inputs\.migration_from \|\| '18' \}\}/g)).toHaveLength(2);
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '25'/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: '26'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REVERSIBLE: 'false'/g)).toHaveLength(2);
   });
@@ -323,6 +323,14 @@ describe('release workflow', () => {
       'tests/unit/project-account-deletion-hook.test.ts',
       'tests/unit/project-account-deletion-executor.test.ts',
       'tests/unit/project-account-deletion-restore.test.ts',
+      'tests/unit/project-device-wipe-schema.test.ts',
+      'tests/unit/project-device-wipe-crypto.test.ts',
+      'tests/unit/project-device-wipe-hooks.test.ts',
+      'tests/unit/project-device-wipe-service.test.ts',
+      'tests/unit/project-device-wipe-restore.test.ts',
+      'tests/unit/project-device-wipe.controller.test.ts',
+      'tests/unit/ratelimit-device-wipe.test.ts',
+      'tests/unit/admin/project-device-wipe-config.test.tsx',
       'tests/unit/project-session-state.test.ts',
       'tests/unit/backup-service.test.ts',
     ]) {

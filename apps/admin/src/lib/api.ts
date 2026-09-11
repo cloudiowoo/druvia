@@ -1357,6 +1357,35 @@ class ApiClient {
     }>('PUT', `/api/v1/projects/${projectId}/auth/account-deletion`, { enabled });
   }
 
+  async getProjectDeviceWipeConfig(projectId: string) {
+    return this.request<{
+      enabled: boolean;
+      hooksReady: boolean;
+      activeKeyId: string | null;
+      verificationKeyCount: number;
+      updatedAt: string | null;
+    }>('GET', `/api/v1/projects/${projectId}/device-wipe`);
+  }
+
+  async updateProjectDeviceWipeConfig(projectId: string, enabled: boolean) {
+    return this.request<{
+      enabled: boolean;
+      hooksReady: boolean;
+      activeKeyId: string | null;
+      verificationKeyCount: number;
+      updatedAt: string | null;
+    }>('PUT', `/api/v1/projects/${projectId}/device-wipe`, { enabled });
+  }
+
+  async rotateProjectDeviceWipeSigningKey(projectId: string) {
+    return this.request<{
+      keyId: string;
+      algorithm: 'Ed25519';
+      publicJwk: Record<string, unknown>;
+      status: 'active';
+    }>('POST', `/api/v1/projects/${projectId}/device-wipe/signing-keys/rotate`);
+  }
+
   async listAppleLifecycleEvents(projectId: string) {
     return this.request<{
       items: Array<{

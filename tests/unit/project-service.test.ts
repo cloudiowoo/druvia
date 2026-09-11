@@ -54,6 +54,10 @@ vi.mock('../../apps/api/src/modules/project-auth/project-identity.repository.js'
   withProjectAuthProjectLock: vi.fn(async (_client, _projectId, callback) => callback()),
 }))
 
+vi.mock('../../apps/api/src/modules/project-auth/project-device-wipe.service.js', () => ({
+  assertProjectDeviceWipeProjectDeletionAllowed: vi.fn(),
+}))
+
 import { query, queryOne } from '../../apps/api/src/db/index.js'
 import * as schemaService from '../../apps/api/src/modules/schema/schema.service.js'
 import * as environmentService from '../../apps/api/src/modules/environment/environment.service.js'
@@ -61,6 +65,7 @@ import * as dbCredentialsService from '../../apps/api/src/modules/project/db-cre
 import { getDefaultStorageAdapter } from '../../apps/api/src/adapters/storage/index.js'
 import * as mutationLock from '../../apps/api/src/modules/data-access/data-access-mutation-lock.js'
 import * as projectIdentityRepository from '../../apps/api/src/modules/project-auth/project-identity.repository.js'
+import * as projectDeviceWipeService from '../../apps/api/src/modules/project-auth/project-device-wipe.service.js'
 import {
   createProject,
   deleteProject,
@@ -80,6 +85,9 @@ const mockAssertProjectAuthProjectDeletionAllowed = vi.mocked(
 )
 const mockWithProjectAuthProjectLock = vi.mocked(
   projectIdentityRepository.withProjectAuthProjectLock
+)
+const mockAssertProjectDeviceWipeProjectDeletionAllowed = vi.mocked(
+  projectDeviceWipeService.assertProjectDeviceWipeProjectDeletionAllowed
 )
 
 function projectRow(dataAccessMode?: string) {
@@ -302,6 +310,22 @@ describe('Project Service', () => {
     expect(storage.list).not.toHaveBeenCalled()
   })
 
+  it('runs the device wipe lifecycle gate before any project deletion side effect', async () => {
+    const storage = mockGetDefaultStorageAdapter.mock.results[0]?.value ?? mockGetDefaultStorageAdapter()
+    mockQueryOne.mockResolvedValue(projectRow('explicit'))
+    mockAssertProjectDeviceWipeProjectDeletionAllowed.mockRejectedValueOnce(
+      new Error('DEVICE_WIPE_DECOMMISSION_REQUIRED')
+    )
+
+    await expect(deleteProject('proj_123')).rejects.toThrow('DEVICE_WIPE_DECOMMISSION_REQUIRED')
+
+    expect(mockAssertProjectDeviceWipeProjectDeletionAllowed).toHaveBeenCalledWith('proj_123')
+    expect(mockDropProjectDbUser).not.toHaveBeenCalled()
+    expect(mockListEnvironments).not.toHaveBeenCalled()
+    expect(mockDropSchema).not.toHaveBeenCalled()
+    expect(storage.list).not.toHaveBeenCalled()
+  })
+
   it('checks the exclusive migration lock before loading destructive cleanup state', async () => {
     const failure = new Error('migration active')
     vi.mocked(mutationLock.withProjectDataAccessMutationLock).mockRejectedValueOnce(failure)
@@ -365,7 +389,10 @@ describe('Project Service', () => {
     expect(mockDropProjectDbUser.mock.invocationCallOrder[0]).toBeLessThan(mockDropSchema.mock.invocationCallOrder[0])
     expect(mockDropSchema).toHaveBeenCalledWith('dru_demo_dev')
     expect(mockDropSchema).toHaveBeenCalledWith('dru_demo')
-    expect(mockDropProjectDbUser).toHaveBeenCalledWith('proj_123')
+    expect(mockDropProjectDbUser).toHaveBeenCalledWith(
+      'proj_123',
+      expect.objectContaining({ query: expect.any(Function) }),
+    )
     expect(mockDropProjectDbUser.mock.invocationCallOrder[0]).toBeLessThan(storage.list.mock.invocationCallOrder[0])
     expect(storage.delete).toHaveBeenCalledWith('proj_123/team-assets/avatar.png')
     expect(storage.delete).toHaveBeenCalledWith('tenant_123/proj_123/legacy-assets/legacy.txt')

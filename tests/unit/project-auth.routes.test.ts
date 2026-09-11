@@ -10,6 +10,7 @@ vi.mock('../../apps/api/src/lib/redis.js', () => ({
 
 import { optionalAuth } from '../../apps/api/src/middleware/auth.js';
 import { projectAuthRoutes } from '../../apps/api/src/modules/project-auth/project-auth.routes.js';
+import { authenticate } from '../../apps/api/src/middleware/auth.js';
 
 describe('Project Auth routes', () => {
   it('parses optional platform auth on Apple lifecycle routes', async () => {
@@ -29,6 +30,27 @@ describe('Project Auth routes', () => {
     expect(app.post).toHaveBeenCalledWith(
       '/projects/:projectId/auth/lifecycle-events/:eventId/ack',
       { preHandler: optionalAuth },
+      expect.any(Function),
+    );
+  });
+
+  it('keeps device binding lookup independent from Project Session authentication', async () => {
+    const app = {
+      get: vi.fn(),
+      post: vi.fn(),
+      put: vi.fn(),
+    };
+
+    await projectAuthRoutes(app as never);
+
+    expect(app.post).toHaveBeenCalledWith(
+      '/projects/:projectId/device-wipe/bindings',
+      expect.objectContaining({ preHandler: expect.arrayContaining([authenticate]) }),
+      expect.any(Function),
+    );
+    expect(app.post).toHaveBeenCalledWith(
+      '/projects/:projectId/device-wipe/bindings/:bindingHandle/mandates/query',
+      expect.not.objectContaining({ preHandler: expect.arrayContaining([authenticate]) }),
       expect.any(Function),
     );
   });

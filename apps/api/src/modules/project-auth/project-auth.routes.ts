@@ -7,8 +7,37 @@ import {
 } from '../../middleware/ratelimit.js';
 import * as controller from './project-auth.controller.js';
 import * as accountDeletionController from './project-account-deletion.controller.js';
+import * as deviceWipeController from './project-device-wipe.controller.js';
+import {
+  deviceWipeBindingRateLimiter,
+  deviceWipeLookupRateLimiter,
+} from '../../middleware/ratelimit.js';
 
 export async function projectAuthRoutes(app: FastifyInstance) {
+  app.post('/projects/:projectId/device-wipe/bindings', {
+    preHandler: [authenticate, deviceWipeBindingRateLimiter],
+  }, deviceWipeController.registerBinding as never);
+  app.post('/projects/:projectId/device-wipe/bindings/:bindingHandle/mandates/query', {
+    preHandler: deviceWipeLookupRateLimiter,
+  }, deviceWipeController.queryMandates as never);
+  app.post('/projects/:projectId/device-wipe/bindings/:bindingHandle/mandates/:deletionId/receipts', {
+    preHandler: deviceWipeLookupRateLimiter,
+  }, deviceWipeController.acknowledgeMandate as never);
+  app.get('/projects/:projectId/device-wipe/verification-keys', {
+    preHandler: deviceWipeLookupRateLimiter,
+  }, deviceWipeController.verificationKeys as never);
+  app.get('/projects/:projectId/device-wipe', {
+    preHandler: authenticate,
+  }, deviceWipeController.getConfig as never);
+  app.put('/projects/:projectId/device-wipe', {
+    preHandler: authenticate,
+  }, deviceWipeController.updateConfig as never);
+  app.post('/projects/:projectId/device-wipe/signing-keys/rotate', {
+    preHandler: authenticate,
+  }, deviceWipeController.rotateSigningKey as never);
+  app.post('/projects/:projectId/device-wipe/signing-keys/:keyId/retire', {
+    preHandler: authenticate,
+  }, deviceWipeController.retireSigningKey as never);
   app.post('/projects/:projectId/auth/account-deletions/intents', {
     preHandler: [authenticate, appleLoginRateLimiter],
   }, accountDeletionController.createIntent as never);

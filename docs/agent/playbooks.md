@@ -1328,3 +1328,56 @@ REVOKE ALL ON FUNCTION <project_schema>.druvia_delete_project_user_data(text, uu
 5. 生产备份恢复到非生产环境后，先隔离外网 notification、禁用 Apple provider，并替换为非生产 Apple 配置。
 
 Apple App transfer 的 transfer identifier、relay email 迁移不属于普通重复登录。发生 Team/App 转移时必须单独冻结窗口、按 Apple 转移流程迁移 identity；不得通过删除 identity 后重新登录制造新的 Project User。
+
+## Project Device Wipe Mandates
+
+### 部署与启用
+
+1. 为 API 生成并备份两条彼此独立的密钥；不得复用 Auth、账户删除、Hasura、Functions、Worker、Storage 或彼此的密钥：
+
+```bash
+openssl rand -hex 32 # DEVICE_WIPE_BINDING_SECRET
+openssl rand -hex 32 # DEVICE_WIPE_CREDENTIAL_SECRET
+```
+
+2. 将两条值写入部署私有 `.env`。同时保留原 `SECRETS_ENCRYPTION_KEY`；两条值必须彼此不同，并不得复用 JWT、Hasura Admin、Functions/Worker、Storage、Account Deletion、Updater、PostgreSQL 或 R2 凭据。Compose 会把这些已存在的部署凭据传给 API，仅用于启动时的密钥隔离校验；不要因此复制或生成第二套凭据。binding secret、credential secret 或 encryption key 任一丢失/替换，都会使已有 fingerprint、lookup credential、签名私钥或加密注册恢复材料不可恢复，不能通过重新启用开关修复。首次启用后，Druvia 会把两条 purpose-separated 不可逆验证标签写入项目 config；后续注册、重新启用或签名 key rotation 检测到不匹配时返回 `DEVICE_WIPE_SECRET_MISMATCH`，不得清空 config 标签或 core 记录强行重置。默认 `DEVICE_WIPE_HOOK_TIMEOUT_MS=5000`，恢复重放使用 `DEVICE_WIPE_RESTORE_HOOK_TIMEOUT_MS=30000`；二者分别限制在 1-60 秒和 1-300 秒，不应为了规避慢 Hook 无界增大。
+3. 在启动新 API/Admin 前执行 migration `026`，并确认状态：
+
+```bash
+pnpm migrate up
+pnpm migrate status
+```
+
+Docker 双库环境必须对当前 API/Hasura 实际连接的库执行；另一数据库不会自动同步。release/OTA manifest 的 migration ceiling 必须至少为 `26`。
+4. 由应用仓库的前向 migration 在项目 schema 安装以下三个函数，保持普通 Hasura 客户端零 CRUD：
+
+```text
+druvia_register_device_wipe_binding(text, text, bigint) RETURNS jsonb
+druvia_list_device_wipe_mandates(text, bigint) RETURNS jsonb
+druvia_ack_device_wipe_mandate(text, bigint, uuid, jsonb) RETURNS jsonb
+```
+
+函数必须由项目 `db_user` 拥有，使用 `SECURITY DEFINER`、固定 `search_path=pg_catalog,<project_schema>`，并撤销 PUBLIC 及非 owner EXECUTE。该 `db_user` 不能继承任何其他角色，也不能被任何非 superuser 角色直接或间接继承，并且不得拥有 `REPLICATION`；它不能在其他非系统 schema 拥有非 extension relation/column/sequence 权限或 CREATE，也不能执行其他 schema 中可直接调用的非 extension `SECURITY DEFINER` 函数。PostGIS 等由数据库管理员安装的 extension 自有对象不计为业务越权；`RETURNS trigger/event_trigger` 不可由普通 SQL 直接调用，也不计入 definer execute，但外部表 `TRIGGER` 权限仍会阻止启用。当前 MVP 因此只支持一个 `db_user` 隔离到一个项目 schema；共享该用户的多环境项目应保持设备擦除禁用，不能放宽检查绕过。业务 migration 必须在删除事务提交前创建 account/session mandate。
+5. 重建 API/Admin 后，在项目“认证”页的“设备擦除指令”面板确认三个 Hook 已就绪，再启用。Apple provider 可以保持 disabled；本地 session-scope 联调不依赖 Apple。
+
+启用前若返回 Hook security contract invalid，应由数据库管理员审计并撤销其他业务 schema 中授予该 `db_user` 或 `PUBLIC` 的权限，尤其是 `SECURITY DEFINER` 函数的 EXECUTE；不得在 Druvia 中增加白名单绕过。当前本地共享库的 `dru_default_taroapp` 仍有向 `PUBLIC` 开放的此类函数，PITCHETCH 在清理这些 ACL 前会按预期失败关闭。
+
+### 联调顺序
+
+1. 使用受控 Project Session 注册 binding，持久保存返回的 `bindingHandle` 与 `bindingLookupToken`；客户端不得保存平台 Token、Trusted Backend Key 或原始 HMAC secret。
+2. 使原 Project Session 过期或登出后，仅用 handle 和 `X-Druvia-Binding-Token` 查询 mandate，确认仍可获取相同签名 envelope。轮换后的 retired binding 只能领取此前已在 core 固化的 pending mandate，不再调用项目 Hook 发现新 obligation；新注册幂等键也不能恢复 retired credential。
+3. 从公开 verification-keys endpoint 按 `keyID` 获取 Ed25519 JWK，对 canonical sorted-key JSON `{version,keyID,command}` 验签后执行本地擦除。
+4. 提交 receipt；相同 receipt 重试应成功，不同 receipt 应返回冲突。用第二 Project User 和另一 binding 验证不可跨用户、跨项目获取。
+5. 轮换 key 后确认新 mandate 使用新 active key，旧 key 仍公开为 verification-only；只有不再承载 pending mandate 时才可 retire。
+
+禁用项目开关只停止新 binding 注册，不得阻断正常运行项目的既有设备查询或回执。sessionless query/receipt 与注册、配置写入和 key 变更都会争用 project schema restore 的同一项目锁；取得锁后必须在同一连接检查 runtime gate。只要状态仍为 `restoring` 或 `recovery_required`，全部写入/Hook 路径均返回 `503 PROJECT_RESTORE_IN_PROGRESS`，不得读取已物化 pending snapshot、调用 Hook 或写 core；修复并完成 replay、清除 gate 后再重试。普通 Hook 超时返回可重试的 `503 DEVICE_WIPE_HOOK_TIMEOUT`；恢复 Hook 超时会保留 gate 并标记 `DEVICE_WIPE_RESTORE_TIMEOUT`，应修复 Hook 性能后重新执行受控恢复，不能人工删除 gate。查询按 IP、project+IP、handle digest+IP 三层限流；随机更换 handle 仍受项目级预算约束。注册和查询限流使用原子 Redis Lua 计数并在 TTL 缺失时同语句修复，避免分步 `INCR`/`EXPIRE` 形成永久锁定；Redis 不可用时返回 `503 DEVICE_WIPE_RATE_LIMIT_UNAVAILABLE`，不得把此端点改成 fail open。原始 binding identity、binding handle、lookup token、Project User ID、私钥和 receipt 内容不得进入日志、Redis key 或工单；Project User ID 只以 encryption key 加密后保存为注册恢复材料。内置 Nginx 和 API 会把所有 binding 子路径以及任意包含 handle 的 URL（包括 query、命名空间外路径、非法转义、多层编码、重复斜杠和错误路径）统一显示为 `[REDACTED]`；API 对普通请求也只记录 path，不记录 query string。API 默认 404 不回显 URL；内置 Nginx 日志不记录 referer，且全局只保留 `crit` error，敏感 location 进一步关闭 error log，避免畸形请求、query-only handle 或 upstream 故障回显原 URI。Nginx 常规诊断使用脱敏 access log 的状态码、API 结构化日志、容器健康检查和指标，不得为恢复 `warn` error log 而重新扩大凭据日志面。生产若在 Druvia Nginx 前使用 CDN、Ingress 或负载均衡器，必须为 `/device-wipe/bindings/<handle>` 及其全部变体配置同等路径脱敏或关闭访问/error 日志，并通过编码/错误路径、伪造 query、Referer 和 upstream failure 的请求检查最外层日志。
+
+内置 Nginx 会覆盖公网请求自带的 `X-Forwarded-For`，只把 `$remote_addr` 传给 Fastify。若 Nginx 前还有受信 CDN/Ingress，先在最外层或 Druvia Nginx 依据固定 CIDR 配置 real-IP，使 `$remote_addr` 是经过验证的客户端地址；不要恢复 `$proxy_add_x_forwarded_for`，否则 sessionless 三层限流可被伪造 header 绕过。
+production/release Compose 的 API 端口默认只发布到宿主机 `127.0.0.1:3001`，供本机诊断使用；公网和局域网客户端必须使用 Nginx origin。若部署平台要求外部负载均衡器直接连接 API，应改为受控私网网络并同步实现可信代理 CIDR、敏感日志与限流验收，不能把该 loopback 绑定简单改回 `0.0.0.0`。
+
+### 恢复与 Decommission
+
+- project schema 恢复后，已 materialize/acknowledged 的 Druvia core 快照仍是去重围栏；在同一 runtime gate 和项目锁中逐一复验 binding 保存的三个 Hook 合同。先按不可变的 `binding_identity_hmac`、数值 `binding_revision`、`binding_id` 排序，解密 Project User replay material 并幂等重放全部 register Hook；再重放账户删除 fence，最后把全部 acknowledged receipt 幂等回放到 acknowledge Hook，之后才能开放设备查询。注册材料解密、合同或 register Hook 失败保留 `DEVICE_WIPE_BINDING_REPLAY_REQUIRED`；receipt 非法或 acknowledge Hook 失败保留 `DEVICE_WIPE_RECEIPT_REPLAY_REQUIRED`。不得按时间戳猜测 revision 顺序或人工删除 gate 绕过。
+- 整库恢复必须同时恢复 migration `026` 四张 core 表及三条稳定 secret。仅恢复项目 schema、没有 core 快照时不能宣称可抑制已经确认的历史 mandate。
+- 项目删除和管理 API 的独立数据库用户删除都会持有 project-auth 项目锁，并在 `REASSIGN OWNED`、`DROP OWNED`、`DROP ROLE`、schema 或 Storage 副作用前检查 binding/mandate，以 `409 DEVICE_WIPE_DECOMMISSION_REQUIRED` 阻断。不得用“先删除数据库用户”规避检查，否则三个 Hook 的 owner 与 restore 能力会被永久破坏。当前没有自动 decommission；不得直接删除 core 行绕过恢复围栏。项目永久下线流程需要独立审查、确认所有设备已 ack 后再建设受控清理能力。
+- migration `026 down` 只允许 config、key、binding、mandate 全部为空；生产启用后采用新编号前向修复。

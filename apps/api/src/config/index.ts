@@ -13,6 +13,17 @@ function parseBooleanEnv(value: string | undefined, defaultValue = false): boole
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
+function parseBoundedIntegerEnv(
+  value: string | undefined,
+  defaultValue: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const parsed = Number.parseInt(value || String(defaultValue), 10);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  return Math.min(maximum, Math.max(minimum, parsed));
+}
+
 export function resolveRealtimeConfig(env: NodeJS.ProcessEnv = process.env) {
   const rawTtl = Number.parseInt(env.HASURA_REALTIME_TOKEN_TTL_SECONDS || '300', 10);
   const tokenTtlSeconds = Number.isFinite(rawTtl)
@@ -86,6 +97,41 @@ export function resolveAccountDeletionConfig(env: NodeJS.ProcessEnv = process.en
   };
 }
 
+export function resolveDeviceWipeConfig(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    bindingSecret: env.DEVICE_WIPE_BINDING_SECRET || '',
+    credentialSecret: env.DEVICE_WIPE_CREDENTIAL_SECRET || '',
+    hookStatementTimeoutMs: parseBoundedIntegerEnv(
+      env.DEVICE_WIPE_HOOK_TIMEOUT_MS,
+      5_000,
+      1_000,
+      60_000,
+    ),
+    restoreHookStatementTimeoutMs: parseBoundedIntegerEnv(
+      env.DEVICE_WIPE_RESTORE_HOOK_TIMEOUT_MS,
+      30_000,
+      1_000,
+      300_000,
+    ),
+    protectedSecrets: [
+      env.JWT_SECRET,
+      env.PROJECT_AUTH_JWT_SECRET,
+      env.HASURA_JWT_SECRET,
+      env.HASURA_ADMIN_SECRET,
+      env.FUNCTIONS_INTERNAL_TOKEN_SECRET,
+      env.DENO_WORKER_SECRET,
+      env.STORAGE_TRUSTED_TICKET_SECRET,
+      env.ACCOUNT_DELETION_STATUS_SECRET,
+      env.ACCOUNT_DELETION_FENCE_SECRET,
+      env.SECRETS_ENCRYPTION_KEY,
+      env.DRUVIA_UPDATER_SECRET,
+      env.POSTGRES_PASSWORD,
+      env.R2_ACCESS_KEY,
+      env.R2_SECRET_KEY,
+    ].filter((value): value is string => Boolean(value)),
+  };
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   host: process.env.HOST || '0.0.0.0',
@@ -116,6 +162,7 @@ export const config = {
     defaultAccessTokenTtlSeconds: parseInt(process.env.PROJECT_AUTH_ACCESS_TOKEN_TTL_SECONDS || '3600', 10),
   },
   accountDeletion: resolveAccountDeletionConfig(),
+  deviceWipe: resolveDeviceWipeConfig(),
   storage: {
     trustedTicketSecret: process.env.STORAGE_TRUSTED_TICKET_SECRET || '',
     trustedTicketMaxTtlSeconds: parseInt(process.env.STORAGE_TRUSTED_TICKET_MAX_TTL_SECONDS || '900', 10),

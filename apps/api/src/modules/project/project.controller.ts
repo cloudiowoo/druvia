@@ -9,6 +9,7 @@ import {
   isDataAccessMigrationDeleteGuardError,
 } from '../data-access/data-access-mutation-lock.js';
 import { ProjectAuthLifecycleError } from '../project-auth/project-identity.repository.js';
+import { ProjectDeviceWipeError } from '../project-auth/project-device-wipe.types.js';
 
 interface ProjectParams {
   projectId: string;
@@ -178,7 +179,7 @@ export async function deleteProject(
     }
     return reply.status(204).send();
   } catch (error) {
-    if (error instanceof ProjectAuthLifecycleError) {
+    if (error instanceof ProjectAuthLifecycleError || error instanceof ProjectDeviceWipeError) {
       return reply.status(409).send({
         success: false,
         error: { code: error.code, message: error.message },
@@ -318,6 +319,12 @@ export async function deleteDbUser(
     }
     return reply.status(204).send();
   } catch (error: unknown) {
+    if (error instanceof ProjectDeviceWipeError) {
+      return reply.status(error.statusCode).send({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
     const err = error as { message?: string };
     return reply.status(500).send({
       success: false,

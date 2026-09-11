@@ -3,6 +3,8 @@ import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { config } from '../../config/index.js';
 import type { PoolClient } from 'pg';
+import { acquireProjectAuthProjectLock } from '../project-auth/project-identity.repository.js';
+import { assertProjectDeviceWipeProjectDeletionAllowed } from '../project-auth/project-device-wipe.service.js';
 
 const SALT_ROUNDS = 10;
 
@@ -220,20 +222,28 @@ export async function resetProjectDbPassword(projectId: string): Promise<DbCrede
 }
 
 // 删除项目数据库用户
-export async function dropProjectDbUser(projectId: string): Promise<boolean> {
-  const project = await queryOne<{ db_user: string; schema_name: string }>(
-    'SELECT db_user, schema_name FROM druvia_projects WHERE project_id = $1',
-    [projectId]
-  );
-
-  if (!project?.db_user) {
-    return false;
-  }
-
-  const client = await pool.connect();
+export async function dropProjectDbUser(
+  projectId: string,
+  existingClient?: PoolClient,
+): Promise<boolean> {
+  const client = existingClient ?? await pool.connect();
 
   try {
     await client.query('BEGIN');
+    await acquireProjectAuthProjectLock(client, projectId);
+    const projectResult = await client.query<{ db_user: string | null; schema_name: string | null }>(
+      `SELECT db_user, schema_name
+       FROM druvia_projects
+       WHERE project_id = $1
+       FOR UPDATE`,
+      [projectId],
+    );
+    const project = projectResult.rows[0];
+    if (!project?.db_user) {
+      await client.query('COMMIT');
+      return false;
+    }
+    await assertProjectDeviceWipeProjectDeletionAllowed(projectId, client);
 
     // 先撤销默认权限
     if (project.schema_name) {
@@ -311,7 +321,7 @@ export async function dropProjectDbUser(projectId: string): Promise<boolean> {
     await client.query('ROLLBACK');
     throw error;
   } finally {
-    client.release();
+    if (!existingClient) client.release();
   }
 }
 

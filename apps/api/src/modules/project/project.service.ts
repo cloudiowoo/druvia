@@ -1,5 +1,5 @@
 import { query, queryOne } from '../../db/index.js';
-import type { QueryConfig } from 'pg';
+import type { PoolClient, QueryConfig } from 'pg';
 import { generateProjectId } from '@druvia/shared';
 import type {
   Project,
@@ -21,6 +21,7 @@ import {
   withProjectAuthProjectLock,
 } from '../project-auth/project-identity.repository.js';
 import type { PlatformJwtUser } from '../../middleware/auth.js';
+import { assertProjectDeviceWipeProjectDeletionAllowed } from '../project-auth/project-device-wipe.service.js';
 
 const logger = createApiLogger({ module: 'project' });
 
@@ -192,13 +193,16 @@ export async function deleteProject(projectId: string): Promise<boolean> {
     (client) => withProjectAuthProjectLock(
       client,
       projectId,
-      () => deleteProjectUnlocked(projectId),
+      () => deleteProjectUnlocked(projectId, client),
     ),
     { globalMode: 'exclusive' }
   );
 }
 
-export async function deleteProjectUnlocked(projectId: string): Promise<boolean> {
+export async function deleteProjectUnlocked(
+  projectId: string,
+  projectAuthClient?: PoolClient,
+): Promise<boolean> {
   // 获取项目信息
   const project = await getProjectById(projectId);
   if (!project) {
@@ -207,9 +211,10 @@ export async function deleteProjectUnlocked(projectId: string): Promise<boolean>
 
   try {
     await assertProjectAuthProjectDeletionAllowed(projectId);
+    await assertProjectDeviceWipeProjectDeletionAllowed(projectId);
 
     // 1. 先删除项目数据库用户，避免后续失败时出现“项目仍在但 schema 已被删掉”的半删除状态
-    await dbCredentialsService.dropProjectDbUser(projectId);
+    await dbCredentialsService.dropProjectDbUser(projectId, projectAuthClient);
 
     // 2. 获取所有环境（不含主 schema）
     const environments = await environmentService.listEnvironments(projectId);

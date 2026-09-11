@@ -58,10 +58,32 @@ export const appCorsOptions: FastifyCorsOptions = {
     'apikey',
     'Idempotency-Key',
     'X-Druvia-Deletion-Token',
+    'X-Druvia-Binding-Token',
     'x-druvia-storage-ticket',
     'x-druvia-trusted-backend-key',
   ],
 };
+
+export function sanitizeRequestUrlForLogging(url: string): string {
+  const path = url.split(/[?#]/, 1)[0]!;
+  let classified = url;
+  const encodedHandlePrefix = /(?:d|%(?:25)*64)(?:w|%(?:25)*77)(?:b|%(?:25)*62)(?:_|%(?:25)*5f)/i;
+  if (encodedHandlePrefix.test(classified)) {
+    return '/[REDACTED]/device-wipe/bindings/[REDACTED]';
+  }
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const decoded = classified.replace(/%([a-f0-9]{2})/gi, (_, hex: string) => (
+      String.fromCharCode(Number.parseInt(hex, 16))
+    ));
+    if (decoded === classified) break;
+    classified = decoded;
+  }
+  classified = classified.replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  if (/\/device-wipe\/bindings(?:\/|$)/i.test(classified) || /dwb_/i.test(classified)) {
+    return '/[REDACTED]/device-wipe/bindings/[REDACTED]';
+  }
+  return path;
+}
 
 export function buildApp(options: { trustProxy?: boolean } = {}) {
   const app = Fastify({
@@ -82,7 +104,7 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
         req: (request) => ({
           requestId: request.id,
           method: request.method,
-          url: request.url,
+          url: sanitizeRequestUrlForLogging(request.url),
           remoteAddress: request.ip,
         }),
         res: (reply) => ({
@@ -94,6 +116,7 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
           'req.headers.authorization',
           'req.headers.apikey',
           'req.headers.x-druvia-deletion-token',
+          'req.headers.x-druvia-binding-token',
           'authorization',
           'apikey',
           'password',
@@ -109,6 +132,8 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
           'req.body.payload',
           'providerRefreshToken',
           'statusToken',
+          'bindingIdentity',
+          'bindingLookupToken',
           'reauthNonce',
         ],
         remove: true,
@@ -156,6 +181,11 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
       fileSize: 50 * 1024 * 1024, // 50MB
     },
   });
+
+  app.setNotFoundHandler((_request, reply) => reply.status(404).send({
+    success: false,
+    error: { code: 'NOT_FOUND', message: 'Route not found' },
+  }));
 
   // Health check
   app.get('/health', async (_request, reply) => {

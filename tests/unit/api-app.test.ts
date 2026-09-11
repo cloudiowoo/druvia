@@ -17,7 +17,7 @@ vi.mock('../../apps/api/src/modules/project-auth/project-session-state.js', () =
   assertProjectSessionUsable: vi.fn().mockResolvedValue(undefined),
 }))
 
-import { appCorsOptions, buildApp } from '../../apps/api/src/index.js'
+import { appCorsOptions, buildApp, sanitizeRequestUrlForLogging } from '../../apps/api/src/index.js'
 import { authenticate, signProjectUserToken, signToken } from '../../apps/api/src/middleware/auth.js'
 import { getApiLogContext } from '../../apps/api/src/lib/log-context.js'
 
@@ -26,6 +26,58 @@ describe('API app CORS', () => {
     expect(appCorsOptions.allowedHeaders).toContain('apikey')
     expect(appCorsOptions.allowedHeaders).toContain('x-druvia-storage-ticket')
     expect(appCorsOptions.allowedHeaders).toContain('x-druvia-trusted-backend-key')
+    expect(appCorsOptions.allowedHeaders).toContain('X-Druvia-Binding-Token')
+  })
+})
+
+describe('API request log URL sanitization', () => {
+  it.each([
+    '/api/v1/projects/proj_1/device-wipe/bindings/dwb_12345678901234567890123456789012/mandates/query',
+    '/api/v1/projects/proj_1/device-wipe/bindings/dwb_12345678901234567890123456789012/mandates/00000000-0000-4000-8000-000000000700/receipts?retry=1',
+    '/api/v1/projects/proj_1/device-wipe/bindings/dwb_12345678901234567890123456789012',
+    '/api/v1/projects/proj_1/device-wipe/bindings/dwb_12345678901234567890123456789012/',
+    '/api/v1/projects/proj_1/device-wipe/bindings/dwb_12345678901234567890123456789012/mandate?leak=1',
+    '/api/v1/projects/proj_1/device-wipe/bindings/dwb_secret%2Fencoded/unknown#fragment',
+    '/api/v1/projects/proj_1/%64evice-wipe/bindings/dwb_encoded_namespace/unknown?leak=1',
+    '/api/v1/projects/proj_1/device-wipe%2Fbindings/dwb_encoded_separator/unknown?leak=1',
+    '/api/v1/projects/proj_1/device-wipe/bindings//dwb_doubled_separator/unknown?leak=1',
+    '/api/v1/projects/proj_1/%2564evice-wipe%252Fbindings/dwb_double_encoded/unknown?leak=1',
+    '/api/v1/unknown/dwb_ABCDEFGHIJKLMNOPQRSTUV?leak=1',
+    '/api/v1/unknown/%2564%2577%2562%255FABCDEFGHIJKLMNOPQRSTUV?leak=1',
+    '/health?next=dwb_ABCDEFGHIJKLMNOPQRSTUV',
+    '/api/v1/unknown/%ZZ/%64%77%62%5FABCDEFGHIJKLMNOPQRSTUV?leak=1',
+    '/api/v1/unknown/%2525252564%2525252577%2525252562%252525255FABCDEFGHIJKLMNOPQRSTUV?leak=1',
+  ])('redacts the device wipe binding handle from %s', (url) => {
+    const sanitized = sanitizeRequestUrlForLogging(url)
+
+    expect(sanitized).toContain('/bindings/[REDACTED]')
+    expect(sanitized).not.toMatch(/dwb_/)
+    expect(sanitized).not.toContain('?')
+  })
+
+  it('omits query strings and fragments from ordinary request logs', () => {
+    expect(sanitizeRequestUrlForLogging('/health?probe=1#fragment')).toBe('/health')
+  })
+
+  it('uses a stable not-found response that does not echo an unknown binding URL', async () => {
+    const app = buildApp()
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/projects/proj_1/device-wipe/bindings/dwb_secret/mandate?leak=1',
+      })
+
+      expect(response.statusCode).toBe(404)
+      expect(response.json()).toEqual({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Route not found' },
+      })
+      expect(response.body).not.toContain('dwb_secret')
+      expect(response.body).not.toContain('leak=1')
+    } finally {
+      await app.close()
+    }
   })
 })
 

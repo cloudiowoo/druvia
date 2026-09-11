@@ -34,6 +34,7 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - Project Data Access Batch 4 后，已有 compatibility 项目只能通过迁移 `019` 支撑的预检/apply/recovery/rollback 状态机激活；不得直接修改 `data_access_mode`，不得绕过相关管理写锁。
 - migration `023` 后，表级 Data Access 受管状态以持久 baseline、显式列 grants 和 policy operation 为准；baseline 与 operation 必须绑定创建时的项目 schema，operation 的 schema 身份不可变。没有 provenance 的 scoped permission 必须先 adoption，新增列默认不授权，真实 custom/legacy/external role 不得被 reconcile 覆盖。
 - migration `025` 后，Apple Project User 自助删除以 PostgreSQL operation/fence 为唯一事实源；删除目标只能来自当前 Project Session，接受后旧 Session/refresh/login 必须失败关闭。业务清理由项目 schema 中通过静态安全检查的固定函数负责，API 内执行器只清理 Druvia Storage、Project User/identity 和最小 Provider revoke material。删除执行、Apple revoke、新 identity generation 与 project schema restore 必须共享项目锁；restore 开放项目前必须重放全部已 accepted fence。
+- migration `026` 后，设备擦除采用 Druvia 平台凭证/签名投递与项目业务 obligation 分离模型：注册 owner 只能来自同项目 Project Session；sessionless 查询只接受独立 binding handle/token；原始 binding identity、lookup token 和私钥不得持久化明文或进入日志，query、编码或畸形 URL 中的 handle 也必须在访问日志序列化前移除。Project User ID 只允许作为 `SECRETS_ENCRYPTION_KEY` 保护的注册恢复材料持久化，不得写入日志或公开响应。项目 schema 通过三条固定安全 Hook 维护业务关系，Druvia 保存不可变签名快照和回执恢复围栏。Hook owner 当前必须隔离到单一项目 schema，不能继承其他角色，也不能被任何非 superuser 角色直接或间接继承；同时不得拥有 `REPLICATION`，或借助其他业务 schema 的 relation/column/sequence/CREATE/`SECURITY DEFINER` 权限越权。所有 Device Wipe 写入/Hook 路径与 project schema restore 必须共享 project-auth 项目锁，并在锁后以同一连接检查 runtime gate；restore 清除 gate 前必须按 identity/revision 重放 binding 注册，再依次重放账户删除 fence 和 acknowledged receipt，并在每一阶段复验 Hook 快照。设备擦除注册与 sessionless 查询限流必须用单条 Redis 原子脚本建立或修复 TTL，不得拆分 `INCR`/`EXPIRE`。
 - RPC 与 Functions 共用版本化 `ProjectActorContext`；SDK 的 RPC/Functions 只选择 Project Session 或项目 API Key，不得隐式回退 Platform Session。Functions 内部 GraphQL 必须使用服务端派生的 Hasura role/session variables，Platform User 不具备该应用数据能力。
 - 直接 Storage 对象路由已完成 Project User cutover：bucket 使用 `admin_only / owner_only / authenticated_read` 三种预设，对象以 `owner_project_user_id` 判定所有权；公开下载是独立开关，trusted ticket/Functions 是独立 capability。
 - SDK 直接 Storage 只选择 Project Session 或项目 API Key，不得使用 Platform Session；trusted ticket 方法只发送显式 trusted/ticket header。
@@ -55,8 +56,9 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - 权限和认证变更默认采用安全值；匿名能力必须按功能显式允许。
 - 数据库结构变化必须同时检查 migration、Hasura metadata、回滚策略和旧部署升级路径。
 - 发布与 OTA 改动必须检查 GHCR、自建 Registry、本地 release 演练和生产部署四条路径。
-- 包含表级 managed-policy reconcile、可恢复表删除或 Project Account Self-Deletion 的 API/Admin 启动前必须应用 migration `023`、`024`、`025`，release manifest migration ceiling 不得低于 `25`。
+- 包含表级 managed-policy reconcile、可恢复表删除、Project Account Self-Deletion 或 Device Wipe Mandates 的 API/Admin 启动前必须应用 migration `023`、`024`、`025`、`026`，release manifest migration ceiling 不得低于 `26`。
 - 生产启用 migration `025` 对应 API 前必须配置并备份彼此独立的 `ACCOUNT_DELETION_STATUS_SECRET`、`ACCOUNT_DELETION_FENCE_SECRET`，且不得与身份、Hasura、Functions、Worker 或 Storage 签名密钥复用。项目 schema restore 必须先写 runtime gate 并重放 fence；外部 deletion ledger 未实现前不得宣称整库灾难恢复可阻止旧账户复活。
+- 启用 migration `026` 对应项目能力前必须配置并稳定备份彼此独立的 `DEVICE_WIPE_BINDING_SECRET`、`DEVICE_WIPE_CREDENTIAL_SECRET` 和原 `SECRETS_ENCRYPTION_KEY`；三者丢失或替换都会破坏既有 binding 查询、签名私钥或注册恢复材料，不能靠重置配置修复。
 - Phase 开发、镜像构建、stable release 和生产 OTA 是独立动作；生产只跟随通过 taro-app 兼容回归的 stable manifest，并由运维人工 apply。
 - release workflow 必须由 SemVer 后缀推导并校验 stable/beta/nightly；非 stable GitHub Release 必须标记为 prerelease，不得覆盖生产使用的 `releases/latest/download` stable manifest。
 - release 版本与 channel 必须在登录 Registry 或 push 镜像前通过统一的严格 SemVer 预检；预发布首段只接受 `beta` 或 `nightly`，后续标识只接受数字，`alpha`、`rc`、`preview` 及混合通道后缀必须失败。manifest 生成必须复用同一校验，禁止产生 `latest` 等非版本 tag 或版本/channel 矛盾的发布物。

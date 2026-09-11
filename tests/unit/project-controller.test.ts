@@ -6,6 +6,10 @@ vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
   deleteProject: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/modules/project/db-credentials.service.js', () => ({
+  dropProjectDbUser: vi.fn(),
+}))
+
 vi.mock('../../apps/api/src/lib/project-authorization.js', () => ({
   AuthorizationError: class AuthorizationError extends Error {
     constructor(public statusCode: number, public code: string, message: string) {
@@ -18,6 +22,8 @@ vi.mock('../../apps/api/src/lib/project-authorization.js', () => ({
 
 import * as projectController from '../../apps/api/src/modules/project/project.controller.js'
 import * as projectService from '../../apps/api/src/modules/project/project.service.js'
+import * as dbCredentialsService from '../../apps/api/src/modules/project/db-credentials.service.js'
+import { ProjectDeviceWipeError } from '../../apps/api/src/modules/project-auth/project-device-wipe.types.js'
 import {
   assertProjectCapability,
   AuthorizationError,
@@ -59,6 +65,30 @@ describe('Project Controller', () => {
       schemaName: 'dru_test',
     } as Awaited<ReturnType<typeof projectService.getProjectById>>)
     vi.mocked(projectService.deleteProject).mockResolvedValue(true)
+  })
+
+  it('returns the device wipe lifecycle conflict when database-user deletion is blocked', async () => {
+    vi.mocked(dbCredentialsService.dropProjectDbUser).mockRejectedValueOnce(
+      new ProjectDeviceWipeError(
+        'DEVICE_WIPE_DECOMMISSION_REQUIRED',
+        'Project device wipe records must be decommissioned before deleting the database user',
+        409,
+      ),
+    )
+    const reply = createReply()
+
+    await projectController.deleteDbUser({
+      params: { projectId: 'proj_123' },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(409)
+    expect(reply.payload).toEqual({
+      success: false,
+      error: {
+        code: 'DEVICE_WIPE_DECOMMISSION_REQUIRED',
+        message: 'Project device wipe records must be decommissioned before deleting the database user',
+      },
+    })
   })
 
   it('returns conflict when the generated project schema is already in use', async () => {
@@ -187,6 +217,32 @@ describe('Project Controller', () => {
     expect(reply.payload).toEqual(expect.objectContaining({
       error: expect.objectContaining({ code: 'DATA_ACCESS_MIGRATION_IN_PROGRESS' }),
     }))
+  })
+
+  it('maps the device wipe decommission guard to a stable conflict', async () => {
+    vi.mocked(assertProjectCapability).mockResolvedValue({} as never)
+    vi.mocked(projectService.deleteProject).mockRejectedValue(
+      new ProjectDeviceWipeError(
+        'DEVICE_WIPE_DECOMMISSION_REQUIRED',
+        'Project device wipe records must be decommissioned before deleting the project',
+        409,
+      ),
+    )
+    const reply = createReply()
+
+    await projectController.deleteProject({
+      params: { projectId: 'proj_123' },
+      user: { kind: 'platform_user', userId: 'usr_owner', uid: 1, role: 'admin' },
+    } as never, reply as never)
+
+    expect(reply.status).toHaveBeenCalledWith(409)
+    expect(reply.payload).toEqual({
+      success: false,
+      error: {
+        code: 'DEVICE_WIPE_DECOMMISSION_REQUIRED',
+        message: 'Project device wipe records must be decommissioned before deleting the project',
+      },
+    })
   })
 
   it('rethrows unrelated project deletion failures', async () => {

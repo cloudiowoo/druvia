@@ -117,6 +117,76 @@ describe('release-mode compose and Dockerfiles', () => {
     }
   });
 
+  it('passes device wipe credential secrets to API in local, production and release modes', () => {
+    for (const path of [
+      'docker/docker-compose.local.yml',
+      'docker/docker-compose.prod.yml',
+      'docker/docker-compose.release.yml',
+    ]) {
+      const compose = read(path);
+      expect(compose).toContain('DEVICE_WIPE_BINDING_SECRET: ${DEVICE_WIPE_BINDING_SECRET:-}');
+      expect(compose).toContain('DEVICE_WIPE_CREDENTIAL_SECRET: ${DEVICE_WIPE_CREDENTIAL_SECRET:-}');
+      expect(compose).toContain('DRUVIA_UPDATER_SECRET: ${DRUVIA_UPDATER_SECRET:-}');
+      expect(compose).toContain('R2_ACCESS_KEY: ${R2_ACCESS_KEY:-}');
+      expect(compose).toContain('R2_SECRET_KEY: ${R2_SECRET_KEY:-}');
+      expect(compose).toContain('DEVICE_WIPE_HOOK_TIMEOUT_MS: ${DEVICE_WIPE_HOOK_TIMEOUT_MS:-5000}');
+      expect(compose).toContain('DEVICE_WIPE_RESTORE_HOOK_TIMEOUT_MS: ${DEVICE_WIPE_RESTORE_HOOK_TIMEOUT_MS:-30000}');
+    }
+
+    for (const path of ['.env.example', 'docker/.env.example', 'docker/.env.prod.example']) {
+      const env = read(path);
+      expect(env).toContain('DEVICE_WIPE_BINDING_SECRET=');
+      expect(env).toContain('DEVICE_WIPE_CREDENTIAL_SECRET=');
+      expect(env).toContain('DEVICE_WIPE_HOOK_TIMEOUT_MS=5000');
+      expect(env).toContain('DEVICE_WIPE_RESTORE_HOOK_TIMEOUT_MS=30000');
+    }
+  });
+
+  it('protects device wipe credentials across bundled nginx access and error logs', () => {
+    const nginx = read('docker/nginx/nginx.conf');
+
+    expect(nginx).toContain('map "$request_uri|$uri" $druvia_log_request_uri')
+    expect(nginx).not.toContain('default $request_uri')
+    expect(nginx).toContain('/device-wipe/bindings/')
+    expect(nginx).toContain('[REDACTED]')
+    expect(nginx).toContain('$request_method $druvia_log_request_uri $server_protocol')
+    expect(nginx).not.toContain('"$request"')
+    expect(nginx).toContain('log_format device_wipe')
+    expect(nginx).toMatch(/log_format device_wipe[^;]+;/)
+    expect(nginx.match(/log_format device_wipe[^;]+;/)?.[0]).not.toContain('$http_referer')
+    expect(nginx.match(/log_format main[^;]+;/)?.[0]).not.toContain('$http_referer')
+    expect(nginx).toContain('error_log /var/log/nginx/error.log crit')
+
+    for (const path of [
+      'docker/nginx/conf.d/30-druvia-prod.conf',
+      'docker/nginx/conf.d/40-druvia-uat.conf',
+      'docker/nginx/conf.d.local/10-local.conf',
+    ]) {
+      const server = read(path)
+      expect(server).toContain('location ~* "^/api/v1/projects/')
+      expect(server).toContain('device-wipe/bindings(?:/.*)?|.*(?:d|%(?:25)*64)')
+      expect(server).toContain('(?:_|%(?:25)*5f).*')
+      expect(server).toContain('access_log /var/log/nginx/access.log device_wipe')
+      expect(server).toContain('error_log /dev/null emerg')
+      expect(server).not.toContain('error_log /var/log/nginx/error.log warn')
+      expect(server).not.toContain('location ^~ /api/')
+    }
+
+    expect(read('docker/nginx/conf.d/20-h5.conf')).not.toContain(
+      'error_log /var/log/nginx/error.log warn',
+    )
+  });
+
+  it('does not forward an attacker-controlled client proxy chain to Fastify', () => {
+    const nginx = read('docker/nginx/nginx.conf')
+
+    expect(nginx).toContain('proxy_set_header X-Forwarded-For $remote_addr')
+    expect(nginx).not.toContain('proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for')
+    for (const path of ['docker/docker-compose.prod.yml', 'docker/docker-compose.release.yml']) {
+      expect(read(path)).toContain('127.0.0.1:${API_PORT:-3001}:3001')
+    }
+  });
+
   it('mounts migrations into the local API so the packaged CLI can run', () => {
     const compose = read('docker/docker-compose.local.yml');
 

@@ -13,6 +13,10 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { AppleProviderConfigForm } from '@/components/auth/AppleProviderConfigForm';
 import {
+  DeviceWipeConfigPanel,
+  type DeviceWipeConfigValue,
+} from '@/components/auth/DeviceWipeConfigPanel';
+import {
   Table,
   TableBody,
   TableCell,
@@ -170,6 +174,10 @@ export default function AuthPage() {
   const [accountDeletionConfig, setAccountDeletionConfig] = useState<AccountDeletionConfig | null>(null);
   const [accountDeletionLoading, setAccountDeletionLoading] = useState(true);
   const [accountDeletionSaving, setAccountDeletionSaving] = useState(false);
+  const [deviceWipeConfig, setDeviceWipeConfig] = useState<DeviceWipeConfigValue | null>(null);
+  const [deviceWipeLoading, setDeviceWipeLoading] = useState(true);
+  const [deviceWipeSaving, setDeviceWipeSaving] = useState(false);
+  const [deviceWipeRotating, setDeviceWipeRotating] = useState(false);
 
   // Users state
   const [users, setUsers] = useState<ProjectUser[]>([]);
@@ -241,12 +249,20 @@ export default function AuthPage() {
     setAccountDeletionLoading(false);
   }, [projectId]);
 
+  const fetchDeviceWipeConfig = useCallback(async () => {
+    setDeviceWipeLoading(true);
+    const result = await api.getProjectDeviceWipeConfig(projectId);
+    if (result.success && result.data) setDeviceWipeConfig(result.data);
+    setDeviceWipeLoading(false);
+  }, [projectId]);
+
   useEffect(() => {
     fetchProviders();
     fetchConfig();
     fetchAppleState();
     fetchAccountDeletionConfig();
-  }, [fetchProviders, fetchConfig, fetchAppleState, fetchAccountDeletionConfig]);
+    fetchDeviceWipeConfig();
+  }, [fetchProviders, fetchConfig, fetchAppleState, fetchAccountDeletionConfig, fetchDeviceWipeConfig]);
 
   const handleAccountDeletionToggle = async (enabled: boolean) => {
     setAccountDeletionSaving(true);
@@ -258,6 +274,30 @@ export default function AuthPage() {
       toast({ title: '保存失败', description: result.error?.message, variant: 'destructive' });
     }
     setAccountDeletionSaving(false);
+  };
+
+  const handleDeviceWipeToggle = async (enabled: boolean) => {
+    setDeviceWipeSaving(true);
+    const result = await api.updateProjectDeviceWipeConfig(projectId, enabled);
+    if (result.success && result.data) {
+      setDeviceWipeConfig(result.data);
+      toast({ title: enabled ? '设备擦除指令已启用' : '新设备绑定已停用' });
+    } else {
+      toast({ title: '保存失败', description: result.error?.message, variant: 'destructive' });
+    }
+    setDeviceWipeSaving(false);
+  };
+
+  const handleDeviceWipeKeyRotation = async () => {
+    setDeviceWipeRotating(true);
+    const result = await api.rotateProjectDeviceWipeSigningKey(projectId);
+    if (result.success) {
+      await fetchDeviceWipeConfig();
+      toast({ title: '设备擦除签名密钥已轮换' });
+    } else {
+      toast({ title: '轮换失败', description: result.error?.message, variant: 'destructive' });
+    }
+    setDeviceWipeRotating(false);
   };
 
   useEffect(() => {
@@ -756,6 +796,15 @@ export default function AuthPage() {
               {accountDeletionConfig?.enabled ? '项目用户可在应用内删除自己的账户' : '项目用户自助删除未启用'}
             </div>
           </div>
+
+          <DeviceWipeConfigPanel
+            config={deviceWipeConfig}
+            loading={deviceWipeLoading}
+            saving={deviceWipeSaving}
+            rotating={deviceWipeRotating}
+            onToggle={handleDeviceWipeToggle}
+            onRotate={handleDeviceWipeKeyRotation}
+          />
 
           <div className="border rounded-lg mt-4">
             <div className="p-4 border-b bg-muted/50 flex items-center justify-between">

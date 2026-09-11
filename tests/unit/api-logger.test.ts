@@ -98,4 +98,20 @@ describe('api logger', () => {
       msg: 'project cleanup failed',
     });
   });
+
+  it('allows a sensitive inherited identity to be explicitly suppressed', () => {
+    const write = vi.fn();
+    const logger = createApiLogger({ service: 'api', env: 'test', module: 'device-wipe', write });
+
+    runWithApiLogContext({ projectUserId: 'raw-project-user-id' }, () => {
+      logger.info('binding registered', {
+        projectUserId: undefined,
+        projectUserFingerprint: 'irreversible-fingerprint',
+      });
+    });
+
+    const entry = JSON.parse(write.mock.calls[0][1]);
+    expect(entry).not.toHaveProperty('projectUserId');
+    expect(entry).toMatchObject({ projectUserFingerprint: 'irreversible-fingerprint' });
+  });
 });
