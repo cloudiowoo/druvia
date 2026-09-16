@@ -21,6 +21,10 @@ export function buildApp(options: BuildUpdaterAppOptions = {}) {
     logger: process.env.NODE_ENV === 'test' ? false : true,
   });
 
+  if (service instanceof UpdateService) {
+    app.addHook('onReady', async () => service.recoverInterruptedOperation());
+  }
+
   app.addHook('onRequest', async (request, reply) => {
     if (!request.url.startsWith('/internal/')) return;
     if (request.headers['x-druvia-updater-secret'] !== updaterSecret) {

@@ -101,6 +101,7 @@ describe('admin system update UI contract', () => {
     expect(panel).toContain('updater finalizer scheduled');
     expect(panel).toContain('updater finalizer running');
     expect(panel).toContain('updater finalizer completed');
+    expect(panel).toContain('updater finalizer failed after interruption');
     expect(panel).toContain('updater 自更新已完成');
     expect(panel).toContain('更新状态');
   });

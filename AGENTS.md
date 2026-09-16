@@ -56,7 +56,7 @@ Codex 在本仓库的根级工作说明。进入子目录后，继续读取最�
 - 权限和认证变更默认采用安全值；匿名能力必须按功能显式允许。
 - 数据库结构变化必须同时检查 migration、Hasura metadata、回滚策略和旧部署升级路径。
 - 发布与 OTA 改动必须检查 GHCR、自建 Registry、本地 release 演练和生产部署四条路径。
-- 包含表级 managed-policy reconcile、可恢复表删除、Project Account Self-Deletion 或 Device Wipe Mandates 的 API/Admin 启动前必须应用 migration `023`、`024`、`025`、`026`，release manifest migration ceiling 不得低于 `26`。
+- 包含表级 managed-policy reconcile、可恢复表删除、Project Account Self-Deletion、Device Wipe Mandates 或 Data Access v2 授权投影的 API/Admin 启动前必须应用 migration `023`、`024`、`025`、`026`、`027`，release manifest migration ceiling 不得低于 `27`。首次发布 migration `027` 前必须先完成 rollback-gate capable updater `0.2.0` bootstrap；bootstrap 只能复用指定旧稳定 release 的不可变 manifest/Compose/digest、不得成为 GitHub latest，客户端只能临时使用显式版本 manifest URL；migration `027+` manifest 的 `minUpdaterVersion` 不得低于 `0.2.0`。文件回滚必须先停止 API/Admin/Worker、持久启用 `file_rollback` gate 并排空写入、检查 v2 状态，再以独立 PostgreSQL session 的全局 exclusive advisory lock 覆盖旧文件恢复与 pre-027 服务健康验证；恢复失败时旧服务必须停止且 gate/holder 保持，不能用手工清除代替恢复。
 - 生产启用 migration `025` 对应 API 前必须配置并备份彼此独立的 `ACCOUNT_DELETION_STATUS_SECRET`、`ACCOUNT_DELETION_FENCE_SECRET`，且不得与身份、Hasura、Functions、Worker 或 Storage 签名密钥复用。项目 schema restore 必须先写 runtime gate 并重放 fence；外部 deletion ledger 未实现前不得宣称整库灾难恢复可阻止旧账户复活。
 - 启用 migration `026` 对应项目能力前必须配置并稳定备份彼此独立的 `DEVICE_WIPE_BINDING_SECRET`、`DEVICE_WIPE_CREDENTIAL_SECRET` 和原 `SECRETS_ENCRYPTION_KEY`；三者丢失或替换都会破坏既有 binding 查询、签名私钥或注册恢复材料，不能靠重置配置修复。
 - Phase 开发、镜像构建、stable release 和生产 OTA 是独立动作；生产只跟随通过 taro-app 兼容回归的 stable manifest，并由运维人工 apply。

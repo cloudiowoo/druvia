@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation'
 import { DashboardLayout } from '@/components/DashboardLayout'
 import { ProjectDataAccessOverviewPanel } from '@/components/data-access/ProjectDataAccessOverview'
 import { ProjectDataAccessMigration } from '@/components/data-access/ProjectDataAccessMigration'
+import { AuthorizationProjectionPanel } from '@/components/data-access/AuthorizationProjectionPanel'
 import { api } from '@/lib/api'
 import type { ProjectDataAccessOverview } from '@/lib/project-data-access-overview'
 import type { ProjectDataAccessMigrationReport } from '@/lib/project-data-access-migration'
@@ -97,6 +98,14 @@ export default function ProjectDataAccessOverviewPage() {
         onChanged={handleMigrationChanged}
       />
 
+      <AuthorizationProjectionPanel
+        projectId={projectId}
+        projectAlias={currentProject?.alias ?? ''}
+        dependencyInvalid={overview?.tables.some(
+          (table) => table.managedState === 'dependency_invalid'
+        ) ?? false}
+        onChanged={() => void loadPage()}
+      />
       <ProjectDataAccessOverviewPanel
         tenantId={tenantId}
         projectId={projectId}

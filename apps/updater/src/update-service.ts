@@ -1,11 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, promises as fs } from 'node:fs';
+import { parseEnv } from 'node:util';
 import { dirname, join } from 'node:path';
 import type { DruviaReleaseManifest, DruviaUpdateStatus } from '@druvia/shared';
 import { isDruviaUpdateMutatingPhase } from '@druvia/shared';
-import { runCommand, type CommandRunner } from './command.js';
+import { CommandError, runCommand, type CommandRunner } from './command.js';
 import type { UpdaterConfig } from './config.js';
-import { buildComposeArgs, buildDockerImagePullArgs, buildUpdaterFinalizerRunArgs } from './compose.js';
+import {
+  buildComposeArgs,
+  buildDockerImagePullArgs,
+  buildProjectionRollbackCheckArgs,
+  buildProjectionRollbackGateArgs,
+  buildProjectionRollbackLockHolderArgs,
+  buildProjectionRollbackLockReadyArgs,
+  buildProjectionRollbackLockReleaseWaitArgs,
+  buildProjectionRollbackStaleHolderReleaseArgs,
+  buildRollbackStopArgs,
+  buildUpdaterFinalizerRunArgs,
+} from './compose.js';
 import {
   buildImageRef,
   UpdateManifestError,
@@ -46,6 +58,10 @@ export class UpdatePreconditionError extends Error {
   }
 }
 
+class RollbackRecoveryRequiredError extends Error {
+  readonly code = 'UPDATE_ROLLBACK_RECOVERY_REQUIRED';
+}
+
 export interface UpdateRouteService {
   getStatus(): Promise<DruviaUpdateStatus>;
   checkForUpdates(): Promise<UpdateOperationAccepted>;
@@ -57,6 +73,9 @@ export interface UpdateRouteService {
 
 function normalizeError(error: unknown): { code: string; message: string } {
   if (error instanceof UpdateManifestError) {
+    return { code: error.code, message: error.message };
+  }
+  if (error instanceof RollbackRecoveryRequiredError) {
     return { code: error.code, message: error.message };
   }
   if (error instanceof Error) {
@@ -83,6 +102,25 @@ async function atomicWrite(path: string, tempPath: string, content: string | Buf
   await ensureParent(tempPath);
   await fs.writeFile(tempPath, content);
   await fs.rename(tempPath, path);
+}
+
+async function syncReleaseFiles(paths: string[], extraDirectories: string[] = []): Promise<void> {
+  for (const path of paths) {
+    const file = await fs.open(path, 'r');
+    try {
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+  }
+  for (const path of new Set([...paths.map(dirname), ...extraDirectories])) {
+    const directory = await fs.open(path, 'r');
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  }
 }
 
 async function sha256File(path: string): Promise<string> {
@@ -119,8 +157,17 @@ function sanitizeDockerNameSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 120);
 }
 
+const rollbackContainerNames = ['druvia-api', 'druvia-admin', 'druvia-deno'] as const;
+
+function isMissingDockerContainer(error: unknown, name: string): boolean {
+  return error instanceof CommandError && error.command === 'docker'
+    && (error.stderr.trim().endsWith(`No such container: ${name}`)
+      || error.stderr.trim().endsWith(`No such object: ${name}`));
+}
+
 export class UpdateService implements UpdateRouteService {
   private activeOperationId: string | null = null;
+  private finalizingReconciliation: Promise<DruviaUpdateStatus> | null = null;
   private readonly fetchImpl: typeof fetch;
   private readonly runCommandImpl: CommandRunner;
   private readonly backgroundRunner: (task: () => Promise<void>) => void;
@@ -143,13 +190,104 @@ export class UpdateService implements UpdateRouteService {
   }
 
   async getStatus(): Promise<DruviaUpdateStatus> {
-    return readUpdateState(
+    const current = await readUpdateState(
       this.config.statePath,
       createDefaultUpdateStatus({
         currentVersion: this.config.currentVersion,
         channel: this.config.channel,
       })
     );
+    if (current.phase !== 'finalizing' || !current.operationId || this.activeOperationId) return current;
+    if (!this.finalizingReconciliation) {
+      this.finalizingReconciliation = this.reconcileFinalizing(current);
+    }
+    try {
+      return await this.finalizingReconciliation;
+    } finally {
+      this.finalizingReconciliation = null;
+    }
+  }
+
+  private async reconcileFinalizing(current: DruviaUpdateStatus): Promise<DruviaUpdateStatus> {
+    const name = `druvia-updater-finalizer-${sanitizeDockerNameSegment(current.operationId!)}`;
+    let stopped = false;
+    try {
+      const result = await this.runCommandImpl('docker', ['inspect', '--format', '{{.State.Running}}', name]);
+      stopped = result.stdout.trim() === 'false';
+    } catch (error) {
+      stopped = error instanceof CommandError && error.command === 'docker'
+        && /\bNo such (?:object|container):\s/.test(error.stderr);
+    }
+    if (!stopped) return current;
+
+    const latest = await readUpdateState(this.config.statePath, current);
+    if (latest.phase !== 'finalizing' || latest.operationId !== current.operationId) return latest;
+    const finished: DruviaUpdateStatus = {
+      ...latest,
+      phase: 'succeeded',
+      operationId: null,
+      finishedAt: this.now().toISOString(),
+      message: `Updated to ${latest.currentVersion}; updater finalizer failed after interruption and can be retried manually`,
+      error: null,
+    };
+    await writeUpdateState(this.config.statePath, finished);
+    return finished;
+  }
+
+  async recoverInterruptedOperation(): Promise<void> {
+    const current = await this.getStatus();
+    if (!isDruviaUpdateMutatingPhase(current.phase) || current.phase === 'finalizing') return;
+    const needsRollback = (current.phase === 'applying' || current.phase === 'verifying')
+      && (current.applyStage !== 'preparing_backup' && current.applyStage !== 'backup_ready'
+        || await this.releaseFilesDiverged(current));
+    if (needsRollback) {
+      await this.stopRollbackServices();
+    }
+    await this.writeState({
+      phase: 'failed',
+      operationId: needsRollback
+        ? current.rollbackBackupOperationId ?? current.operationId
+        : current.operationId,
+      rollbackBackupOperationId: null,
+      applyStage: null,
+      finishedAt: this.now().toISOString(),
+      message: needsRollback
+        ? 'Updater restarted during deployment; inspect and retry rollback'
+        : 'Updater restarted during an operation; retry the command',
+      error: {
+        code: needsRollback ? 'UPDATE_ROLLBACK_RECOVERY_REQUIRED' : 'UPDATE_OPERATION_FAILED',
+        message: needsRollback
+          ? 'Updater restarted during deployment; inspect and retry rollback'
+          : 'Updater restarted during an operation; retry the command',
+      },
+    });
+  }
+
+  private async releaseFilesDiverged(current: DruviaUpdateStatus): Promise<boolean> {
+    if (!current.operationId) return true;
+    const backupDir = join(this.config.stateDir, 'backups', current.operationId);
+    try {
+      const activeEnv = await fs.readFile(this.config.compose.releaseEnvFile);
+      if (parseEnv(activeEnv.toString()).DRUVIA_VERSION !== current.currentVersion) return true;
+      const files = [
+        [this.config.compose.releaseEnvFile, join(backupDir, '.env.release')],
+        [this.config.compose.composeFile, join(backupDir, 'docker-compose.release.yml')],
+      ];
+      for (const [active, backup] of files) {
+        const activeContent = await fs.readFile(active);
+        try {
+          if (!activeContent.equals(await fs.readFile(backup))) return true;
+        } catch (error) {
+          if (current.applyStage !== 'preparing_backup'
+            || !error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') {
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch {
+      return true;
+    }
   }
 
   async checkForUpdates(): Promise<UpdateOperationAccepted> {
@@ -217,6 +355,12 @@ export class UpdateService implements UpdateRouteService {
       });
       await atomicWrite(this.config.stagedReleaseEnvPath, this.config.nextReleaseEnvPath, stagedEnv);
 
+      await syncReleaseFiles([
+        this.config.stagedManifestPath,
+        this.config.stagedComposePath,
+        this.config.stagedReleaseEnvPath,
+      ]);
+
       await this.writeState({
         phase: 'ready_to_apply',
         availableVersion: manifest.version,
@@ -231,9 +375,32 @@ export class UpdateService implements UpdateRouteService {
 
   async applyUpdate(): Promise<UpdateOperationAccepted> {
     return this.startOperation('applying', async (operationId) => {
-      const manifest = await readJsonFile<DruviaReleaseManifest>(this.config.stagedManifestPath);
-      await fs.access(this.config.stagedReleaseEnvPath);
-      await fs.access(this.config.stagedComposePath);
+      const current = await this.getStatus();
+      const manifest = validateReleaseManifest(
+        await readJsonFile<DruviaReleaseManifest>(this.config.stagedManifestPath),
+        {
+          currentVersion: current.currentVersion,
+          currentUpdaterVersion: this.config.currentUpdaterVersion,
+          channel: this.config.channel,
+          allowedHosts: this.config.allowedHosts,
+        }
+      );
+      if (manifest.version !== current.availableVersion
+        || JSON.stringify(manifest.migrations) !== JSON.stringify(current.migration)
+        || !verifySha256(await fs.readFile(this.config.stagedComposePath, 'utf8'), manifest.compose.sha256)) {
+        throw new UpdatePreconditionError('UPDATE_STAGED_ASSETS_INVALID', 'Staged release does not match the admitted manifest');
+      }
+      const stagedEnv = parseEnv(await fs.readFile(this.config.stagedReleaseEnvPath, 'utf8'));
+      const expectedImages = {
+        DRUVIA_API_IMAGE: buildImageRef(manifest.images.api),
+        DRUVIA_ADMIN_IMAGE: buildImageRef(manifest.images.admin),
+        DRUVIA_WORKER_IMAGE: buildImageRef(manifest.images.worker),
+        DRUVIA_UPDATER_IMAGE: buildImageRef(manifest.images.updater),
+      };
+      if (stagedEnv.DRUVIA_VERSION !== manifest.version
+        || Object.entries(expectedImages).some(([key, image]) => stagedEnv[key] !== image)) {
+        throw new UpdatePreconditionError('UPDATE_STAGED_ASSETS_INVALID', 'Staged release env does not match the manifest');
+      }
 
       const backupDir = join(this.config.stateDir, 'backups', operationId);
       await fs.mkdir(backupDir, { recursive: true });
@@ -244,11 +411,22 @@ export class UpdateService implements UpdateRouteService {
         await this.createDatabaseBackup(backupDir);
       }
 
+      await syncReleaseFiles([
+        join(backupDir, '.env.release'),
+        join(backupDir, 'docker-compose.release.yml'),
+        ...(manifest.migrations.requiresBackup
+          ? [join(backupDir, 'postgres.dump'), join(backupDir, 'postgres.dump.sha256')]
+          : []),
+      ], [dirname(backupDir), this.config.stateDir]);
+
+      await this.writeState({ applyStage: 'backup_ready' });
       let releaseFilesSwitched = false;
       try {
-        await fs.rename(this.config.stagedComposePath, this.config.compose.composeFile);
+        await this.writeState({ applyStage: 'files_switched' });
         releaseFilesSwitched = true;
+        await fs.rename(this.config.stagedComposePath, this.config.compose.composeFile);
         await fs.rename(this.config.stagedReleaseEnvPath, this.config.compose.releaseEnvFile);
+        await syncReleaseFiles([this.config.compose.composeFile, this.config.compose.releaseEnvFile]);
 
         if (manifest.migrations.required) {
           await this.runCommandImpl('docker', buildComposeArgs('migrate', this.config.compose));
@@ -259,11 +437,14 @@ export class UpdateService implements UpdateRouteService {
       } catch (error) {
         if (!releaseFilesSwitched) throw error;
 
-        await this.restoreBackup(backupDir);
-        await this.runCommandImpl('docker', buildComposeArgs('rollbackWorker', this.config.compose));
-        await this.runCommandImpl('docker', buildComposeArgs('rollbackUp', this.config.compose));
-        await this.writeState({ phase: 'verifying', message: 'Verifying services after rollback' });
-        await this.pollHealthChecks();
+        try {
+          await this.prepareProjectionRollback();
+          await this.completeProjectionRollback(backupDir);
+        } catch (rollbackError) {
+          throw new RollbackRecoveryRequiredError(
+            rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+          );
+        }
 
         const normalized = normalizeError(error);
         await this.writeState({
@@ -273,6 +454,7 @@ export class UpdateService implements UpdateRouteService {
           message: this.buildAutomaticRollbackMessage(backupDir, manifest),
           error: normalized,
           operationId: null,
+          applyStage: null,
         });
         return;
       }
@@ -280,6 +462,8 @@ export class UpdateService implements UpdateRouteService {
       await this.writeState({
         phase: 'finalizing',
         currentVersion: manifest.version,
+        lastAppliedBackup: { operationId, targetVersion: manifest.version },
+        applyStage: null,
         availableVersion: null,
         releaseNotesUrl: manifest.releaseNotesUrl,
         migration: manifest.migrations,
@@ -312,29 +496,56 @@ export class UpdateService implements UpdateRouteService {
   }
 
   async rollbackUpdate(): Promise<UpdateOperationAccepted> {
-    const statusBeforeRollback = await this.getStatus();
-    const backupOperationId = statusBeforeRollback.operationId;
+    let backupOperationId = '';
+    let restoredVersion = '';
+    let previousLastAppliedBackup: DruviaUpdateStatus['lastAppliedBackup'] = null;
 
     return this.startOperation('applying', async () => {
+      const backupDir = this.resolveBackupDir(backupOperationId);
       try {
-        const backupDir = await this.resolveBackupDir(backupOperationId);
-        await this.restoreBackup(backupDir);
-        await this.runCommandImpl('docker', buildComposeArgs('rollbackWorker', this.config.compose));
-        await this.runCommandImpl('docker', buildComposeArgs('rollbackUp', this.config.compose));
-        await this.writeState({ phase: 'verifying', message: 'Verifying services after rollback' });
-        await this.pollHealthChecks();
+        await this.prepareProjectionRollback();
+        await this.completeProjectionRollback(backupDir);
         await this.writeState({
           phase: 'rolled_back',
+          currentVersion: restoredVersion,
           availableVersion: null,
           operationId: null,
+          rollbackBackupOperationId: null,
+          lastAppliedBackup: previousLastAppliedBackup?.operationId === backupOperationId
+            ? null : previousLastAppliedBackup ?? null,
+          applyStage: null,
           finishedAt: this.now().toISOString(),
           message: `Rolled back using backup ${backupDir}`,
           error: null,
         });
       } catch (error) {
-        await this.writeState({ operationId: backupOperationId });
-        throw error;
+        await this.writeState({ operationId: backupOperationId, rollbackBackupOperationId: null });
+        throw new RollbackRecoveryRequiredError(error instanceof Error ? error.message : String(error));
       }
+    }, undefined, true, async (current) => {
+      const recoveringFailedApply = current.phase === 'failed'
+        && (current.applyStage === 'files_switched'
+          || current.error?.code === 'UPDATE_ROLLBACK_RECOVERY_REQUIRED');
+      const selected = recoveringFailedApply
+        ? current.operationId
+        : current.lastAppliedBackup?.targetVersion === current.currentVersion
+          ? current.lastAppliedBackup.operationId : null;
+      if (!selected) {
+        throw new UpdatePreconditionError('UPDATE_BACKUP_NOT_AVAILABLE', 'No matching apply backup is available for rollback');
+      }
+      const backupDir = this.resolveBackupDir(selected);
+      try {
+        await this.assertRollbackBackupComplete(backupDir);
+        restoredVersion = parseEnv(await fs.readFile(join(backupDir, '.env.release'), 'utf8')).DRUVIA_VERSION ?? '';
+      } catch {
+        throw new UpdatePreconditionError('UPDATE_BACKUP_NOT_AVAILABLE', 'Rollback backup files are missing or invalid');
+      }
+      if (!restoredVersion) {
+        throw new UpdatePreconditionError('UPDATE_BACKUP_NOT_AVAILABLE', 'Rollback backup has no DRUVIA_VERSION');
+      }
+      backupOperationId = selected;
+      previousLastAppliedBackup = current.lastAppliedBackup;
+      return selected;
     });
   }
 
@@ -350,29 +561,180 @@ export class UpdateService implements UpdateRouteService {
     });
   }
 
+  private async assertProjectionRollbackSafe(): Promise<void> {
+    await this.runCommandImpl(
+      'docker',
+      buildProjectionRollbackCheckArgs(this.config.compose, this.config.database)
+    );
+  }
+
+  private async enableProjectionRollbackGate(): Promise<void> {
+    await this.runCommandImpl(
+      'docker',
+      buildProjectionRollbackGateArgs(this.config.compose, this.config.database, 'enable')
+    );
+  }
+
+  private async disableProjectionRollbackGate(requireHolder = false): Promise<void> {
+    await this.runCommandImpl(
+      'docker',
+      buildProjectionRollbackGateArgs(this.config.compose, this.config.database, 'disable', requireHolder)
+    );
+    await this.runCommandImpl(
+      'docker',
+      buildProjectionRollbackLockReleaseWaitArgs(this.config.compose, this.config.database, requireHolder)
+    );
+  }
+
+  private async stopRollbackServices(): Promise<void> {
+    try {
+      await this.runCommandImpl('docker', buildRollbackStopArgs());
+    } catch (error) {
+      if (!rollbackContainerNames.some((name) => isMissingDockerContainer(error, name))) throw error;
+      let stopFailure: unknown = null;
+      for (const name of rollbackContainerNames) {
+        try {
+          await this.runCommandImpl('docker', ['stop', '--time', '10', name]);
+        } catch (stopError) {
+          if (!isMissingDockerContainer(stopError, name)) stopFailure ??= stopError;
+        }
+      }
+      if (stopFailure) throw stopFailure;
+    }
+  }
+
+  private async startProjectionRollbackLockHolder(): Promise<void> {
+    await this.runCommandImpl(
+      'docker',
+      buildProjectionRollbackLockHolderArgs(this.config.compose, this.config.database)
+    );
+  }
+
+  private async waitForProjectionRollbackLock(): Promise<void> {
+    let lastError: unknown = new Error('file rollback lock holder is not ready');
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try {
+        await this.runCommandImpl(
+          'docker',
+          buildProjectionRollbackLockReadyArgs(this.config.compose, this.config.database)
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        await this.sleep(100);
+      }
+    }
+    throw lastError;
+  }
+
+  private async prepareProjectionRollback(): Promise<void> {
+    await this.stopRollbackServices();
+    await this.enableProjectionRollbackGate();
+    await this.runCommandImpl('docker', buildProjectionRollbackStaleHolderReleaseArgs(
+      this.config.compose, this.config.database
+    ));
+    await this.assertProjectionRollbackSafe();
+    await this.startProjectionRollbackLockHolder();
+    await this.waitForProjectionRollbackLock();
+  }
+
+  private async completeProjectionRollback(backupDir: string): Promise<void> {
+    let holderFailure: unknown = null;
+    let probePending: Promise<void> | null = null;
+    const abort = new AbortController();
+    const probe = async () => {
+      if (holderFailure) throw holderFailure;
+      await this.runCommandImpl(
+        'docker', buildProjectionRollbackLockReadyArgs(this.config.compose, this.config.database)
+      );
+      if (holderFailure) throw holderFailure;
+    };
+    const watchdog = setInterval(() => {
+      if (probePending) return;
+      probePending = probe().catch(async (error: unknown) => {
+        holderFailure = error;
+        abort.abort();
+        try {
+          await this.stopRollbackServices();
+        } catch (stopError) {
+          holderFailure = stopError;
+        }
+      }).finally(() => { probePending = null; });
+    }, 250);
+
+    try {
+      await probe();
+      await this.restoreBackup(backupDir);
+      await probe();
+      await this.runCommandImpl('docker', buildComposeArgs('rollbackWorker', this.config.compose), { signal: abort.signal });
+      await probe();
+      await this.runCommandImpl('docker', buildComposeArgs('rollbackUp', this.config.compose), { signal: abort.signal });
+      await probe();
+      await this.writeState({ phase: 'verifying', message: 'Verifying services after rollback' });
+      await this.pollHealthChecks(probe, abort.signal);
+      await probe();
+      clearInterval(watchdog);
+      await probePending;
+      if (holderFailure) throw holderFailure;
+      await this.disableProjectionRollbackGate(true);
+    } catch (error) {
+      clearInterval(watchdog);
+      await probePending;
+      try {
+        await this.enableProjectionRollbackGate();
+      } finally {
+        await this.stopRollbackServices();
+      }
+      throw error;
+    } finally {
+      clearInterval(watchdog);
+    }
+  }
+
   private async startOperation(
     phase: DruviaUpdateStatus['phase'],
     operation: (operationId: string) => Promise<void>,
-    validateCurrent?: (current: DruviaUpdateStatus) => void
+    validateCurrent?: (current: DruviaUpdateStatus) => void,
+    allowRollbackRecovery = false,
+    rollbackBackupOperationId: string | null | ((current: DruviaUpdateStatus) => string | null | Promise<string | null>) = null
   ): Promise<UpdateOperationAccepted> {
-    const current = await this.getStatus();
-    if (this.activeOperationId || isDruviaUpdateMutatingPhase(current.phase)) {
-      throw new UpdateOperationInProgressError(this.activeOperationId ?? current.operationId);
-    }
-    validateCurrent?.(current);
-
+    if (this.activeOperationId) throw new UpdateOperationInProgressError(this.activeOperationId);
     const operationId = this.operationIdFactory();
-    const status: DruviaUpdateStatus = {
-      ...current,
-      phase,
-      operationId,
-      startedAt: this.now().toISOString(),
-      finishedAt: null,
-      message: null,
-      error: null,
-    };
-    await writeUpdateState(this.config.statePath, status);
     this.activeOperationId = operationId;
+    let status: DruviaUpdateStatus;
+    try {
+      const current = await this.getStatus();
+      if (isDruviaUpdateMutatingPhase(current.phase)) {
+        throw new UpdateOperationInProgressError(current.operationId);
+      }
+      if (!allowRollbackRecovery && current.error?.code === 'UPDATE_ROLLBACK_RECOVERY_REQUIRED') {
+        throw new UpdatePreconditionError(
+          'UPDATE_ROLLBACK_RECOVERY_REQUIRED', 'Rollback recovery must complete before another update operation'
+        );
+      }
+      validateCurrent?.(current);
+      const selectedRollbackBackupOperationId = typeof rollbackBackupOperationId === 'function'
+        ? await rollbackBackupOperationId(current)
+        : rollbackBackupOperationId;
+
+      status = {
+        ...current,
+        phase,
+        operationId,
+        applyStage: phase === 'applying'
+          ? allowRollbackRecovery ? 'rolling_back' : 'preparing_backup'
+          : null,
+        rollbackBackupOperationId: selectedRollbackBackupOperationId,
+        startedAt: this.now().toISOString(),
+        finishedAt: null,
+        message: null,
+        error: null,
+      };
+      await writeUpdateState(this.config.statePath, status);
+    } catch (error) {
+      this.activeOperationId = null;
+      throw error;
+    }
 
     this.backgroundRunner(async () => {
       try {
@@ -439,6 +801,12 @@ export class UpdateService implements UpdateRouteService {
   private async restoreBackup(backupDir: string): Promise<void> {
     await fs.copyFile(join(backupDir, '.env.release'), this.config.compose.releaseEnvFile);
     await fs.copyFile(join(backupDir, 'docker-compose.release.yml'), this.config.compose.composeFile);
+    await syncReleaseFiles([this.config.compose.releaseEnvFile, this.config.compose.composeFile]);
+  }
+
+  private async assertRollbackBackupComplete(backupDir: string): Promise<void> {
+    await fs.access(join(backupDir, '.env.release'));
+    await fs.access(join(backupDir, 'docker-compose.release.yml'));
   }
 
   private buildAutomaticRollbackMessage(
@@ -451,20 +819,23 @@ export class UpdateService implements UpdateRouteService {
     return `Rolled back release files using backup ${backupDir}`;
   }
 
-  private async pollHealthChecks(): Promise<void> {
+  private async pollHealthChecks(afterCheck?: () => Promise<void>, signal?: AbortSignal): Promise<void> {
     const deadline = Date.now() + this.config.healthCheckTimeoutMs;
     let lastError: unknown = null;
 
     while (Date.now() <= deadline) {
       try {
         for (const url of this.config.healthCheckUrls) {
-          const response = await this.fetchImpl(url);
+          const response = await this.fetchImpl(url, signal ? { signal } : undefined);
           if (!response.ok) {
             throw new Error(`Health check failed for ${url}: HTTP ${response.status}`);
           }
+          await afterCheck?.();
         }
+        await afterCheck?.();
         return;
       } catch (error) {
+        if (afterCheck) await afterCheck();
         lastError = error;
         if (Date.now() + this.config.healthCheckIntervalMs > deadline) break;
         await this.sleep(this.config.healthCheckIntervalMs);
@@ -474,26 +845,10 @@ export class UpdateService implements UpdateRouteService {
     throw lastError instanceof Error ? lastError : new Error('Health checks timed out');
   }
 
-  private async resolveBackupDir(operationId: string | null): Promise<string> {
-    if (operationId) {
-      return join(this.config.stateDir, 'backups', operationId);
+  private resolveBackupDir(operationId: string): string {
+    if (!/^[A-Za-z0-9_-]+$/.test(operationId)) {
+      throw new UpdatePreconditionError('UPDATE_BACKUP_NOT_AVAILABLE', 'Invalid rollback backup identity');
     }
-
-    const backupsRoot = join(this.config.stateDir, 'backups');
-    const entries = await fs.readdir(backupsRoot, { withFileTypes: true });
-    const directories = await Promise.all(
-      entries
-        .filter((entry) => entry.isDirectory())
-        .map(async (entry) => {
-          const path = join(backupsRoot, entry.name);
-          const stat = await fs.stat(path);
-          return { path, mtimeMs: stat.mtimeMs };
-        })
-    );
-    directories.sort((left, right) => right.mtimeMs - left.mtimeMs);
-    if (!directories[0]) {
-      throw new Error('No update backup is available for rollback');
-    }
-    return directories[0].path;
+    return join(this.config.stateDir, 'backups', operationId);
   }
 }

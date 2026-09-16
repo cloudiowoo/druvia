@@ -16,7 +16,7 @@ export type ProjectDataAccessFilter =
 
 export interface ProjectTableDataAccessOverview {
   tableName: string
-  managedState: 'managed' | 'refresh_required' | 'adoption_required' | 'custom' | 'recovery_required'
+  managedState: 'managed' | 'refresh_required' | 'adoption_required' | 'custom' | 'recovery_required' | 'dependency_invalid'
   dataInterface: DataInterfaceStatus
   authenticatedAccess: AuthenticatedAccessStatus
   anonymousAccess: AnonymousAccessStatus
@@ -69,6 +69,7 @@ export function getManagedDataAccessLabel(
     adoption_required: '需要接管',
     custom: '自定义策略',
     recovery_required: '需要恢复',
+    dependency_invalid: '授权依赖异常',
   }[state]
 }
 

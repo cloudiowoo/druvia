@@ -1,4 +1,5 @@
 import { redactSensitiveText } from '@druvia/shared'
+import { getClient } from '../../db/index.js'
 import * as projectService from '../project/project.service.js'
 import * as tableService from '../table/table.service.js'
 import { hasuraMetadataRequest } from '../realtime/realtime.service.js'
@@ -43,9 +44,11 @@ import type {
   TableDataAccessUpdateInput,
   TableDataAccessState,
 } from './data-access.types.js'
+import { loadAuthorizationProjectionDependencies } from './data-access-authorization-projection.js'
 
 interface HasuraMetadata {
   sources?: Array<{ name?: string; tables?: HasuraTableMetadata[] }>
+  [key: string]: unknown
 }
 
 interface DataAccessContext {
@@ -55,6 +58,7 @@ interface DataAccessContext {
   capabilities: DataAccessColumnCapabilities
   roles: DataAccessRoleNames
   tableMetadata: HasuraTableMetadata | null
+  metadata: HasuraMetadata
 }
 
 export class DataAccessNotFoundError extends Error {}
@@ -104,6 +108,9 @@ export async function getProjectDataAccessOverview(
     })
   }
 
+  const dependencyInvalidTables = await findDependencyInvalidTables(
+    projectId, project.schemaName, baselines, metadata as Record<string, unknown>
+  )
   return buildProjectDataAccessOverview({
     projectId,
     schemaName: project.schemaName,
@@ -116,6 +123,7 @@ export async function getProjectDataAccessOverview(
     tableMetadata: source.tables ?? [],
     managedPolicies: baselines,
     activeOperation: operation,
+    dependencyInvalidTables,
   })
 }
 
@@ -140,7 +148,10 @@ export async function getTableDataAccess(
     getManagedPolicy(projectId, context.schemaName, tableName),
     getProjectPolicyOperation(projectId),
   ])
-  return toState(context, inspected, baseline, operation)
+  const dependencyValid = await isBaselineDependencyValid(
+    context.projectId, context.schemaName, baseline, context.metadata as Record<string, unknown>
+  )
+  return toState(context, inspected, baseline, operation, dependencyValid)
 }
 
 export async function updateTableDataAccess(
@@ -197,6 +208,7 @@ async function loadDataAccessContext(
       anonymous: resolveDataScopeRole({ projectId, actor: 'anonymous' }),
     },
     tableMetadata,
+    metadata,
   }
 }
 
@@ -256,7 +268,8 @@ function toState(
   context: DataAccessContext,
   inspected: InspectedTableDataAccess,
   baseline: ManagedPolicyRecord | null,
-  operation: PolicyOperationRecord | null
+  operation: PolicyOperationRecord | null,
+  dependencyValid: boolean
 ): TableDataAccessState {
   const relevantOperation = operation?.tableName === context.tableName ? operation : null
   const sourceCapabilities = baseline?.capabilitiesSnapshot ?? context.capabilities
@@ -270,7 +283,7 @@ function toState(
       : createPermissionSnapshot(materializeInspectedTableDataAccess(
           sourceInspected, context.roles, sourceCapabilities
         ))
-  const managedState = classifyManagedPolicyState({
+  const classifiedState = classifyManagedPolicyState({
     inspectedState: sourceInspected.authenticatedState === 'custom'
       || sourceInspected.anonymousState === 'custom' ? 'custom' : 'managed',
     hasScopedPermissions: sourceInspected.permissions.length > 0,
@@ -280,6 +293,11 @@ function toState(
     baseline,
     recoveryRequired: isPolicyOperationRecoveryRequired(relevantOperation),
   })
+  const managedState = classifiedState === 'recovery_required'
+    ? classifiedState
+    : baseline?.policyVersion === 2 && !dependencyValid
+      ? 'dependency_invalid'
+      : classifiedState
   return {
     projectId: context.projectId,
     schemaName: context.schemaName,
@@ -300,4 +318,54 @@ function toState(
       : null,
     activeOperation: relevantOperation ? toOperationState(relevantOperation) : null,
   }
+}
+
+async function findDependencyInvalidTables(
+  projectId: string,
+  schemaName: string,
+  baselines: ManagedPolicyRecord[],
+  metadata: Record<string, unknown>
+): Promise<Set<string>> {
+  const invalid = new Set<string>()
+  const groups = new Map<string, ManagedPolicyRecord[]>()
+  for (const baseline of baselines.filter((item) => item.policyVersion === 2)) {
+    const key = baseline.dependencyDigest ?? `missing:${baseline.tableName}`
+    groups.set(key, [...(groups.get(key) ?? []), baseline])
+  }
+  if (groups.size === 0) return invalid
+  const client = await getClient()
+  try {
+    for (const group of groups.values()) {
+      const baseline = group[0]
+      const snapshot = baseline.dependencySnapshot
+      if (!snapshot?.contract || !baseline.dependencyDigest) {
+        group.forEach((item) => invalid.add(item.tableName))
+        continue
+      }
+      try {
+        const current = await loadAuthorizationProjectionDependencies({
+          client, projectId, schemaName, contract: snapshot.contract, metadata,
+        })
+        if (current.snapshot.digest !== baseline.dependencyDigest) {
+          group.forEach((item) => invalid.add(item.tableName))
+        }
+      } catch {
+        group.forEach((item) => invalid.add(item.tableName))
+      }
+    }
+  } finally {
+    client.release()
+  }
+  return invalid
+}
+
+async function isBaselineDependencyValid(
+  projectId: string,
+  schemaName: string,
+  baseline: ManagedPolicyRecord | null,
+  metadata: Record<string, unknown>
+): Promise<boolean> {
+  if (!baseline || baseline.policyVersion !== 2) return true
+  const invalid = await findDependencyInvalidTables(projectId, schemaName, [baseline], metadata)
+  return !invalid.has(baseline.tableName)
 }

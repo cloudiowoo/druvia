@@ -17,12 +17,13 @@ export function isDataAccessMigrationDeleteGuardError(error: unknown): boolean {
     && [
       'druvia_data_access_migrations_inflight_delete_guard',
       'druvia_data_access_policy_operations_inflight_delete_guard',
+      'druvia_data_access_projection_operations_inflight_delete_guard',
     ].includes(value.constraint ?? '')
 }
 
 export interface DataAccessMutationLockOptions {
   globalMode?: 'shared' | 'exclusive'
-  purpose?: 'ordinary' | 'migration' | 'policy_operation' | 'table_delete' | 'table_delete_recovery'
+  purpose?: 'ordinary' | 'migration' | 'policy_operation' | 'projection_operation' | 'table_delete' | 'table_delete_recovery'
   migrationId?: string
   operationId?: string
 }
@@ -42,7 +43,7 @@ export async function withProjectDataAccessMutationLock<T>(
   if (purpose === 'migration' && (!options.migrationId || !options.operationId)) {
     throw new Error('Migration ID and operation ID are required for migration lock context')
   }
-  if (purpose === 'policy_operation' && !options.operationId) {
+  if ((purpose === 'policy_operation' || purpose === 'projection_operation') && !options.operationId) {
     throw new Error('Operation ID is required for policy operation lock context')
   }
   if ((purpose === 'table_delete' || purpose === 'table_delete_recovery') && !options.operationId) {
@@ -70,7 +71,7 @@ export async function withProjectDataAccessMutationLock<T>(
       throw new DataAccessMutationLockedError('Project data access migration requires completion or recovery')
     }
 
-    if (purpose !== 'policy_operation') {
+    if (purpose !== 'policy_operation' && purpose !== 'projection_operation') {
       await supersedePolicyOperationPreviews(client, projectId, globalMode)
     }
 
@@ -129,6 +130,12 @@ async function supersedePolicyOperationPreviews(
      WHERE (${scope}) AND status = 'preview_ready'`,
     globalMode === 'exclusive' ? [] : [projectId]
   )
+  await client.query(
+    `UPDATE druvia_data_access_projection_operations
+     SET status = 'superseded', phase = 'completed', completed_at = NOW()
+     WHERE (${scope}) AND status = 'preview_ready'`,
+    globalMode === 'exclusive' ? [] : [projectId]
+  )
 }
 
 async function tryLock(client: PoolClient, identity: string, shared: boolean): Promise<boolean> {
@@ -149,7 +156,7 @@ async function hasPersistedDataAccessBlock(
   client: PoolClient,
   projectId: string,
   globalMode: 'shared' | 'exclusive',
-  purpose: 'ordinary' | 'migration' | 'policy_operation' | 'table_delete' | 'table_delete_recovery',
+  purpose: 'ordinary' | 'migration' | 'policy_operation' | 'projection_operation' | 'table_delete' | 'table_delete_recovery',
   operationId?: string,
   migrationId?: string
 ): Promise<boolean> {
@@ -166,10 +173,17 @@ async function hasPersistedDataAccessBlock(
   const policyExcluded = purpose === 'policy_operation'
     ? 'AND operation_id <> $3'
     : 'AND $3::text IS NOT NULL'
+  const projectionExcluded = purpose === 'projection_operation'
+    ? 'AND operation_id <> $3'
+    : 'AND $3::text IS NOT NULL'
   const tableDeletionBlocks = purpose !== 'table_delete_recovery'
   const tableDeletionScope = 'lock_scope = $1'
   const result = await client.query<{ blocked: boolean }>(
     `SELECT EXISTS (
+       SELECT 1
+       FROM druvia_data_access_runtime_gates
+       WHERE gate_name = 'file_rollback' AND active
+       UNION ALL
        SELECT 1
        FROM druvia_data_access_migrations
        WHERE (${scope})
@@ -183,6 +197,12 @@ async function hasPersistedDataAccessBlock(
        FROM druvia_data_access_policy_operations
        WHERE (${scope})
          ${policyExcluded}
+         AND status IN ${policyStatuses}
+       UNION ALL
+       SELECT 1
+       FROM druvia_data_access_projection_operations
+       WHERE (${scope})
+         ${projectionExcluded}
          AND status IN ${policyStatuses}
        UNION ALL
        SELECT 1

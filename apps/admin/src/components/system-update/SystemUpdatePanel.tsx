@@ -180,6 +180,11 @@ function formatStatusMessage(status: DruviaUpdateStatus): string | null {
     return `已更新到 ${finalizerCompletedMatch[1]}，updater 自更新已完成`;
   }
 
+  const finalizerInterruptedMatch = status.message.match(/^Updated to (.+); updater finalizer failed after interruption/);
+  if (finalizerInterruptedMatch) {
+    return `已更新到 ${finalizerInterruptedMatch[1]}，但 updater 自更新中断，需检查运行中的 updater 版本`;
+  }
+
   const finalizerFailedAfterStartMatch = status.message.match(/^Updated to (.+); updater finalizer failed:/);
   if (finalizerFailedAfterStartMatch) {
     return `已更新到 ${finalizerFailedAfterStartMatch[1]}，但 updater 自更新执行失败，可稍后手动恢复`;
@@ -283,7 +288,14 @@ export function SystemUpdatePanel() {
   const busy = Boolean(action) || (status ? busyPhases.has(status.phase) : false);
   const canDownload = status?.phase === 'available' || status?.phase === 'failed' || status?.phase === 'rolled_back';
   const canApply = status?.phase === 'ready_to_apply';
-  const canRollback = status?.phase === 'failed';
+  const canRollback = Boolean(status && (
+    (status.phase === 'failed'
+      && Boolean(status.operationId)
+      && (status.applyStage === 'files_switched'
+        || status.error?.code === 'UPDATE_ROLLBACK_RECOVERY_REQUIRED'))
+    || (status.lastAppliedBackup?.targetVersion === status.currentVersion
+      && Boolean(status.lastAppliedBackup.operationId))
+  ));
   const statusMessage = status ? formatStatusMessage(status) : null;
   const progressPercent = status ? phaseProgressPercent(status) : 0;
 
@@ -514,14 +526,28 @@ export function SystemUpdatePanel() {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-            <Button
-              variant="outline"
-              onClick={() => runOperation('rollback', () => api.rollbackSystemUpdate(), '已开始回滚')}
-              disabled={busy || !canRollback}
-            >
-              <RotateCcw />
-              回滚
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" disabled={busy || !canRollback}>
+                  <RotateCcw />
+                  回滚
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>回滚发布文件</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    将恢复上一版本的发布文件并重启服务，但不会恢复数据库。若更新包含数据库迁移，请先确认旧版本与当前数据库兼容。
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>取消</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => runOperation('rollback', () => api.rollbackSystemUpdate(), '已开始回滚')}>
+                    确认回滚
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
 
           <Dialog>

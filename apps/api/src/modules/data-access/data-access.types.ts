@@ -2,6 +2,14 @@ import type { ProjectDataAccessMode } from '@druvia/shared'
 
 export type AuthenticatedAccessMode = 'none' | 'all' | 'owner'
 export type DataAccessOperation = 'select' | 'insert' | 'update' | 'delete'
+export type DataAccessPolicyVersion = 1 | 2
+
+export interface AuthorizationProjectionSelectConstraint {
+  type: 'authorization_projection'
+  relationshipPath: [string]
+  actorColumn: string
+  allowColumn: string
+}
 
 export interface AuthenticatedTableAccess {
   select: AuthenticatedAccessMode
@@ -9,9 +17,12 @@ export interface AuthenticatedTableAccess {
   update: AuthenticatedAccessMode
   delete: AuthenticatedAccessMode
   ownerColumn: string | null
+  selectConstraint?: AuthorizationProjectionSelectConstraint | null
 }
 
 export interface TableDataAccessInput {
+  /** Missing on historical baselines and legacy clients; it is normalized to v1. */
+  policyVersion?: DataAccessPolicyVersion
   authenticated: AuthenticatedTableAccess
   anonymous: {
     select: boolean
@@ -57,6 +68,7 @@ export type ManagedDataAccessState =
   | 'adoption_required'
   | 'custom'
   | 'recovery_required'
+  | 'dependency_invalid'
 
 export interface DataAccessRoleNames {
   authenticated: string

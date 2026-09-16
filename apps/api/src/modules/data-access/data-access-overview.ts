@@ -33,6 +33,7 @@ interface BuildProjectDataAccessOverviewInput {
   tableMetadata: HasuraTableMetadata[]
   managedPolicies?: ManagedPolicyRecord[]
   activeOperation?: PolicyOperationRecord | null
+  dependencyInvalidTables?: Set<string>
 }
 
 export function buildProjectDataAccessOverview(
@@ -53,7 +54,8 @@ export function buildProjectDataAccessOverview(
       metadataByTable.get(item.tableName),
       input.roles,
       baselineByTable.get(item.tableName) ?? null,
-      input.activeOperation?.tableName === item.tableName ? input.activeOperation : null
+      input.activeOperation?.tableName === item.tableName ? input.activeOperation : null,
+      input.dependencyInvalidTables?.has(item.tableName) ?? false
     ))
   const tables = builtTables.map((item) => item.table)
 
@@ -74,7 +76,7 @@ export function buildProjectDataAccessOverview(
       reviewRequiredTables: tables.filter((item) => item.reviewRequired).length,
       pendingConfigurationTables: builtTables.filter((item) => !item.hasSupportedPermission).length,
       actionRequiredTables: tables.filter((item) => [
-        'refresh_required', 'adoption_required', 'custom', 'recovery_required',
+        'refresh_required', 'adoption_required', 'custom', 'recovery_required', 'dependency_invalid',
       ].includes(item.managedState)).length,
     },
     tables,
@@ -86,7 +88,8 @@ function buildTableOverview(
   metadata: HasuraTableMetadata | undefined,
   roles: DataAccessRoleNames,
   baseline: ManagedPolicyRecord | null,
-  operation: PolicyOperationRecord | null
+  operation: PolicyOperationRecord | null,
+  dependencyInvalid: boolean
 ): {
   table: ProjectTableDataAccessOverview
   hasSupportedPermission: boolean
@@ -121,7 +124,7 @@ function buildTableOverview(
       : createPermissionSnapshot(materializeInspectedTableDataAccess(
           sourceInspected, roles, sourceCapabilities
         ))
-  const managedState = classifyManagedPolicyState({
+  const classifiedState = classifyManagedPolicyState({
     inspectedState: sourceInspected.authenticatedState === 'custom'
       || sourceInspected.anonymousState === 'custom' ? 'custom' : 'managed',
     hasScopedPermissions: sourceInspected.permissions.length > 0,
@@ -131,6 +134,11 @@ function buildTableOverview(
     baseline,
     recoveryRequired: isPolicyOperationRecoveryRequired(operation),
   })
+  const managedState = classifiedState === 'recovery_required'
+    ? classifiedState
+    : baseline?.policyVersion === 2 && dependencyInvalid
+      ? 'dependency_invalid'
+      : classifiedState
   const reviewRequired = !metadata
     || managedState !== 'managed'
     || legacyAccess.authenticated

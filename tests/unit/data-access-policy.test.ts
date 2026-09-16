@@ -24,6 +24,7 @@ const generatedColumnCapabilities = {
 
 function policy(overrides: Partial<TableDataAccessInput> = {}): TableDataAccessInput {
   return {
+    policyVersion: overrides.policyVersion ?? 1,
     authenticated: {
       select: 'none',
       insert: 'none',
@@ -37,6 +38,13 @@ function policy(overrides: Partial<TableDataAccessInput> = {}): TableDataAccessI
       ...overrides.anonymous,
     },
   }
+}
+
+const projectionConstraint = {
+  type: 'authorization_projection' as const,
+  relationshipPath: ['session_access_projection'],
+  actorColumn: 'user_id',
+  allowColumn: 'can_read_basic',
 }
 
 describe('table data access policy materializer', () => {
@@ -192,5 +200,56 @@ describe('table data access policy materializer', () => {
       policy({ authenticated: { select: 'custom' as never } }),
       capabilities
     )).toThrow('Unsupported access mode')
+  })
+
+  it('materializes a v2 owner projection select as a fixed conjunction', () => {
+    const result = materializeTableDataAccessPolicy(policy({
+      policyVersion: 2,
+      authenticated: {
+        select: 'owner',
+        insert: 'none',
+        update: 'none',
+        delete: 'none',
+        ownerColumn: 'owner_id',
+        selectConstraint: projectionConstraint,
+      },
+    }), { roles, capabilities })
+
+    expect(result).toEqual([{
+      role: roles.authenticated,
+      operation: 'select',
+      permission: {
+        columns,
+        filter: {
+          _and: [
+            { owner_id: { _eq: 'X-Hasura-User-Id' } },
+            {
+              session_access_projection: {
+                user_id: { _eq: 'X-Hasura-User-Id' },
+                can_read_basic: { _eq: true },
+              },
+            },
+          ],
+        },
+        allow_aggregations: false,
+      },
+    }])
+  })
+
+  it('rejects projection constraints outside the v2 owner-select contract', () => {
+    expect(() => validateTableDataAccessInput(policy({
+      authenticated: {
+        select: 'owner', insert: 'none', update: 'none', delete: 'none',
+        ownerColumn: 'owner_id', selectConstraint: projectionConstraint,
+      },
+    }), capabilities)).toThrow(/policy version 2/i)
+
+    expect(() => validateTableDataAccessInput(policy({
+      policyVersion: 2,
+      authenticated: {
+        select: 'all', insert: 'none', update: 'none', delete: 'none',
+        ownerColumn: null, selectConstraint: projectionConstraint,
+      },
+    }), capabilities)).toThrow(/owner select/i)
   })
 })

@@ -81,6 +81,12 @@ describe('release-mode compose and Dockerfiles', () => {
     expect(localNginxBlock).not.toContain('certbot:');
   });
 
+  it('does not allow Compose to declare updater binary capabilities', () => {
+    const compose = read('docker/docker-compose.release.yml');
+
+    expect(compose).not.toContain('DRUVIA_UPDATER_VERSION');
+  });
+
   it('keeps local storage data outside source application directories', () => {
     const releaseCompose = read('docker/docker-compose.release.yml');
     const prodCompose = read('docker/docker-compose.prod.yml');

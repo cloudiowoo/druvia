@@ -123,6 +123,9 @@ export function TableDataAccessEditor({
       {state.managedState === 'recovery_required' && (
         <StateNotice title="访问规则需要恢复" destructive />
       )}
+      {state.managedState === 'dependency_invalid' && (
+        <StateNotice title="授权投影依赖异常" destructive />
+      )}
 
       {state.legacyRoles.length > 0 && (
         <div className="flex items-start gap-3 border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">

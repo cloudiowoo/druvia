@@ -4,6 +4,7 @@ import {
 } from './data-access-policy.js'
 import type {
   AuthenticatedAccessMode,
+  AuthorizationProjectionSelectConstraint,
   DataAccessColumnCapabilities,
   DataAccessOperation,
   DataAccessRoleNames,
@@ -116,6 +117,10 @@ export function inspectTableDataAccessMetadata(
         authenticatedCustom = true
       } else {
         policy.authenticated[operation] = mode.mode
+        if (mode.selectConstraint) {
+          policy.policyVersion = 2
+          policy.authenticated.selectConstraint = mode.selectConstraint
+        }
         if (operation !== 'delete') {
           columnGrants.authenticated[operation] = mode.columns
         }
@@ -170,9 +175,11 @@ function parseAuthenticatedPermission(
   mode: Exclude<AuthenticatedAccessMode, 'none'>
   ownerColumn: string | null
   columns: string[]
+  selectConstraint: AuthorizationProjectionSelectConstraint | null
 } | null {
   const rule = operation === 'insert' ? permission.check : permission.filter
-  const ownerColumn = parseOwnerRule(rule)
+  const projection = operation === 'select' ? parseProjectionRule(rule) : null
+  const ownerColumn = projection?.ownerColumn ?? parseOwnerRule(rule)
   const allRows = isEmptyObject(rule)
   if (!allRows && (!ownerColumn || !capabilities.readableColumns.includes(ownerColumn))) return null
   const mode = allRows ? 'all' : 'owner'
@@ -217,7 +224,12 @@ function parseAuthenticatedPermission(
       break
   }
 
-  return { mode, ownerColumn: mode === 'owner' ? ownerColumn : null, columns }
+  return {
+    mode,
+    ownerColumn: mode === 'owner' ? ownerColumn : null,
+    columns,
+    selectConstraint: projection?.constraint ?? null,
+  }
 }
 
 function isSupportedAnonymousSelect(
@@ -237,6 +249,37 @@ function parseOwnerRule(value: unknown): string | null {
   const [column, condition] = entries[0]
   if (!deepEqual(condition, { _eq: USER_ID_SESSION_VARIABLE })) return null
   return column
+}
+
+function parseProjectionRule(value: unknown): {
+  ownerColumn: string
+  constraint: AuthorizationProjectionSelectConstraint
+} | null {
+  if (!isRecord(value) || !hasExactKeys(value, ['_and'])) return null
+  const parts = value._and
+  if (!Array.isArray(parts) || parts.length !== 2) return null
+  const ownerColumn = parseOwnerRule(parts[0])
+  if (!ownerColumn || !isRecord(parts[1])) return null
+  const relationshipEntries = Object.entries(parts[1])
+  if (relationshipEntries.length !== 1) return null
+  const [relationship, projectionRule] = relationshipEntries[0]
+  if (!relationship || !isRecord(projectionRule)) return null
+  const entries = Object.entries(projectionRule)
+  if (entries.length !== 2) return null
+  const actor = entries.find(([, condition]) => (
+    deepEqual(condition, { _eq: USER_ID_SESSION_VARIABLE })
+  ))
+  const allow = entries.find(([, condition]) => deepEqual(condition, { _eq: true }))
+  if (!actor || !allow || actor[0] === allow[0]) return null
+  return {
+    ownerColumn,
+    constraint: {
+      type: 'authorization_projection',
+      relationshipPath: [relationship],
+      actorColumn: actor[0],
+      allowColumn: allow[0],
+    },
+  }
 }
 
 function parseExplicitColumns(value: unknown, allowed: string[]): string[] | null {
@@ -262,6 +305,14 @@ function isAggregationsDisabled(value: unknown): boolean {
 
 function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: string[]): boolean {
   return Object.keys(value).every((key) => allowedKeys.includes(key))
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).length === keys.length && hasOnlyKeys(value, keys)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
 function deepEqual(left: unknown, right: unknown): boolean {

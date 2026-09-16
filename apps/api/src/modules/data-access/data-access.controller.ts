@@ -14,6 +14,14 @@ import type {
   TableDataAccessInput,
   TableDataAccessUpdateInput,
 } from './data-access.types.js'
+import { AuthorizationProjectionValidationError } from './data-access-authorization-projection.js'
+import {
+  AuthorizationProjectionOperationError,
+  applyAuthorizationProjection as applyAuthorizationProjectionState,
+  getActiveAuthorizationProjection as getActiveAuthorizationProjectionState,
+  previewAuthorizationProjection as previewAuthorizationProjectionState,
+  recoverAuthorizationProjection as recoverAuthorizationProjectionState,
+} from './data-access-authorization-projection.service.js'
 import { DataAccessValidationError } from './data-access-policy.js'
 import { DataAccessMutationLockedError } from './data-access-mutation-lock.js'
 import {
@@ -89,6 +97,84 @@ export async function getTableDataAccess(
     return reply.send({ success: true, data: state })
   } catch (error) {
     return sendDataAccessError(error, reply, request)
+  }
+}
+
+export async function getActiveAuthorizationProjection(
+  request: FastifyRequest<{ Params: ProjectDataAccessParams }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  try {
+    return reply.send({
+      success: true,
+      data: await getActiveAuthorizationProjectionState(request.params.projectId),
+    })
+  } catch (error) {
+    return sendAuthorizationProjectionError(error, reply)
+  }
+}
+
+export async function previewAuthorizationProjection(
+  request: FastifyRequest<{ Params: ProjectDataAccessParams; Body: { contract: unknown } }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  if (!isRecord(request.body) || !hasOnlyKeys(request.body, ['contract'])
+    || !isRecord(request.body.contract)) return sendInvalidAuthorizationProjectionInput(reply)
+  try {
+    return reply.send({ success: true, data: await previewAuthorizationProjectionState(
+      request.params.projectId, request.body.contract, platformUserId(request.user)
+    ) })
+  } catch (error) {
+    return sendAuthorizationProjectionError(error, reply)
+  }
+}
+
+export async function applyAuthorizationProjection(
+  request: FastifyRequest<{
+    Params: DataAccessPolicyOperationParams
+    Body: {
+      projectAlias: string
+      sourceDigest: string
+      targetDigest: string
+      dependencyDigest: string
+      baselineRevisions: Record<string, string>
+    }
+  }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  if (!isAuthorizationProjectionApplyInput(request.body)) {
+    return sendInvalidAuthorizationProjectionInput(reply)
+  }
+  try {
+    return reply.send({ success: true, data: await applyAuthorizationProjectionState(
+      request.params.projectId, request.params.operationId, request.body
+    ) })
+  } catch (error) {
+    return sendAuthorizationProjectionError(error, reply)
+  }
+}
+
+export async function recoverAuthorizationProjection(
+  request: FastifyRequest<{
+    Params: DataAccessPolicyOperationParams
+    Body: { projectAlias: string }
+  }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  if (!isRecord(request.body) || !hasOnlyKeys(request.body, ['projectAlias'])
+    || typeof request.body.projectAlias !== 'string' || !request.body.projectAlias) {
+    return sendInvalidAuthorizationProjectionInput(reply)
+  }
+  try {
+    return reply.send({ success: true, data: await recoverAuthorizationProjectionState(
+      request.params.projectId, request.params.operationId, request.body.projectAlias
+    ) })
+  } catch (error) {
+    return sendAuthorizationProjectionError(error, reply)
   }
 }
 
@@ -373,9 +459,18 @@ async function verifyManagementAccess(
 }
 
 function isTableDataAccessInput(value: unknown): value is TableDataAccessUpdateInput {
-  if (!isRecord(value) || !isTableDataAccessPolicy(value)) return false
+  if (!isRecord(value)) return false
   const envelope = value as Record<string, unknown>
-  return typeof envelope.operationId === 'string'
+  return hasOnlyKeys(envelope, [
+    'policyVersion', 'authenticated', 'anonymous', 'operationId',
+    'expectedBaselineRevision', 'columnGrants',
+  ])
+    && isTableDataAccessPolicy({
+      policyVersion: envelope.policyVersion,
+      authenticated: envelope.authenticated,
+      anonymous: envelope.anonymous,
+    })
+    && typeof envelope.operationId === 'string'
     && (envelope.expectedBaselineRevision === undefined
       || Number.isSafeInteger(envelope.expectedBaselineRevision))
     && (envelope.columnGrants === undefined || isColumnGrants(envelope.columnGrants))
@@ -387,11 +482,40 @@ function isTableDataAccessPolicy(value: unknown): value is TableDataAccessInput 
   }
   const authenticated = value.authenticated
   const ownerColumn = authenticated.ownerColumn
-  return ['select', 'insert', 'update', 'delete'].every(
+  const version = value.policyVersion ?? 1
+  const selectConstraint = authenticated.selectConstraint
+  const hasSelectConstraint = Object.prototype.hasOwnProperty.call(
+    authenticated, 'selectConstraint'
+  )
+  return hasOnlyKeys(value, ['policyVersion', 'authenticated', 'anonymous'])
+    && hasOnlyKeys(authenticated, [
+      'select', 'insert', 'update', 'delete', 'ownerColumn', 'selectConstraint',
+    ])
+    && hasOnlyKeys(value.anonymous, ['select'])
+    && (version === 1 || version === 2)
+    && ['select', 'insert', 'update', 'delete'].every(
     (operation) => ACCESS_MODES.has(authenticated[operation] as AuthenticatedAccessMode)
   )
     && (ownerColumn === null || typeof ownerColumn === 'string')
     && typeof value.anonymous.select === 'boolean'
+    && (version === 2
+      ? hasSelectConstraint && isAuthorizationProjectionConstraint(selectConstraint)
+      : !hasSelectConstraint)
+}
+
+function isAuthorizationProjectionConstraint(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'type', 'relationshipPath', 'actorColumn', 'allowColumn',
+  ])) return false
+  return value.type === 'authorization_projection'
+    && Array.isArray(value.relationshipPath)
+    && value.relationshipPath.length === 1
+    && typeof value.relationshipPath[0] === 'string'
+    && value.relationshipPath[0].length > 0
+    && typeof value.actorColumn === 'string'
+    && value.actorColumn.length > 0
+    && typeof value.allowColumn === 'string'
+    && value.allowColumn.length > 0
 }
 
 function isColumnGrants(value: unknown): value is DataAccessColumnGrants {
@@ -405,6 +529,24 @@ function isColumnGrants(value: unknown): value is DataAccessColumnGrants {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function isAuthorizationProjectionApplyInput(value: unknown): value is {
+  projectAlias: string
+  sourceDigest: string
+  targetDigest: string
+  dependencyDigest: string
+  baselineRevisions: Record<string, string>
+} {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'projectAlias', 'sourceDigest', 'targetDigest', 'dependencyDigest', 'baselineRevisions',
+  ]) || typeof value.projectAlias !== 'string' || !value.projectAlias
+    || !isDigest(value.sourceDigest) || !isDigest(value.targetDigest)
+    || !isDigest(value.dependencyDigest) || !isRecord(value.baselineRevisions)) return false
+  const revisions = Object.entries(value.baselineRevisions)
+  return revisions.length > 0 && revisions.every(([table, revision]) => (
+    /^[a-z_][a-z0-9_]*$/.test(table) && typeof revision === 'string' && /^[1-9][0-9]*$/.test(revision)
+  ))
 }
 
 function isOperationConfirmation(
@@ -430,6 +572,10 @@ function sendInvalidPolicyOperationInput(reply: FastifyReply) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key))
 }
 
 function isPreviewInput(value: unknown): value is PreviewDataAccessMigrationInput {
@@ -511,6 +657,37 @@ function sendMigrationError(error: unknown, reply: FastifyReply) {
   return reply.status(500).send({
     success: false,
     error: { code: 'DATA_ACCESS_MIGRATION_FAILED', message: 'Unable to manage data access migration' },
+  })
+}
+
+function sendInvalidAuthorizationProjectionInput(reply: FastifyReply) {
+  return reply.status(400).send({
+    success: false,
+    error: { code: 'INVALID_DATA_ACCESS_PROJECTION', message: 'Invalid authorization projection request' },
+  })
+}
+
+function sendAuthorizationProjectionError(error: unknown, reply: FastifyReply) {
+  if (error instanceof AuthorizationProjectionValidationError) {
+    return sendInvalidAuthorizationProjectionInput(reply)
+  }
+  if (error instanceof AuthorizationProjectionOperationError) {
+    const status = error.code === 'DATA_ACCESS_NOT_FOUND' ? 404
+      : error.code === 'INVALID_DATA_ACCESS_PROJECTION' ? 400
+        : error.code === 'DATA_ACCESS_PROJECTION_UPSTREAM_ERROR' ? 502 : 409
+    return reply.status(status).send({
+      success: false,
+      error: {
+        code: error.code,
+        message: status === 502
+          ? 'Data access service is temporarily unavailable'
+          : error.message,
+      },
+    })
+  }
+  return reply.status(500).send({
+    success: false,
+    error: { code: 'DATA_ACCESS_PROJECTION_FAILED', message: 'Unable to manage authorization projection' },
   })
 }
 

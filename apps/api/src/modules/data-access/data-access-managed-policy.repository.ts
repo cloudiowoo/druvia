@@ -8,6 +8,7 @@ import type {
   MaterializedDataPermission,
   TableDataAccessInput,
 } from './data-access.types.js'
+import type { AuthorizationProjectionDependencySnapshot } from './data-access-authorization-projection.js'
 
 interface ManagedPolicyRow {
   project_id: string
@@ -19,6 +20,8 @@ interface ManagedPolicyRow {
   capabilities_snapshot: DataAccessColumnCapabilities
   permissions_snapshot: MaterializedDataPermission[]
   metadata_digest: string
+  dependency_snapshot: AuthorizationProjectionDependencySnapshot | null
+  dependency_digest: string | null
   revision: string
   created_by: string
   updated_by: string
@@ -67,6 +70,8 @@ export interface ManagedPolicyRecord {
   capabilitiesSnapshot: DataAccessColumnCapabilities
   permissionsSnapshot: MaterializedDataPermission[]
   metadataDigest: string
+  dependencySnapshot: AuthorizationProjectionDependencySnapshot | null
+  dependencyDigest: string | null
   revision: bigint
   createdBy: string
   updatedBy: string
@@ -156,6 +161,8 @@ export interface SaveManagedPolicyInput {
   capabilitiesSnapshot: DataAccessColumnCapabilities
   permissionsSnapshot: MaterializedDataPermission[]
   metadataDigest: string
+  dependencySnapshot?: AuthorizationProjectionDependencySnapshot | null
+  dependencyDigest?: string | null
   actorId: string
   expectedRevision: bigint | null
 }
@@ -170,30 +177,36 @@ export async function saveManagedPolicy(
     input.projectId,
     input.tableName,
     input.schemaName,
+    input.policy.policyVersion ?? 1,
     JSON.stringify(input.policy),
     JSON.stringify(input.columnGrants),
     JSON.stringify(input.capabilitiesSnapshot),
     JSON.stringify(input.permissionsSnapshot),
     input.metadataDigest,
+    input.dependencySnapshot ? JSON.stringify(input.dependencySnapshot) : null,
+    input.dependencyDigest ?? null,
     input.actorId,
   ]
   const result = input.expectedRevision === null
     ? await client.query<ManagedPolicyRow>(
         `INSERT INTO druvia_data_access_managed_policies (
-           project_id, table_name, schema_name, policy, column_grants,
-           capabilities_snapshot, permissions_snapshot, metadata_digest, created_by, updated_by
-         ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, $9)
+           project_id, table_name, schema_name, policy_version, policy, column_grants,
+           capabilities_snapshot, permissions_snapshot, metadata_digest,
+           dependency_snapshot, dependency_digest, created_by, updated_by
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9,
+           $10::jsonb, $11, $12, $12)
          ON CONFLICT (project_id, schema_name, table_name) DO NOTHING
          RETURNING *`,
         values
       )
     : await client.query<ManagedPolicyRow>(
         `UPDATE druvia_data_access_managed_policies
-         SET policy = $4::jsonb, column_grants = $5::jsonb,
-             capabilities_snapshot = $6::jsonb, permissions_snapshot = $7::jsonb,
-             metadata_digest = $8, updated_by = $9, revision = revision + 1,
+         SET policy_version = $4, policy = $5::jsonb, column_grants = $6::jsonb,
+             capabilities_snapshot = $7::jsonb, permissions_snapshot = $8::jsonb,
+             metadata_digest = $9, dependency_snapshot = $10::jsonb,
+             dependency_digest = $11, updated_by = $12, revision = revision + 1,
              updated_at = NOW()
-         WHERE project_id = $1 AND table_name = $2 AND schema_name = $3 AND revision = $10
+         WHERE project_id = $1 AND table_name = $2 AND schema_name = $3 AND revision = $13
          RETURNING *`,
         [...values, input.expectedRevision.toString()]
       )
@@ -399,6 +412,8 @@ function toManagedPolicy(row: ManagedPolicyRow): ManagedPolicyRecord {
     policyVersion: row.policy_version, policy: row.policy, columnGrants: row.column_grants,
     capabilitiesSnapshot: row.capabilities_snapshot,
     permissionsSnapshot: row.permissions_snapshot, metadataDigest: row.metadata_digest,
+    dependencySnapshot: row.dependency_snapshot ?? null,
+    dependencyDigest: row.dependency_digest ?? null,
     revision: BigInt(row.revision), createdBy: row.created_by, updatedBy: row.updated_by,
     createdAt: row.created_at, updatedAt: row.updated_at,
   }

@@ -5,6 +5,12 @@ const policyOperationMocks = vi.hoisted(() => ({
   applyPolicyReconcile: vi.fn(),
   recoverPolicyOperation: vi.fn(),
 }))
+const projectionMocks = vi.hoisted(() => ({
+  previewAuthorizationProjection: vi.fn(),
+  applyAuthorizationProjection: vi.fn(),
+  recoverAuthorizationProjection: vi.fn(),
+  getActiveAuthorizationProjection: vi.fn(),
+}))
 
 vi.mock('../../apps/api/src/modules/data-access/data-access.service.js', () => ({
   DataAccessConflictError: class DataAccessConflictError extends Error {},
@@ -32,12 +38,21 @@ vi.mock('../../apps/api/src/modules/data-access/data-access-policy-operation.ser
   previewPolicyReconcile: policyOperationMocks.previewPolicyReconcile,
   recoverPolicyOperation: policyOperationMocks.recoverPolicyOperation,
 }))
+vi.mock('../../apps/api/src/modules/data-access/data-access-authorization-projection.service.js', () => ({
+  AuthorizationProjectionOperationError: class AuthorizationProjectionOperationError extends Error {
+    constructor(readonly code: string, message: string) {
+      super(message)
+    }
+  },
+  ...projectionMocks,
+}))
 
 import * as controller from '../../apps/api/src/modules/data-access/data-access.controller.js'
 import * as service from '../../apps/api/src/modules/data-access/data-access.service.js'
 import { checkProjectAccess } from '../../apps/api/src/lib/access.js'
 import { DataAccessValidationError } from '../../apps/api/src/modules/data-access/data-access-policy.js'
 import { DataAccessPolicyOperationError } from '../../apps/api/src/modules/data-access/data-access-policy-operation.service.js'
+import { createClosedTableDataAccessPolicy } from '../../apps/api/src/modules/data-access/data-access-policy.js'
 
 function createReply() {
   const reply = {
@@ -58,6 +73,7 @@ function createReply() {
 }
 
 const policy = {
+  policyVersion: 1 as const,
   authenticated: {
     select: 'all' as const,
     insert: 'none' as const,
@@ -182,6 +198,31 @@ describe('data access controller', () => {
     expect(reply.payload).toMatchObject({ success: true, data: { tableName: 'orders' } })
   })
 
+  it('round-trips the default v1 GET policy through PUT without an unsupported constraint field', async () => {
+    vi.mocked(service.getTableDataAccess).mockResolvedValueOnce({
+      projectId: 'proj_123', schemaName: 'dru_proj_123', tableName: 'orders', columns: ['id'],
+      policy: createClosedTableDataAccessPolicy(), managedState: 'managed', legacyRoles: [],
+    })
+    const readReply = createReply()
+    await controller.getTableDataAccess({
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, readReply as never)
+    const returned = (readReply.payload as { data: { policy: typeof policy } }).data.policy
+    expect(returned.authenticated).not.toHaveProperty('selectConstraint')
+
+    const writeReply = createReply()
+    await controller.updateTableDataAccess({
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+      body: { ...returned, operationId: 'op-roundtrip' },
+    } as never, writeReply as never)
+    expect(writeReply.statusCode).toBe(200)
+    expect(service.updateTableDataAccess).toHaveBeenCalledWith(
+      'proj_123', 'orders', expect.objectContaining({ policyVersion: 1 }), 'usr_123'
+    )
+  })
+
   it.each([
     { kind: 'project_user', sub: 'pusr_1', projectId: 'proj_123' },
     {
@@ -219,6 +260,51 @@ describe('data access controller', () => {
       body: {
         ...policy,
         authenticated: { ...policy.authenticated, select: 'custom' },
+      },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(400)
+    expect(service.updateTableDataAccess).not.toHaveBeenCalled()
+  })
+
+  it('rejects unknown nested v2 policy fields before calling the service', async () => {
+    const reply = createReply()
+    await controller.updateTableDataAccess({
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+      body: {
+        ...policy,
+        policyVersion: 2,
+        authenticated: {
+          ...policy.authenticated,
+          select: 'owner',
+          ownerColumn: 'owner_id',
+          selectConstraint: {
+            type: 'authorization_projection',
+            relationshipPath: ['session_access_projection'],
+            actorColumn: 'user_id',
+            allowColumn: 'can_read_basic',
+            arbitraryHasuraFilter: {},
+          },
+        },
+        unexpected: true,
+        operationId: 'operation_123',
+      },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(400)
+    expect(service.updateTableDataAccess).not.toHaveBeenCalled()
+  })
+
+  it('rejects v1 policies that explicitly include a projection constraint field', async () => {
+    const reply = createReply()
+    await controller.updateTableDataAccess({
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+      body: {
+        ...policy,
+        authenticated: { ...policy.authenticated, selectConstraint: null },
+        operationId: 'operation_123',
       },
     } as never, reply as never)
 
@@ -389,5 +475,44 @@ describe('data access controller', () => {
       success: false,
       error: { code: 'DATA_ACCESS_RECONCILE_RECOVERY_REQUIRED' },
     })
+  })
+
+  it('forwards a strict authorization projection preview contract', async () => {
+    const contract = {
+      contractVersion: 1,
+      policyVersion: 2,
+      view: {
+        name: 'access_projection', projectionMode: 'sparse_allow_list',
+        key: ['id', 'user_id'], columns: { id: 'uuid', user_id: 'uuid', allowed: 'boolean' },
+        clientPermissions: { select: false, insert: false, update: false, delete: false },
+      },
+      relationships: [{
+        table: 'orders', name: 'access_projection', type: 'object',
+        mapping: { id: 'id', user_id: 'user_id' }, ownerColumn: 'user_id',
+        actorColumn: 'user_id', allowColumn: 'allowed',
+      }],
+    }
+    projectionMocks.previewAuthorizationProjection.mockResolvedValueOnce({ operationId: 'dapo_1' })
+    const reply = createReply()
+    await controller.previewAuthorizationProjection({
+      params: { projectId: 'proj_123' }, body: { contract },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(projectionMocks.previewAuthorizationProjection).toHaveBeenCalledWith(
+      'proj_123', contract, 'usr_123'
+    )
+    expect(reply.payload).toMatchObject({ success: true, data: { operationId: 'dapo_1' } })
+  })
+
+  it('rejects unknown authorization projection envelope fields', async () => {
+    const reply = createReply()
+    await controller.previewAuthorizationProjection({
+      params: { projectId: 'proj_123' }, body: { contract: {}, sql: 'select true' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+    } as never, reply as never)
+
+    expect(reply.statusCode).toBe(400)
+    expect(projectionMocks.previewAuthorizationProjection).not.toHaveBeenCalled()
   })
 })

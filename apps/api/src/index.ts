@@ -4,6 +4,8 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { pathToFileURL } from 'node:url';
 import { config } from './config/index.js';
+import { pool } from './db/index.js';
+import { assertSupportedDatabaseMigrationVersion } from './db/migration-compatibility.js';
 import { mergeApiLogContext } from './lib/log-context.js';
 import { toFastifySerializedError } from './lib/logger.js';
 import authPlugin from './middleware/auth.js';
@@ -245,6 +247,7 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
 async function start() {
   const app = buildApp();
   try {
+    await assertSupportedDatabaseMigrationVersion(pool);
     const tableDeletionRecovery = await recoverPendingTableDeletions();
     if (tableDeletionRecovery.failed > 0) {
       app.log.warn(tableDeletionRecovery, 'some pending table deletions still require recovery');

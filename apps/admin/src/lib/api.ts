@@ -504,6 +504,48 @@ class ApiClient {
     );
   }
 
+  async getActiveAuthorizationProjection(projectId: string) {
+    return this.request<import('./data-access-authorization-projection').AuthorizationProjectionOperation | null>(
+      'GET', `/api/v1/projects/${projectId}/data-access/authorization-projection`
+    );
+  }
+
+  async previewAuthorizationProjection(
+    projectId: string,
+    contract: import('./data-access-authorization-projection').AuthorizationProjectionContract
+  ) {
+    return this.request<import('./data-access-authorization-projection').AuthorizationProjectionOperation>(
+      'POST', `/api/v1/projects/${projectId}/data-access/authorization-projection/preview`,
+      { contract }
+    );
+  }
+
+  async applyAuthorizationProjection(projectId: string, operationId: string, input: {
+    projectAlias: string;
+    sourceDigest: string;
+    targetDigest: string;
+    dependencyDigest: string;
+    baselineRevisions: Record<string, string>;
+  }) {
+    return this.request<import('./data-access-authorization-projection').AuthorizationProjectionOperation>(
+      'POST',
+      `/api/v1/projects/${projectId}/data-access/authorization-projection/${operationId}/apply`,
+      input
+    );
+  }
+
+  async recoverAuthorizationProjection(
+    projectId: string,
+    operationId: string,
+    input: { projectAlias: string }
+  ) {
+    return this.request<import('./data-access-authorization-projection').AuthorizationProjectionOperation>(
+      'POST',
+      `/api/v1/projects/${projectId}/data-access/authorization-projection/${operationId}/recover`,
+      input
+    );
+  }
+
   async updateTableDataAccess(
     projectId: string,
     tableName: string,

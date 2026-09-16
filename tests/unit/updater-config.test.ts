@@ -19,6 +19,7 @@ describe('updater config', () => {
     });
 
     expect(config.currentVersion).toBe('0.1.0');
+    expect(config.currentUpdaterVersion).toBe('0.2.0');
     expect(config.channel).toBe('stable');
     expect(config.allowedHosts).toEqual(['github.com', 'raw.githubusercontent.com']);
     expect(config.statePath).toBe('/state/update-state.json');
@@ -32,6 +33,17 @@ describe('updater config', () => {
     expect(config.updaterContainerName).toBe('druvia-updater');
     expect(config.updaterFinalizerDelaySeconds).toBe(3);
     expect(config.database.password).toBe('postgres-password');
+  });
+
+  it('does not trust an environment override for updater capabilities', () => {
+    const config = parseUpdaterConfig({
+      DRUVIA_UPDATER_SECRET: 'secret-32-chars-secret-32-chars',
+      DRUVIA_CURRENT_VERSION: '0.1.0',
+      DRUVIA_UPDATER_VERSION: '0.2.1',
+      DRUVIA_RELEASE_MANIFEST_URL: 'https://github.com/druvia/druvia/releases/latest/download/release-manifest.json',
+    });
+
+    expect(config.currentUpdaterVersion).toBe('0.2.0');
   });
 
   it('fails startup when required updater env is missing', () => {

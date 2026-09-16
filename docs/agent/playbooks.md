@@ -1350,7 +1350,8 @@ pnpm migrate up
 pnpm migrate status
 ```
 
-Docker 双库环境必须对当前 API/Hasura 实际连接的库执行；另一数据库不会自动同步。release/OTA manifest 的 migration ceiling 必须至少为 `26`。
+Docker 双库环境必须对当前 API/Hasura 实际连接的库执行；另一数据库不会自动同步。release/OTA manifest 的 migration ceiling 必须至少为 `27`。
+
 4. 由应用仓库的前向 migration 在项目 schema 安装以下三个函数，保持普通 Hasura 客户端零 CRUD：
 
 ```text
@@ -1383,3 +1384,52 @@ production/release Compose 的 API 端口默认只发布到宿主机 `127.0.0.1:
 - 整库恢复必须同时恢复 migration `026` 四张 core 表及三条稳定 secret。仅恢复项目 schema、没有 core 快照时不能宣称可抑制已经确认的历史 mandate。
 - 项目删除和管理 API 的独立数据库用户删除都会持有 project-auth 项目锁，并在 `REASSIGN OWNED`、`DROP OWNED`、`DROP ROLE`、schema 或 Storage 副作用前检查 binding/mandate，以 `409 DEVICE_WIPE_DECOMMISSION_REQUIRED` 阻断。不得用“先删除数据库用户”规避检查，否则三个 Hook 的 owner 与 restore 能力会被永久破坏。当前没有自动 decommission；不得直接删除 core 行绕过恢复围栏。项目永久下线流程需要独立审查、确认所有设备已 ack 后再建设受控清理能力。
 - migration `026 down` 只允许 config、key、binding、mandate 全部为空；生产启用后采用新编号前向修复。
+
+## Data Access v2 授权投影本地启用
+
+本流程只负责 Druvia 平台 migration 和受管 Hasura metadata。应用业务 view 及其 DDL 仍由应用仓库 migration 维护；不要把应用 SQL 复制进 Druvia Core migration。
+
+1. 确认 API 与 Hasura 当前连接的数据库。在双库环境中分别检查 `DB_HOST`，不要误把 migration 应用到备用普通 PostgreSQL。
+2. 备份当前数据库和 Hasura metadata，再将平台数据库升级到 migration `027`：
+
+```bash
+docker exec druvia-api node apps/api/dist/cli/migrate.js status
+docker exec druvia-api node apps/api/dist/cli/migrate.js up
+```
+
+3. 由应用仓库在同一活动数据库应用投影 view migration。view 必须属于当前项目 schema，由项目 `db_user` 拥有，启用 `security_barrier`、禁用 `security_invoker`，撤销 PUBLIC 表级和列级 privilege，并保证合同 key 无重复记录。view 及其同 schema helper view 的全部递归非系统 relation、inheritance/partition descendant 也必须留在该项目 schema；不能读取 dev/test 等其他环境 schema，当前也不能依赖项目或 extension function，包括 custom operator 的 implementation function。Druvia 会将依赖闭包，以及 helper view/materialized view 的定义、owner、完整 options、表级/列级 PUBLIC ACL 和输出列纳入 digest；定义摘要会保留 SQL 字面量内部空白，后续改写 helper、挂载跨 schema partition 或替换 operator implementation 会触发 `dependency_invalid`。
+4. 检查机器合同：顶层只允许 `contractVersion`、`policyVersion`、`view`、`relationships`；必须为 `contractVersion: 1`、`policyVersion: 2`，不得携带 schema、说明字段或任意 Hasura JSON。每条 mapping 必须完整覆盖 view key，且 `ownerColumn` 映射到 `actorColumn`。
+5. 打开项目“设置 -> 数据访问”，在“授权投影”区域导入 JSON。先执行预检，核对目标表、owner/allow column 和写权限保持不变，再输入项目别名应用。apply 会对预检时的完整 Hasura `resource_version` 执行 CAS；期间任何项目的 metadata 发生变化都必须重新预检，不会用旧完整 metadata 覆盖新变更。不要直接修改 Hasura metadata；同名关系必须是唯一且完整 `using` 一致的 object relationship。若任一已受管表显示“结构待同步”，先在该表执行单表 reconcile；v2 reconcile 只更新列能力与收缩后的 grants，保持 policy/constraint/dependency 不变，并在 preview、apply 接纳、metadata 写入前及 baseline 提交前复验依赖。服务端会拒绝任何扩大 grants 的请求，新增列不会自动授权，完成后才能重新执行项目投影预检。
+6. timeout、transport 或 5xx 等未知 metadata 写结果进入恢复状态后，必须等待 writer deadline 加 drain window；不能通过立即点击恢复与迟到的 Hasura 写入竞争。
+7. 若状态为“授权依赖异常”，使用“安全关闭”入口并输入项目别名。Druvia 会在项目锁内只允许最新成功 apply 的批次进入恢复；成功 apply 标记在 fail-closed 后仍保留，历史 operation 不能因此重新获得恢复资格。已成功批次即使当前 metadata 恰好回到预检时的旧 source，也会按漂移失败关闭，不能按“未应用”恢复 owner-only。活动状态不会被后续 failed、superseded 或未应用 preview 遮蔽；若尚有 `preview_ready`，恢复会在同一事务中先将其 supersede，再 claim 成功批次，claim 失败则保留原 preview。依赖仍漂移或无法证明完整 target 时，关闭合同内全部来源表的 authenticated select。修复应用 view/关系合同后重新导入完整合同预检，不能逐表退回 owner-only。
+8. 验收 query、cross-user、allow=false/missing projection、relationship traversal 和 Realtime 使用同一 select 结果。不可读候选如需继续写入，mutation 只请求 `affected_rows`；Hasura 2.48 的 `returning`/`insert_one` 是本次写入回显，不受 select 行过滤抑制，不得用作读取授权证明。
+9. 首次发布 migration `027` 前，先运行 GitHub Actions 的 `Updater Bootstrap Release`：`version` 必须是高于 `base_version` 的新稳定 SemVer，`base_version` 必须是当前部署产品版本，`migration_version` 必须与活动数据库当前版本精确相等且小于 `27`。workflow 会先下载 `v<base_version>` 的双 Registry manifest 与 Compose，校验版本、migration、Compose SHA、repository/tag/digest，并在登录 Registry/推送镜像前运行 PostgreSQL 17 rollback-gate 集成门禁；Registry tag 只用于确认没有漂移，应用 digest 不从可变 tag 重新推导。workflow 只构建 updater，生成 `required=false`、`from=to`、`minUpdaterVersion=0.1.0` 的双 Registry manifest，上传旧 release 的原 Compose，并以 `make_latest=false` 发布。bootstrap 会占用一个新的产品版本，但不会改变全局 stable latest；后续包含 migration `027` 的完整 stable release 必须再使用更高版本。
+10. 在目标主机先确认 `.env.release` 的 `DRUVIA_VERSION` 等于 `base_version`，并用 migration status 确认数据库恰为输入版本。临时将 `DRUVIA_RELEASE_MANIFEST_URL` 指向 bootstrap 的显式版本资产，例如 `https://github.com/cloudiowoo/druvia/releases/download/v<bootstrap-version>/release-manifest.json`；自建 Registry 使用同 tag 下的 `release-manifest.cn.json`。不得将其他客户端或全局 `releases/latest/download` 指向 bootstrap。随后在现有 updater `0.1.0` 界面执行检查、下载和应用；服务可能按 Compose 编排重启，但 API/Admin/Worker digest 与 Compose 必须保持 base release 原值，只有 updater digest 变化。完成后从镜像内读取不可由 Compose 覆盖的能力版本：
+
+```bash
+docker exec druvia-updater node -e \
+  "import('/app/apps/updater/dist/config.js').then(({CURRENT_UPDATER_VERSION}) => console.log(CURRENT_UPDATER_VERSION))"
+```
+
+输出必须为 `0.2.0`。未完成 bootstrap 的 updater `0.1.0` 会因后续 manifest 的 `minUpdaterVersion` 门禁拒绝 migration `027` release；不得通过环境变量伪造版本或降低 manifest 要求绕过。完整 stable release 成为 latest 后，将客户端 manifest URL 恢复到常规 stable 地址。
+若状态停在 `finalizing`，新版 updater 会在轮询时查询具名 finalizer：容器仍运行则等待，Docker 暂不可用则保持原状态；确认容器不存在/停止后会显示“核心版本已更新，但 updater finalizer 未完成”。这个状态不代表 bootstrap 能力验收成功，必须按上面的容器内版本检查确认运行实例已经是 `0.2.0`；未通过时先排查并修复 updater 自更新，再继续 migration `027` 发布。
+11. 完整 stable 发布时确认 manifest migration ceiling 为 `27`、`minUpdaterVersion >= 0.2.0`；manifest 生成器会严格解析并拒绝更低或非 SemVer 的最低 updater 版本，不能通过手工 workflow 参数降低门禁。本版 API 启动要求活动数据库 migration 正好处于其支持的 floor/ceiling `27`。migration `027` 及后续版本执行文件回滚时，updater 先停止 API/Admin/Worker、先持久启用 `file_rollback` gate，再在 gate 保持激活期间清理上次失败遗留的 holder，等待 Data Access 全局排他锁排空已有 mutation，并检查活动数据库中的 v2 baseline 和全部 projection operation。检查通过后具名 PostgreSQL session 持有同一 exclusive advisory lock，覆盖 release 文件恢复、pre-027 API 启动和健康验证；updater 在每一阶段及健康轮询持续探测 holder，丢失后取消命令并停止旧服务。存在历史或活动 v2 状态时保留 gate 并拒绝 file-only rollback，必须先按数据库备份恢复方案处理。健康通过后 updater 关闭 gate 并确认 holder 释放；若关闭/确认失败，同样停止旧服务并保留 operation。updater 在 `applying/verifying` 中重启时会先停止旧服务，将原 operation 标为只能回滚的失败状态；修复镜像/Compose/服务问题后从 updater 重试同一 rollback，重试会在服务保持停止时清理旧 holder 并重新建立冻结。migration `027 down` 遇 holder/gate 会在取得表独占锁前快速失败。只有确认匹配的发布文件和服务已恢复、健康检查通过且 v2 状态与目标代码兼容时，才可在审计后用数据库管理员执行以下应急解除，不能把它当作普通重试步骤：
+
+数据库仍处于 pre-027（不存在 gate 表）时，holder 不会自行退出；updater 将在旧服务健康检查通过后显式结束具名数据库会话并确认锁释放，不能直接杀掉 holder 继续运行旧服务。对于 migration `027+`，关闭 gate 前仍会在数据库内确认 holder 持锁，确认失败时停止旧服务。回滚停止服务和数据库探针使用固定 release 容器名 `druvia-api`、`druvia-admin`、`druvia-deno`、`druvia-postgres`，不依赖已切换的新 Compose 文件能否解析。apply 在备份复制完成前中断或尚未切换发布文件时无需按旧镜像回滚；文件可能已切换或手工回滚中断则必须保留原始备份 ID，并在重试前检查 `.env.release` 和 `docker-compose.release.yml` 备份都存在。预检发现 v2 状态后不得继续发起其他更新，必须先处理数据库备份/目标版本兼容。
+
+若 gate 已关闭但 holder 释放确认失败，updater 会尽力重新启用 gate 并停止旧服务，状态仍为需要恢复；先确认 gate 与旧服务状态，不可把此次失败视作回滚完成。未知 Hasura 投影写入即使 metadata 回到原始内容，只要 resource version 已前进，恢复仍需关闭相关 authenticated select，不能判为未应用。
+
+回滚重试先保持或启用 `file_rollback` gate，再在 gate 激活时清理旧 holder；预检发现 v2 状态或清理失败时 gate 保持激活，旧服务保持停止。运维应先核对 gate 和数据库备份再确定恢复方向，不得直接重启不兼容的旧 API。完成过列授权收缩的 v2 baseline 还必须与当前 Hasura 列权限一致，历史 target metadata 即使摘要相同也不能作为恢复成功的证据。
+
+手工回滚从更新成功状态发起时，原 `operationId` 通常已清空。updater 在操作准入锁内按当前版本选定备份目录并将其 ID 写入持久回滚状态；重启后重试必须沿用同一备份，不能按新回滚操作 ID 查找，也不要手动修改 update state 来猜测备份。界面确认框中的回滚只恢复发布文件与服务，不自动恢复数据库；若迁移已改变数据库，先核实旧代码与当前 schema 的兼容性。
+
+新 updater 只允许回滚到与当前版本匹配的最近成功 apply 备份；更新检查失败产生的 operation ID 不代表备份。旧 updater 遗留的状态若没有这种独立备份记录，界面回滚会拒绝，而不是按目录时间挑选；运维应核对匹配版本的备份与文件后按人工恢复流程处理。健康发布的备份若已丢失，回滚在准入预检中直接拒绝，不会误把发布标成需要恢复或阻止继续检查/下载更新；已发生的部署回滚失败仍须完成恢复。回滚成功后确认界面的 `currentVersion` 已恢复为备份 env 中的版本。
+updater 对 apply 阶段的状态文件执行磁盘同步；重启后如果记录为备份准备/就绪，但当前发布文件与原版本或备份不一致、文件缺失，仍会停止 API/Admin/Worker 并进入回滚恢复，不能按普通下载重试。先核实发布文件、备份目录及数据库状态，再决定恢复方向。
+
+```sql
+UPDATE druvia_data_access_runtime_gates
+SET active = FALSE, updated_at = NOW()
+WHERE gate_name = 'file_rollback';
+```
+
+生产应用合同、真实 Project Session 和回退窗口未完成前，不执行 OTA 激活。

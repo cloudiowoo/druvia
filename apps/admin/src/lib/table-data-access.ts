@@ -2,12 +2,19 @@ export type TableAccessMode = 'none' | 'all' | 'owner'
 export type AuthenticatedDataOperation = 'select' | 'insert' | 'update' | 'delete'
 
 export interface TableDataAccessPolicy {
+  policyVersion?: 1 | 2
   authenticated: {
     select: TableAccessMode
     insert: TableAccessMode
     update: TableAccessMode
     delete: TableAccessMode
     ownerColumn: string | null
+    selectConstraint?: {
+      type: 'authorization_projection'
+      relationshipPath: [string]
+      actorColumn: string
+      allowColumn: string
+    } | null
   }
   anonymous: {
     select: boolean
@@ -20,7 +27,7 @@ export interface TableDataAccessState {
   tableName: string
   columns: string[]
   policy: TableDataAccessPolicy
-  managedState: 'managed' | 'refresh_required' | 'adoption_required' | 'custom' | 'recovery_required'
+  managedState: 'managed' | 'refresh_required' | 'adoption_required' | 'custom' | 'recovery_required' | 'dependency_invalid'
   legacyRoles: string[]
   baselineRevision: number | null
   capabilities: {
@@ -101,8 +108,13 @@ export function getTableDataAccessValidationError(
 export function cloneTableDataAccessPolicy(
   policy: TableDataAccessPolicy
 ): TableDataAccessPolicy {
+  const policyVersion = policy.policyVersion ?? 1
+  const { selectConstraint, ...authenticated } = policy.authenticated
   return {
-    authenticated: { ...policy.authenticated },
+    policyVersion,
+    authenticated: policyVersion === 2 && selectConstraint
+      ? { ...authenticated, selectConstraint: { ...selectConstraint } }
+      : authenticated,
     anonymous: { ...policy.anonymous },
   }
 }

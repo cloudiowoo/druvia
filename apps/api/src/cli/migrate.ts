@@ -220,6 +220,7 @@ async function bootstrap(): Promise<void> {
     24: 'druvia_table_deletion_outbox',
     25: 'druvia_project_account_deletions',
     26: 'druvia_project_device_wipe_mandates',
+    27: 'druvia_data_access_projection_operations',
   };
 
   // 纯数据迁移：通过查询数据行判断是否已应用

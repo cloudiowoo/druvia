@@ -20,6 +20,8 @@ const DEFAULT_HEALTH_CHECK_URLS = [
   'http://hasura:8080/healthz',
 ];
 
+export const CURRENT_UPDATER_VERSION = '0.2.0';
+
 export interface UpdaterConfig {
   updaterSecret: string;
   currentVersion: string;
@@ -94,7 +96,7 @@ export function parseUpdaterConfig(env: NodeJS.ProcessEnv = process.env): Update
   return {
     updaterSecret,
     currentVersion,
-    currentUpdaterVersion: env.DRUVIA_UPDATER_VERSION || '0.1.0',
+    currentUpdaterVersion: CURRENT_UPDATER_VERSION,
     channel: parseChannel(env.DRUVIA_UPDATE_CHANNEL),
     releaseManifestUrl,
     allowedHosts: allowedHosts.length > 0 ? allowedHosts : DEFAULT_ALLOWED_HOSTS,

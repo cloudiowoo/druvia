@@ -40,6 +40,7 @@ describe('data access legacy migration inspection', () => {
 
     expect(result.blockers).toEqual([])
     expect(result.policy).toEqual({
+      policyVersion: 1,
       authenticated: {
         select: 'all', insert: 'all', update: 'all', delete: 'all', ownerColumn: null,
       },

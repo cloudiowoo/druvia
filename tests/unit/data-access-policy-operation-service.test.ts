@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   getProjectPolicyOperation: vi.fn(),
   createPolicyOperation: vi.fn(),
   supersedePolicyPreviews: vi.fn(),
+  supersedeProjectionPreviews: vi.fn(),
+  loadProjectionDependencies: vi.fn(),
   transitionPolicyOperation: vi.fn(),
   renewWriterLease: vi.fn(),
   saveManagedPolicy: vi.fn(),
@@ -59,6 +61,12 @@ vi.mock('../../apps/api/src/modules/data-access/data-access-managed-policy.repos
   renewPolicyOperationWriterLease: mocks.renewWriterLease,
   saveManagedPolicy: mocks.saveManagedPolicy,
 }))
+vi.mock('../../apps/api/src/modules/data-access/data-access-projection-operation.repository.js', () => ({
+  supersedeProjectionPreviews: mocks.supersedeProjectionPreviews,
+}))
+vi.mock('../../apps/api/src/modules/data-access/data-access-authorization-projection.js', () => ({
+  loadAuthorizationProjectionDependencies: mocks.loadProjectionDependencies,
+}))
 
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
 import {
@@ -85,6 +93,25 @@ const roles = {
 }
 const oldColumns = ['id', 'user_id', 'title']
 const ownerFilter = { user_id: { _eq: 'X-Hasura-User-Id' } }
+const projectionContract = {
+  contractVersion: 1 as const,
+  policyVersion: 2 as const,
+  view: {
+    name: 'session_access_projection', projectionMode: 'sparse_allow_list' as const,
+    key: ['session_id', 'user_id'],
+    columns: {
+      session_id: 'uuid' as const, user_id: 'uuid' as const, can_read_basic: 'boolean' as const,
+    },
+    clientPermissions: {
+      select: false as const, insert: false as const, update: false as const, delete: false as const,
+    },
+  },
+  relationships: [{
+    table: tableName, name: 'session_access_projection', type: 'object' as const,
+    mapping: { id: 'session_id', user_id: 'user_id' }, ownerColumn: 'user_id',
+    actorColumn: 'user_id', allowColumn: 'can_read_basic',
+  }],
+}
 
 function metadata(columns = oldColumns) {
   return {
@@ -161,8 +188,33 @@ describe('data access policy operation service', () => {
     mocks.applyCommands.mockResolvedValue(undefined)
     mocks.replacePermissions.mockResolvedValue(undefined)
     mocks.renewWriterLease.mockResolvedValue(undefined)
+    mocks.loadProjectionDependencies.mockResolvedValue({
+      projectDbUser: `${schemaName}_user`,
+      snapshot: { contract: projectionContract, digest: 'd'.repeat(64) },
+    })
     mocks.createPolicyOperation.mockImplementation(async (_client, input) => operationFrom(input))
     mocks.withMutationLock.mockImplementation(async (_projectId, callback) => callback({ query: vi.fn() }))
+  })
+
+  it('rejects direct table-level v2 policy updates', async () => {
+    await expect(updateManagedTablePolicy(projectId, tableName, {
+      operationId: 'operation_direct_v2',
+      policyVersion: 2,
+      authenticated: {
+        select: 'owner', insert: 'none', update: 'none', delete: 'none',
+        ownerColumn: 'user_id',
+        selectConstraint: {
+          type: 'authorization_projection',
+          relationshipPath: ['session_access_projection'],
+          actorColumn: 'user_id',
+          allowColumn: 'can_read_basic',
+        },
+      },
+      anonymous: { select: false },
+    }, 'usr_1', async () => ({}) as never)).rejects.toMatchObject({
+      code: 'DATA_ACCESS_PROJECTION_MANAGED',
+    })
+    expect(mocks.withMutationLock).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -857,6 +909,209 @@ describe('data access policy operation service', () => {
     expect(preview.columnGrants.authenticated.select).toEqual([...oldColumns].sort())
     expect(preview.columnGrants.authenticated.insert).toEqual(['id', 'title'])
     expect(mocks.applyCommands).not.toHaveBeenCalled()
+  })
+
+  it('reconciles v2 capability drift without changing projection dependencies', async () => {
+    const currentColumns = ['id', 'user_id', 'new_column']
+    const selectConstraint = {
+      type: 'authorization_projection' as const,
+      relationshipPath: ['session_access_projection'] as [string],
+      actorColumn: 'user_id',
+      allowColumn: 'can_read_basic',
+    }
+    const projectionFilter = {
+      _and: [
+        ownerFilter,
+        { session_access_projection: {
+          user_id: { _eq: 'X-Hasura-User-Id' }, can_read_basic: { _eq: true },
+        } },
+      ],
+    }
+    const permissions = [{
+      role: roles.authenticated, operation: 'select' as const,
+      permission: { columns: oldColumns, filter: projectionFilter, allow_aggregations: false },
+    }]
+    const dependencySnapshot = {
+      schemaName, contract: projectionContract, relationships: [], digest: 'd'.repeat(64),
+    }
+    const baseline = {
+      projectId, tableName, schemaName, policyVersion: 2,
+      policy: {
+        policyVersion: 2 as const,
+        authenticated: {
+          select: 'owner' as const, insert: 'none' as const, update: 'none' as const,
+          delete: 'none' as const, ownerColumn: 'user_id', selectConstraint,
+        },
+        anonymous: { select: false },
+      },
+      columnGrants: {
+        authenticated: { select: oldColumns, insert: [], update: [] },
+        anonymous: { select: [] },
+      },
+      capabilitiesSnapshot: {
+        readableColumns: oldColumns, insertableColumns: oldColumns, updateableColumns: oldColumns,
+      },
+      permissionsSnapshot: permissions,
+      metadataDigest: permissionSnapshotDigest(permissions),
+      dependencySnapshot,
+      dependencyDigest: dependencySnapshot.digest,
+      revision: 3n,
+      createdBy: 'usr_1', updatedBy: 'usr_1', createdAt: new Date(), updatedAt: new Date(),
+    }
+    const projectionMetadata = {
+      resource_version: 801,
+      metadata: {
+        sources: [{ name: 'default', tables: [{
+          table: { schema: schemaName, name: tableName },
+          select_permissions: [{ role: roles.authenticated, permission: permissions[0].permission }],
+        }] }],
+      },
+    }
+    mocks.getTableMetadata.mockResolvedValue({
+      schemaName, tableName,
+      columns: currentColumns.map((name) => ({
+        name, type: 'text', nullable: false, defaultValue: null,
+        isPrimaryKey: name === 'id', isGenerated: false, isIdentity: false,
+        identityGeneration: null,
+      })),
+    })
+    mocks.metadataRequest.mockImplementation(async () => {
+      if (mocks.replacePermissions.mock.calls.length === 0) return projectionMetadata
+      return {
+        resource_version: 802,
+        metadata: {
+          sources: [{ name: 'default', tables: [{
+            table: { schema: schemaName, name: tableName },
+            select_permissions: [{
+              role: roles.authenticated,
+              permission: {
+                ...permissions[0].permission,
+                columns: ['id', 'user_id'],
+              },
+            }],
+          }] }],
+        },
+      }
+    })
+    mocks.getManagedPolicyWithClient.mockResolvedValue(baseline)
+
+    const preview = await previewPolicyReconcile(projectId, tableName, 'usr_1')
+    const operation = operationFrom(mocks.createPolicyOperation.mock.calls[0][1])
+    mocks.transitionPolicyOperation.mockImplementation(async (_client, _id, _statuses, patch) => ({
+      ...operation, ...patch,
+    }))
+    mocks.getPolicyOperationWithClient.mockImplementation(async () => {
+      const writerEpoch = mocks.transitionPolicyOperation.mock.calls.find(
+        (call) => call[3]?.status === 'applying'
+      )?.[3]?.writerEpoch
+      return { ...operation, status: 'applying', writerEpoch }
+    })
+
+    await applyPolicyReconcile(projectId, tableName, {
+      operationId: preview.operation.operationId,
+      sourceDigest: preview.operation.sourceDigest,
+      targetDigest: preview.operation.targetDigest!,
+      baselineRevision: preview.baselineRevision!,
+      projectAlias: 'pitchetch',
+      columnGrants: preview.columnGrants,
+      policy: preview.policy,
+    }, 'usr_1', async () => ({ projectId, tableName }) as never)
+
+    expect(preview.policy).toEqual(baseline.policy)
+    expect(preview.drift).toEqual({
+      addedReadable: ['new_column'],
+      addedInsertable: ['new_column'],
+      addedUpdateable: ['new_column'],
+      removedOrRestricted: ['title'],
+    })
+    expect(preview.columnGrants.authenticated.select).toEqual(['id', 'user_id'])
+    expect(mocks.saveManagedPolicy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        policy: baseline.policy,
+        dependencySnapshot,
+        dependencyDigest: dependencySnapshot.digest,
+        capabilitiesSnapshot: expect.objectContaining({ readableColumns: currentColumns }),
+      })
+    )
+    expect(mocks.loadProjectionDependencies).toHaveBeenCalledTimes(4)
+
+    mocks.replacePermissions.mockClear()
+    mocks.loadProjectionDependencies.mockResolvedValueOnce({
+      projectDbUser: `${schemaName}_user`,
+      snapshot: { contract: projectionContract, digest: 'e'.repeat(64) },
+    })
+    await expect(previewPolicyReconcile(projectId, tableName, 'usr_1'))
+      .rejects.toMatchObject({ code: 'DATA_ACCESS_PROJECTION_DEPENDENCY_INVALID' })
+  })
+
+  it('rejects changing a v2 projection policy or broadening its grants during reconciliation', async () => {
+    const selectConstraint = {
+      type: 'authorization_projection' as const,
+      relationshipPath: ['session_access_projection'] as [string],
+      actorColumn: 'user_id', allowColumn: 'can_read_basic',
+    }
+    const policy = {
+      policyVersion: 2 as const,
+      authenticated: {
+        select: 'owner' as const, insert: 'none' as const, update: 'none' as const,
+        delete: 'none' as const, ownerColumn: 'user_id', selectConstraint,
+      },
+      anonymous: { select: false },
+    }
+    const projectionPermission = {
+      columns: oldColumns,
+      filter: {
+        _and: [
+          ownerFilter,
+          { session_access_projection: {
+            user_id: { _eq: 'X-Hasura-User-Id' }, can_read_basic: { _eq: true },
+          } },
+        ],
+      },
+      allow_aggregations: false,
+    }
+    mocks.metadataRequest.mockResolvedValue({
+      resource_version: 801,
+      metadata: { sources: [{ name: 'default', tables: [{
+        table: { schema: schemaName, name: tableName },
+        select_permissions: [{ role: roles.authenticated, permission: projectionPermission }],
+      }] }] },
+    })
+    mocks.getTableMetadata.mockResolvedValue({
+      schemaName, tableName,
+      columns: [...oldColumns, 'new_column'].map((name) => ({
+        name, type: 'text', nullable: false, defaultValue: null,
+        isPrimaryKey: name === 'id', isGenerated: false, isIdentity: false,
+        identityGeneration: null,
+      })),
+    })
+    mocks.getManagedPolicyWithClient.mockResolvedValue({
+      projectId, tableName, schemaName, policyVersion: 2, policy,
+      columnGrants: { authenticated: { select: oldColumns, insert: [], update: [] }, anonymous: { select: [] } },
+      capabilitiesSnapshot: { readableColumns: oldColumns, insertableColumns: oldColumns, updateableColumns: oldColumns },
+      permissionsSnapshot: [{
+        role: roles.authenticated, operation: 'select', permission: projectionPermission,
+      }],
+      metadataDigest: 'a'.repeat(64),
+      dependencySnapshot: { digest: 'd'.repeat(64) }, dependencyDigest: 'd'.repeat(64),
+      revision: 3n, createdBy: 'usr_1', updatedBy: 'usr_1', createdAt: new Date(), updatedAt: new Date(),
+    })
+
+    await expect(previewPolicyReconcile(projectId, tableName, 'usr_1', {
+      policy: { ...policy, anonymous: { select: true } },
+    })).rejects.toMatchObject({ code: 'DATA_ACCESS_PROJECTION_MANAGED' })
+
+    await expect(previewPolicyReconcile(projectId, tableName, 'usr_1', {
+      columnGrants: {
+        authenticated: {
+          select: [...oldColumns, 'new_column'],
+          insert: [],
+          update: [],
+        },
+        anonymous: { select: [] },
+      },
+    })).rejects.toMatchObject({ code: 'DATA_ACCESS_PROJECTION_MANAGED' })
   })
 
   it('previews reconciliation when an old granted column is no longer readable', async () => {

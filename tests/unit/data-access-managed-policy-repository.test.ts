@@ -35,6 +35,7 @@ const baselineRow = {
   project_id: 'proj_1', table_name: 'orders', schema_name: 'dru_proj_1', policy_version: 1,
   policy, column_grants: grants, capabilities_snapshot: capabilities,
   permissions_snapshot: [], metadata_digest: 'a'.repeat(64), revision: '2',
+  dependency_snapshot: null, dependency_digest: null,
   created_by: 'usr_1', updated_by: 'usr_1', created_at: now, updated_at: now,
 }
 const operationRow = {
@@ -75,7 +76,7 @@ describe('managed data access policy repository', () => {
     })
     expect(client.query).toHaveBeenCalledWith(
       expect.stringContaining(
-        'WHERE project_id = $1 AND table_name = $2 AND schema_name = $3 AND revision = $10'
+        'WHERE project_id = $1 AND table_name = $2 AND schema_name = $3 AND revision = $13'
       ),
       expect.arrayContaining(['proj_1', 'orders', 'dru_proj_1', '1']),
     )

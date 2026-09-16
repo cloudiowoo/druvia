@@ -1,5 +1,6 @@
 import type {
   AuthenticatedAccessMode,
+  AuthorizationProjectionSelectConstraint,
   DataAccessColumnCapabilities,
   DataAccessOperation,
   DataAccessRoleNames,
@@ -22,6 +23,7 @@ export interface MaterializeTableDataAccessOptions {
 
 export function createClosedTableDataAccessPolicy(): TableDataAccessInput {
   return {
+    policyVersion: 1,
     authenticated: {
       select: 'none',
       insert: 'none',
@@ -46,6 +48,24 @@ export function validateTableDataAccessInput(
 
   if (typeof input.anonymous?.select !== 'boolean') {
     throw new DataAccessValidationError('Anonymous select must be a boolean')
+  }
+
+  const policyVersion = input.policyVersion ?? 1
+  if (policyVersion !== 1 && policyVersion !== 2) {
+    throw new DataAccessValidationError('Unsupported data access policy version')
+  }
+  const selectConstraint = input.authenticated.selectConstraint ?? null
+  if (selectConstraint && policyVersion !== 2) {
+    throw new DataAccessValidationError('Select constraints require policy version 2')
+  }
+  if (policyVersion === 2 && !selectConstraint) {
+    throw new DataAccessValidationError('Policy version 2 requires a select constraint')
+  }
+  if (selectConstraint) {
+    validateProjectionConstraint(selectConstraint)
+    if (input.authenticated.select !== 'owner') {
+      throw new DataAccessValidationError('Authorization projection requires owner select access')
+    }
   }
 
   const usesOwnerMode = OPERATIONS.some(
@@ -88,7 +108,8 @@ export function materializeTableDataAccessPolicy(
         mode,
         options.capabilities,
         ownerColumn,
-        options.columnGrants?.authenticated[operation === 'delete' ? 'select' : operation]
+        options.columnGrants?.authenticated[operation === 'delete' ? 'select' : operation],
+        operation === 'select' ? input.authenticated.selectConstraint ?? null : null
       ),
     })
   }
@@ -120,11 +141,25 @@ function createAuthenticatedPermission(
   mode: Exclude<AuthenticatedAccessMode, 'none'>,
   capabilities: DataAccessColumnCapabilities,
   ownerColumn: string | null,
-  grantedColumns?: string[]
+  grantedColumns?: string[],
+  selectConstraint?: AuthorizationProjectionSelectConstraint | null
 ): Record<string, unknown> {
+  const ownerRule = { [ownerColumn!]: { _eq: USER_ID_SESSION_VARIABLE } }
   const rowRule = mode === 'all'
     ? {}
-    : { [ownerColumn!]: { _eq: USER_ID_SESSION_VARIABLE } }
+    : selectConstraint
+      ? {
+          _and: [
+            ownerRule,
+            {
+              [selectConstraint.relationshipPath[0]]: {
+                [selectConstraint.actorColumn]: { _eq: USER_ID_SESSION_VARIABLE },
+                [selectConstraint.allowColumn]: { _eq: true },
+              },
+            },
+          ],
+        }
+      : ownerRule
   const writableColumns = (columns: string[]) => mode === 'owner'
     ? columns.filter((column) => column !== ownerColumn)
     : columns
@@ -160,6 +195,21 @@ function createAuthenticatedPermission(
       }
     case 'delete':
       return { filter: rowRule }
+  }
+}
+
+function validateProjectionConstraint(
+  constraint: AuthorizationProjectionSelectConstraint
+): void {
+  if (
+    constraint.type !== 'authorization_projection'
+    || !Array.isArray(constraint.relationshipPath)
+    || constraint.relationshipPath.length !== 1
+    || !constraint.relationshipPath[0]
+    || !constraint.actorColumn
+    || !constraint.allowColumn
+  ) {
+    throw new DataAccessValidationError('Invalid authorization projection constraint')
   }
 }
 

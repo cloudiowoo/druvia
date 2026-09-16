@@ -43,8 +43,21 @@ export async function writeUpdateState(
   statePath: string,
   state: DruviaUpdateStatus
 ): Promise<void> {
-  await fs.mkdir(dirname(statePath), { recursive: true });
+  const directory = dirname(statePath);
+  await fs.mkdir(directory, { recursive: true });
   const tempPath = `${statePath}.tmp`;
-  await fs.writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  const temp = await fs.open(tempPath, 'w');
+  try {
+    await temp.writeFile(`${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    await temp.sync();
+  } finally {
+    await temp.close();
+  }
   await fs.rename(tempPath, statePath);
+  const dir = await fs.open(directory, 'r');
+  try {
+    await dir.sync();
+  } finally {
+    await dir.close();
+  }
 }

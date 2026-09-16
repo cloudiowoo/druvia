@@ -13,6 +13,7 @@ vi.mock('../../apps/api/src/db/index.js', () => ({ getClient, queryOne }))
 import {
   DATA_ACCESS_GLOBAL_LOCK_ID,
   DataAccessMutationLockedError,
+  isDataAccessMigrationDeleteGuardError,
   projectDataAccessLockId,
   withProjectDataAccessMutationLock,
   withSchemaDataAccessMutationLock,
@@ -35,6 +36,13 @@ describe('project data access mutation lock', () => {
     expect(() => projectDataAccessLockId(' ')).toThrow('Project ID is required')
   })
 
+  it('recognizes the projection operation delete guard', () => {
+    expect(isDataAccessMigrationDeleteGuardError({
+      code: '55006',
+      constraint: 'druvia_data_access_projection_operations_inflight_delete_guard',
+    })).toBe(true)
+  })
+
   it('acquires shared-global then project-exclusive and releases in reverse order', async () => {
     const callback = vi.fn(async () => 'done')
 
@@ -45,6 +53,7 @@ describe('project data access mutation lock', () => {
     expect(query.mock.calls[1][0]).toContain('pg_try_advisory_lock')
     expect(query.mock.calls[1][1]).toEqual([projectDataAccessLockId('proj_1')])
     expect(query.mock.calls[2][0]).toContain('SELECT EXISTS')
+    expect(query.mock.calls[2][0]).toContain('druvia_data_access_runtime_gates')
     expect(query.mock.calls.at(-2)?.[0]).toContain('pg_advisory_unlock')
     expect(query.mock.calls.at(-1)?.[0]).toContain('pg_advisory_unlock_shared')
     expect(release).toHaveBeenCalledOnce()
@@ -102,6 +111,20 @@ describe('project data access mutation lock', () => {
       .rejects.toBeInstanceOf(DataAccessMutationLockedError)
   })
 
+  it('rejects every data access mutation while a deployment file rollback gate is active', async () => {
+    query.mockImplementation(async (sql: string) => {
+      if (sql.includes('pg_try_advisory')) return { rows: [{ acquired: true }] }
+      if (sql.includes('SELECT EXISTS')) {
+        expect(sql).toMatch(/druvia_data_access_runtime_gates[\s\S]*gate_name = 'file_rollback'[\s\S]*active/)
+        return { rows: [{ blocked: true }] }
+      }
+      return { rows: [] }
+    })
+
+    await expect(withProjectDataAccessMutationLock('proj_1', async () => undefined))
+      .rejects.toBeInstanceOf(DataAccessMutationLockedError)
+  })
+
   it('requires migration identity and checks only competing persisted operations', async () => {
     await expect(withProjectDataAccessMutationLock('proj_1', async () => undefined, {
       purpose: 'migration',
@@ -113,6 +136,8 @@ describe('project data access mutation lock', () => {
     expect(query.mock.calls.some(([sql]) => String(sql).includes('SELECT EXISTS'))).toBe(true)
     expect(query.mock.calls.find(([sql]) => String(sql).includes('SELECT EXISTS'))?.[0])
       .toContain('druvia_data_access_policy_operations')
+    expect(query.mock.calls.find(([sql]) => String(sql).includes('SELECT EXISTS'))?.[0])
+      .toContain('druvia_data_access_projection_operations')
   })
 
   it('blocks ordinary and new table writes on a pending deletion but lets recovery proceed', async () => {

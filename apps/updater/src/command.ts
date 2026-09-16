@@ -7,6 +7,7 @@ export interface CommandResult {
 
 export interface CommandRunnerOptions {
   env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
 }
 
 export type CommandRunner = (
@@ -31,6 +32,7 @@ export class CommandError extends Error {
 export const runCommand: CommandRunner = (command, args, options = {}) => new Promise((resolve, reject) => {
   const child = spawn(command, args, {
     env: options.env ?? process.env,
+    signal: options.signal,
     shell: false,
   });
   const stdout: Buffer[] = [];

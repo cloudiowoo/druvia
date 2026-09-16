@@ -44,6 +44,7 @@ describe('data access metadata inspection', () => {
     expect(result.authenticatedState).toBe('managed')
     expect(result.anonymousState).toBe('managed')
     expect(result.policy).toEqual({
+      policyVersion: 1,
       authenticated: {
         select: 'all',
         insert: 'owner',
@@ -189,6 +190,65 @@ describe('data access metadata inspection', () => {
       insert_permissions: [{
         role: roles.authenticated,
         permission: { columns: ['id', 'generated_value'], check: {} },
+      }],
+    }, roles, capabilities)
+
+    expect(result.authenticatedState).toBe('custom')
+  })
+
+  it('recognizes the exact v2 authorization projection filter as managed', () => {
+    const result = inspectTableDataAccessMetadata({
+      table: { schema: 'dru_test', name: 'orders' },
+      select_permissions: [{
+        role: roles.authenticated,
+        permission: {
+          columns,
+          filter: {
+            _and: [
+              { owner_id: { _eq: 'X-Hasura-User-Id' } },
+              {
+                session_access_projection: {
+                  user_id: { _eq: 'X-Hasura-User-Id' },
+                  can_read_basic: { _eq: true },
+                },
+              },
+            ],
+          },
+          allow_aggregations: false,
+        },
+      }],
+    }, roles, capabilities)
+
+    expect(result.authenticatedState).toBe('managed')
+    expect(result.policy).toMatchObject({
+      policyVersion: 2,
+      authenticated: {
+        select: 'owner',
+        ownerColumn: 'owner_id',
+        selectConstraint: {
+          type: 'authorization_projection',
+          relationshipPath: ['session_access_projection'],
+          actorColumn: 'user_id',
+          allowColumn: 'can_read_basic',
+        },
+      },
+    })
+  })
+
+  it('keeps non-canonical projection filters custom', () => {
+    const result = inspectTableDataAccessMetadata({
+      table: { schema: 'dru_test', name: 'orders' },
+      select_permissions: [{
+        role: roles.authenticated,
+        permission: {
+          columns,
+          filter: {
+            _or: [
+              { owner_id: { _eq: 'X-Hasura-User-Id' } },
+              { session_access_projection: { can_read_basic: { _eq: true } } },
+            ],
+          },
+        },
       }],
     }, roles, capabilities)
 

@@ -44,6 +44,8 @@ import {
   type ManagedPolicyRecord,
   type PolicyOperationRecord,
 } from './data-access-managed-policy.repository.js'
+import { supersedeProjectionPreviews } from './data-access-projection-operation.repository.js'
+import { loadAuthorizationProjectionDependencies } from './data-access-authorization-projection.js'
 import { withProjectDataAccessMutationLock } from './data-access-mutation-lock.js'
 import {
   materializeTableDataAccessPolicy,
@@ -132,6 +134,7 @@ export async function updateManagedTablePolicy(
   getState: () => Promise<TableDataAccessState>
 ): Promise<TableDataAccessState> {
   assertOperationId(input.operationId)
+  assertTablePolicyVersionOne(input)
   const requestDigest = stableDigest({ projectId, tableName, input })
   const prior = await getPolicyOperation(projectId, input.operationId)
   if (prior) {
@@ -150,7 +153,7 @@ export async function updateManagedTablePolicy(
       assertIdempotentRequest(existing, requestDigest)
       return resolveExistingPolicyUpdate(client, existing, actorId, getState)
     }
-    await supersedePolicyPreviews(client, projectId)
+    await supersedeDataAccessPreviews(client, projectId)
     const tracked = await tableService.trackTableInHasura(
       (await requireProject(projectId)).schemaName!, tableName
     )
@@ -161,6 +164,7 @@ export async function updateManagedTablePolicy(
     }
     const context = await loadOperationContext(projectId, tableName)
     const baseline = await getManagedPolicyWithClient(client, projectId, context.schemaName, tableName)
+    assertNotProjectionManaged(baseline)
     const state = classify(context, baseline, null)
     if (state === 'adoption_required') {
       throw conflict('DATA_ACCESS_ADOPTION_REQUIRED', 'Existing data access rules require adoption')
@@ -256,9 +260,16 @@ export async function previewPolicyAdoption(
 ): Promise<DataAccessPolicyPreview> {
   const operationId = createOperationId()
   return withProjectDataAccessMutationLock(projectId, async (client) => {
-    await supersedePolicyPreviews(client, projectId)
+    await supersedeDataAccessPreviews(client, projectId)
     const context = await loadOperationContext(projectId, tableName)
     const baseline = await getManagedPolicyWithClient(client, projectId, context.schemaName, tableName)
+    assertNotProjectionManaged(baseline)
+    if (context.inspected.policy.policyVersion === 2) {
+      throw conflict(
+        'DATA_ACCESS_PROJECTION_ADOPTION_REQUIRED',
+        'Authorization projection rules require a project projection contract'
+      )
+    }
     if (classify(context, baseline, null) !== 'adoption_required') {
       throw conflict('DATA_ACCESS_ADOPTION_REQUIRED', 'Table does not have adoptable data access rules')
     }
@@ -337,15 +348,29 @@ export async function previewPolicyReconcile(
 ): Promise<DataAccessPolicyPreview> {
   const operationId = createOperationId()
   return withProjectDataAccessMutationLock(projectId, async (client) => {
-    await supersedePolicyPreviews(client, projectId)
+    await supersedeDataAccessPreviews(client, projectId)
     const context = await loadOperationContext(projectId, tableName)
     const baseline = await getManagedPolicyWithClient(client, projectId, context.schemaName, tableName)
     if (!baseline || classify(context, baseline, null) !== 'refresh_required') {
       throw conflict('DATA_ACCESS_REFRESH_REQUIRED', 'Table does not require reconciliation')
     }
-    const policy = input.policy ?? materializeSafeReconcilePolicy(
-      baseline.policy, context.capabilities
-    )
+    const projectionManaged = baseline.policyVersion === 2
+    if (projectionManaged && (!baseline.dependencySnapshot || !baseline.dependencyDigest)) {
+      throw conflict(
+        'DATA_ACCESS_PROJECTION_MANAGED',
+        'Authorization projection dependency provenance is unavailable'
+      )
+    }
+    if (projectionManaged && input.policy
+      && stableDigest(input.policy) !== stableDigest(baseline.policy)) {
+      throw conflict(
+        'DATA_ACCESS_PROJECTION_MANAGED',
+        'Authorization projection policy cannot change during column reconciliation'
+      )
+    }
+    const policy = projectionManaged
+      ? baseline.policy
+      : input.policy ?? materializeSafeReconcilePolicy(baseline.policy, context.capabilities)
     try {
       validateReconcilePolicyTransition(baseline.policy, policy)
     } catch (error) {
@@ -355,13 +380,24 @@ export async function previewPolicyReconcile(
       )
     }
     validateTableDataAccessInput(policy, context.capabilities)
+    const safeReconcileGrants = materializeReconcileGrants(
+      baseline.columnGrants, context.capabilities
+    )
+    if (projectionManaged && input.columnGrants
+      && stableDigest(input.columnGrants) !== stableDigest(safeReconcileGrants)) {
+      throw conflict(
+        'DATA_ACCESS_PROJECTION_MANAGED',
+        'Authorization projection column grants can only shrink during reconciliation'
+      )
+    }
     const grants = normalizeColumnGrantsForPolicy(
       policy,
-      input.columnGrants ?? materializeReconcileGrants(
-        baseline.columnGrants, context.capabilities
-      )
+      projectionManaged ? safeReconcileGrants : input.columnGrants ?? safeReconcileGrants
     )
     validateColumnGrantModes(policy, grants)
+    if (projectionManaged) {
+      await assertProjectionDependencyCurrent(client, context, baseline)
+    }
     const targetPermissions = createPermissionSnapshot(materializeTableDataAccessPolicy(
       policy,
       { roles: context.roles, capabilities: context.capabilities, columnGrants: grants }
@@ -418,6 +454,7 @@ export async function applyPolicyReconcile(
     ) !== operation.sourceDigest) {
       throw stale()
     }
+    await assertProjectionDependencyCurrent(client, context, baseline)
     await applyPolicyOperation(client, context, operation, actorId)
     return getState()
   }, { purpose: 'policy_operation', operationId: input.operationId })
@@ -539,6 +576,7 @@ async function applyPolicyOperation(
     })
     throw stale()
   }
+  await assertProjectionDependencyCurrent(client, second, baseline)
   const writerEpoch = randomUUID()
   const deadline = new Date(Date.now() + POLICY_WRITER_LEASE_MS)
   await transitionPolicyOperation(client, operation.operationId, [operation.status], {
@@ -580,6 +618,7 @@ async function applyPolicyOperation(
       })
       throw new Error('Target permission verification failed')
     }
+    await assertProjectionDependencyCurrent(client, target, baseline)
     const owned = await getPolicyOperationWithClient(client, context.projectId, operation.operationId)
     if (!owned || owned.status !== 'applying' || owned.writerEpoch !== writerEpoch) {
       throw new Error('Policy operation writer ownership changed')
@@ -592,6 +631,8 @@ async function applyPolicyOperation(
         policy: operation.targetPolicy!, columnGrants: operation.targetColumnGrants!,
         capabilitiesSnapshot: operation.targetCapabilities!, permissionsSnapshot: operation.targetPermissions!,
         metadataDigest: permissionSnapshotDigest(operation.targetPermissions!), actorId,
+        dependencySnapshot: baseline?.dependencySnapshot ?? null,
+        dependencyDigest: baseline?.dependencyDigest ?? null,
         expectedRevision: operation.baselineRevision,
       })
       await transitionPolicyOperation(client, operation.operationId, ['applying'], {
@@ -942,6 +983,7 @@ function materializeSafeReconcilePolicy(
   capabilities: DataAccessColumnCapabilities
 ): TableDataAccessInput {
   const policy: TableDataAccessInput = {
+    policyVersion: baseline.policyVersion ?? 1,
     authenticated: { ...baseline.authenticated },
     anonymous: { ...baseline.anonymous },
   }
@@ -1109,7 +1151,66 @@ function createTargetDigest(
 }
 
 function stripUpdateEnvelope(input: TableDataAccessUpdateInput): TableDataAccessInput {
-  return { authenticated: { ...input.authenticated }, anonymous: { ...input.anonymous } }
+  return {
+    policyVersion: input.policyVersion ?? 1,
+    authenticated: { ...input.authenticated },
+    anonymous: { ...input.anonymous },
+  }
+}
+
+function assertNotProjectionManaged(baseline: ManagedPolicyRecord | null): void {
+  if (baseline?.policyVersion === 2) {
+    throw conflict(
+      'DATA_ACCESS_PROJECTION_MANAGED',
+      'Authorization projection policies must be changed through the project projection operation'
+    )
+  }
+}
+
+function assertTablePolicyVersionOne(policy: TableDataAccessInput): void {
+  if ((policy.policyVersion ?? 1) === 2 || policy.authenticated.selectConstraint) {
+    throw conflict(
+      'DATA_ACCESS_PROJECTION_MANAGED',
+      'Authorization projection policies must be changed through the project projection operation'
+    )
+  }
+}
+
+async function assertProjectionDependencyCurrent(
+  client: Pick<PoolClient, 'query'>,
+  context: OperationContext,
+  baseline: ManagedPolicyRecord | null
+): Promise<void> {
+  if (baseline?.policyVersion !== 2) return
+  const recorded = baseline.dependencySnapshot
+  if (!recorded || !baseline.dependencyDigest) throw projectionDependencyInvalid()
+  try {
+    const current = await loadAuthorizationProjectionDependencies({
+      client,
+      projectId: context.projectId,
+      schemaName: context.schemaName,
+      contract: recorded.contract,
+      metadata: context.metadata as Record<string, unknown>,
+    })
+    if (current.snapshot.digest !== baseline.dependencyDigest) {
+      throw projectionDependencyInvalid()
+    }
+  } catch (error) {
+    if (error instanceof DataAccessPolicyOperationError) throw error
+    throw projectionDependencyInvalid()
+  }
+}
+
+function projectionDependencyInvalid(): DataAccessPolicyOperationError {
+  return conflict(
+    'DATA_ACCESS_PROJECTION_DEPENDENCY_INVALID',
+    'Authorization projection dependency changed; reconciliation failed closed'
+  )
+}
+
+async function supersedeDataAccessPreviews(client: PoolClient, projectId: string): Promise<void> {
+  await supersedePolicyPreviews(client, projectId)
+  await supersedeProjectionPreviews(client, projectId)
 }
 
 function isVerifiedNoop(

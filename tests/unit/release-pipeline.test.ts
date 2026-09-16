@@ -8,7 +8,9 @@ import {
   buildReleaseManifest,
   normalizeReleaseVersion,
   resolveReleaseMetadata,
+  resolveUpdaterBootstrapMetadata,
 } from '../../scripts/release/generate-manifest.mjs';
+import { verifyUpdaterBootstrapBaseAssets } from '../../scripts/release/verify-updater-bootstrap-base.mjs';
 
 const digest = (char: string) => `sha256:${char.repeat(64)}`;
 
@@ -24,7 +26,7 @@ describe('release manifest generator', () => {
       GITHUB_REPOSITORY: 'druvia/druvia',
       GITHUB_SERVER_URL: 'https://github.com',
       DRUVIA_RELEASE_CHANNEL: 'stable',
-      DRUVIA_MIN_UPDATER_VERSION: '0.1.0',
+      DRUVIA_MIN_UPDATER_VERSION: '0.2.0',
       DRUVIA_API_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-api',
       DRUVIA_ADMIN_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-admin',
       DRUVIA_WORKER_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-worker',
@@ -35,7 +37,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '17',
-      DRUVIA_MIGRATION_TO: '26',
+      DRUVIA_MIGRATION_TO: '27',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
       DRUVIA_MIGRATION_REVERSIBLE: 'false',
     }, {
@@ -58,7 +60,7 @@ describe('release manifest generator', () => {
       migrations: {
         required: true,
         from: 17,
-        to: 26,
+        to: 27,
         requiresBackup: true,
         reversible: false,
       },
@@ -68,6 +70,138 @@ describe('release manifest generator', () => {
       tag: '0.2.0',
       digest: digest('a'),
     });
+  });
+
+  it('builds a strict updater bootstrap manifest with preserved application digests', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'druvia-bootstrap-'));
+    const composePath = join(dir, 'docker-compose.release.yml');
+    await writeFile(composePath, 'services: {}\n', 'utf8');
+    const env = {
+      RELEASE_VERSION: '0.3.5',
+      GITHUB_REPOSITORY: 'druvia/druvia',
+      DRUVIA_RELEASE_CHANNEL: 'stable',
+      DRUVIA_RELEASE_MODE: 'updater-bootstrap',
+      DRUVIA_BOOTSTRAP_BASE_VERSION: '0.3.4',
+      DRUVIA_MIN_UPDATER_VERSION: '0.1.0',
+      DRUVIA_API_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-api',
+      DRUVIA_ADMIN_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-admin',
+      DRUVIA_WORKER_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-worker',
+      DRUVIA_UPDATER_IMAGE_REPOSITORY: 'ghcr.io/druvia/druvia-updater',
+      DRUVIA_API_IMAGE_TAG: '0.3.4',
+      DRUVIA_ADMIN_IMAGE_TAG: '0.3.4',
+      DRUVIA_WORKER_IMAGE_TAG: '0.3.4',
+      DRUVIA_UPDATER_IMAGE_TAG: '0.3.5',
+      DRUVIA_API_IMAGE_DIGEST: digest('a'),
+      DRUVIA_ADMIN_IMAGE_DIGEST: digest('b'),
+      DRUVIA_WORKER_IMAGE_DIGEST: digest('c'),
+      DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
+      DRUVIA_MIGRATION_REQUIRED: 'false',
+      DRUVIA_MIGRATION_FROM: '26',
+      DRUVIA_MIGRATION_TO: '26',
+      DRUVIA_MIGRATION_REQUIRES_BACKUP: 'false',
+      DRUVIA_MIGRATION_REVERSIBLE: 'true',
+    };
+
+    const manifest = await buildReleaseManifest(env, { composePath });
+    expect(manifest.minUpdaterVersion).toBe('0.1.0');
+    expect(manifest.images.api.tag).toBe('0.3.4');
+    expect(manifest.images.updater.tag).toBe('0.3.5');
+    expect(manifest.migrations).toEqual({
+      required: false, from: 26, to: 26, requiresBackup: false, reversible: true,
+    });
+
+    await expect(buildReleaseManifest({
+      ...env,
+      DRUVIA_API_IMAGE_TAG: '0.3.5',
+    }, { composePath })).rejects.toThrow(/UNSAFE_UPDATER_BOOTSTRAP_CONTRACT/);
+  });
+
+  it('normalizes and validates updater bootstrap metadata before registry access', () => {
+    expect(resolveUpdaterBootstrapMetadata('v0.4.0', 'v0.3.10', '26')).toEqual({
+      releaseVersion: '0.4.0',
+      baseVersion: '0.3.10',
+      migrationVersion: 26,
+    });
+    expect(() => resolveUpdaterBootstrapMetadata('0.3.10', '0.4.0', '26'))
+      .toThrow(/UNSAFE_UPDATER_BOOTSTRAP_INPUT/);
+    expect(() => resolveUpdaterBootstrapMetadata('0.4.0-beta.1', '0.3.10', '26'))
+      .toThrow(/RELEASE_CHANNEL_MISMATCH/);
+    expect(() => resolveUpdaterBootstrapMetadata('0.4.0', '0.3.10', '27'))
+      .toThrow(/UNSAFE_UPDATER_BOOTSTRAP_INPUT/);
+  });
+
+  it('reuses immutable application digests and Compose from the base release', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'druvia-bootstrap-base-'));
+    const composeContent = 'services:\n  api:\n    image: ${DRUVIA_API_IMAGE}\n';
+    const composeSha256 = createHash('sha256').update(composeContent).digest('hex');
+    await writeFile(join(dir, 'docker-compose.release.yml'), composeContent, 'utf8');
+    const makeManifest = (registry: 'ghcr' | 'self-hosted') => ({
+      schemaVersion: 1,
+      product: 'druvia',
+      version: '0.3.4',
+      channel: 'stable',
+      compose: { sha256: composeSha256 },
+      migrations: { required: true, from: 18, to: 26, requiresBackup: true, reversible: false },
+      images: {
+        api: {
+          repository: registry === 'ghcr' ? 'ghcr.io/druvia/druvia-api' : 'registry.example/druvia/druvia-api',
+          tag: '0.3.4', digest: digest(registry === 'ghcr' ? 'a' : 'e'),
+        },
+        admin: {
+          repository: registry === 'ghcr' ? 'ghcr.io/druvia/druvia-admin' : 'registry.example/druvia/druvia-admin',
+          tag: '0.3.4', digest: digest(registry === 'ghcr' ? 'b' : 'f'),
+        },
+        worker: {
+          repository: registry === 'ghcr' ? 'ghcr.io/druvia/druvia-worker' : 'registry.example/druvia/druvia-worker',
+          tag: '0.3.4', digest: digest(registry === 'ghcr' ? 'c' : '1'),
+        },
+        updater: {
+          repository: registry === 'ghcr' ? 'ghcr.io/druvia/druvia-updater' : 'registry.example/druvia/druvia-updater',
+          tag: '0.3.4', digest: digest(registry === 'ghcr' ? 'd' : '2'),
+        },
+      },
+    });
+    await writeFile(join(dir, 'release-manifest.json'), JSON.stringify(makeManifest('ghcr')), 'utf8');
+    await writeFile(join(dir, 'release-manifest.cn.json'), JSON.stringify(makeManifest('self-hosted')), 'utf8');
+
+    const result = await verifyUpdaterBootstrapBaseAssets({
+      baseDir: dir,
+      baseVersion: '0.3.4',
+      migrationVersion: 26,
+      repositories: {
+        ghcr: {
+          api: 'ghcr.io/druvia/druvia-api', admin: 'ghcr.io/druvia/druvia-admin',
+          worker: 'ghcr.io/druvia/druvia-worker',
+        },
+        selfHosted: {
+          api: 'registry.example/druvia/druvia-api', admin: 'registry.example/druvia/druvia-admin',
+          worker: 'registry.example/druvia/druvia-worker',
+        },
+      },
+    });
+
+    expect(result.composeSha256).toBe(composeSha256);
+    expect(result.ghcr.api).toBe(digest('a'));
+    expect(result.selfHosted.worker).toBe(digest('1'));
+
+    const tampered = makeManifest('ghcr');
+    tampered.compose.sha256 = '0'.repeat(64);
+    await writeFile(join(dir, 'release-manifest.json'), JSON.stringify(tampered), 'utf8');
+    await expect(verifyUpdaterBootstrapBaseAssets({
+      baseDir: dir,
+      baseVersion: '0.3.4',
+      migrationVersion: 26,
+      repositories: {
+        ghcr: {
+          api: 'ghcr.io/druvia/druvia-api', admin: 'ghcr.io/druvia/druvia-admin',
+          worker: 'ghcr.io/druvia/druvia-worker',
+        },
+        selfHosted: {
+          api: 'registry.example/druvia/druvia-api', admin: 'registry.example/druvia/druvia-admin',
+          worker: 'registry.example/druvia/druvia-worker',
+        },
+      },
+    })).rejects.toThrow(/BOOTSTRAP_BASE_COMPOSE_MISMATCH/);
   });
 
   it('rejects non-semver release refs', () => {
@@ -121,7 +255,7 @@ describe('release manifest generator', () => {
     }, { composePath })).rejects.toThrow(/RELEASE_CHANNEL_MISMATCH/);
   });
 
-  it('rejects release manifests that can skip migration 026 or its backup', async () => {
+  it('rejects release manifests that can skip migration 027 or its backup', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'druvia-release-'));
     const composePath = join(dir, 'docker-compose.release.yml');
     await writeFile(composePath, 'services:\n  api:\n    image: test\n', 'utf8');
@@ -138,7 +272,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '18',
-      DRUVIA_MIGRATION_TO: '26',
+      DRUVIA_MIGRATION_TO: '27',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
     };
 
@@ -146,7 +280,7 @@ describe('release manifest generator', () => {
       ...baseEnv, DRUVIA_MIGRATION_REQUIRED: 'false',
     }, { composePath })).rejects.toThrow(/UNSAFE_MIGRATION_CONTRACT/);
     await expect(buildReleaseManifest({
-      ...baseEnv, DRUVIA_MIGRATION_TO: '25',
+      ...baseEnv, DRUVIA_MIGRATION_TO: '26',
     }, { composePath })).rejects.toThrow(/UNSAFE_MIGRATION_CONTRACT/);
     await expect(buildReleaseManifest({
       ...baseEnv, DRUVIA_MIGRATION_REQUIRES_BACKUP: 'false',
@@ -154,10 +288,48 @@ describe('release manifest generator', () => {
     await expect(buildReleaseManifest({
       ...baseEnv, DRUVIA_MIGRATION_REVERSIBLE: 'true',
     }, { composePath })).rejects.toThrow(/UNSAFE_MIGRATION_CONTRACT/);
+    await expect(buildReleaseManifest({
+      ...baseEnv, DRUVIA_MIN_UPDATER_VERSION: '0.1.9',
+    }, { composePath })).rejects.toThrow(/UNSAFE_MIN_UPDATER_VERSION/);
+    await expect(buildReleaseManifest({
+      ...baseEnv, DRUVIA_MIN_UPDATER_VERSION: 'not-semver',
+    }, { composePath })).rejects.toThrow(/INVALID_RELEASE_VERSION/);
   });
 });
 
 describe('release workflow', () => {
+  it('publishes an updater-only bootstrap after strict preflight and preserves application tags', () => {
+    const workflow = readFileSync('.github/workflows/updater-bootstrap.yml', 'utf8');
+    const preflight = workflow.indexOf('node scripts/release/prepare-updater-bootstrap.mjs');
+    const firstLogin = workflow.indexOf('uses: docker/login-action');
+    const updaterBuild = workflow.indexOf('file: docker/Dockerfile.updater');
+
+    expect(preflight).toBeGreaterThan(0);
+    expect(firstLogin).toBeGreaterThan(preflight);
+    expect(updaterBuild).toBeGreaterThan(firstLogin);
+    expect(workflow).not.toContain("parts(left).find");
+    expect(workflow).not.toContain('file: docker/Dockerfile.api');
+    expect(workflow).not.toContain('file: docker/Dockerfile.admin');
+    expect(workflow).not.toContain('file: docker/Dockerfile.worker');
+    expect(workflow.indexOf('gh release download')).toBeGreaterThan(preflight);
+    expect(workflow.indexOf('node scripts/release/verify-updater-bootstrap-base.mjs'))
+      .toBeLessThan(firstLogin);
+    expect(workflow).toContain('make_latest: false');
+    expect(workflow).toContain('DRUVIA_RELEASE_COMPOSE_PATH: bootstrap-base/docker-compose.release.yml');
+    expect(workflow).toContain('bootstrap-base/docker-compose.release.yml');
+    expect(workflow).not.toContain('docker/docker-compose.release.yml\n');
+    expect(workflow).toContain('tests/unit/update-manifest.test.ts');
+    expect(workflow).toContain('DRUVIA_RELEASE_MODE: updater-bootstrap');
+    expect(workflow).toContain('DRUVIA_BOOTSTRAP_BASE_VERSION: ${{ env.BOOTSTRAP_BASE_VERSION }}');
+    expect(workflow).toContain('DRUVIA_API_IMAGE_TAG: ${{ env.BOOTSTRAP_BASE_VERSION }}');
+    expect(workflow).toContain('DRUVIA_UPDATER_IMAGE_TAG: ${{ env.RELEASE_VERSION }}');
+    expect(workflow.match(/DRUVIA_MIN_UPDATER_VERSION: 0\.1\.0/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: 'false'/g)).toHaveLength(2);
+    expect(workflow.split(
+      'DRUVIA_MIGRATION_FROM: ${{ env.BOOTSTRAP_MIGRATION_VERSION }}',
+    )).toHaveLength(3);
+  });
+
   it('gates image publication on Realtime tests, SDK build and rendered Compose contracts', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
     const setupPnpm = workflow.indexOf('name: Setup pnpm');
@@ -202,9 +374,18 @@ describe('release workflow', () => {
       'tests/unit/data-access-managed-policy-schema.test.ts',
       'tests/unit/data-access-managed-policy-repository.test.ts',
       'tests/unit/data-access-policy-operation-service.test.ts',
+      'tests/unit/data-access-policy.test.ts',
+      'tests/unit/data-access-controller.test.ts',
+      'tests/unit/data-access-overview.test.ts',
+      'tests/unit/data-access-authorization-projection.test.ts',
+      'tests/unit/data-access-authorization-projection-schema.test.ts',
+      'tests/unit/data-access-authorization-projection-service.test.ts',
+      'tests/unit/data-access-projection-operation-repository.test.ts',
+      'tests/unit/database-migration-compatibility.test.ts',
       'tests/unit/table-deletion-outbox-schema.test.ts',
       'tests/unit/table-deletion-recovery.test.ts',
       'tests/unit/admin/table-data-access-panel.test.tsx',
+      'tests/unit/admin/authorization-projection-panel.test.tsx',
     ]) {
       expect(workflow).toContain(requiredTest);
     }
@@ -219,6 +400,7 @@ describe('release workflow', () => {
     expect(workflow).toContain('tests/integration/data-access-generated-columns.test.ts');
     expect(workflow).toContain('DRUVIA_INTEGRATION_HASURA_ADMIN_SECRET: integration-hasura-secret');
     expect(workflow).toContain('needs: data-access-integration');
+    expect(workflow).toContain('DRUVIA_MIN_UPDATER_VERSION: 0.2.0');
   });
 
   it('gates image publication on the Project Actor, Functions Worker, rollback, and SDK cutover', () => {
@@ -294,7 +476,7 @@ describe('release workflow', () => {
     expect(workflow).toContain('prerelease: ${{ env.RELEASE_PRERELEASE }}');
   });
 
-  it('marks migration 026 as the safe default for tag and manual releases', () => {
+  it('marks migration 027 as the safe default for tag and manual releases', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
     expect(workflow).not.toContain("\n      migration_required:");
@@ -304,7 +486,7 @@ describe('release workflow', () => {
     expect(workflow).not.toContain("\n      migration_reversible:");
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_FROM: \$\{\{ inputs\.migration_from \|\| '18' \}\}/g)).toHaveLength(2);
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '26'/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: '27'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REVERSIBLE: 'false'/g)).toHaveLength(2);
   });
@@ -353,6 +535,25 @@ describe('release workflow', () => {
     expect(step).toContain('DB_NAME: druvia');
     expect(step).toContain('POSTGRES_PASSWORD: integration-password');
     expect(step).toContain('tests/integration/project-device-wipe-hooks.test.ts');
+  });
+
+  it('runs real PostgreSQL rollback-gate tests before bootstrap registry login', () => {
+    const workflow = readFileSync('.github/workflows/updater-bootstrap.yml', 'utf8');
+    const gate = workflow.indexOf('name: Verify updater rollback gate against PostgreSQL');
+    const login = workflow.indexOf('name: Login to GHCR');
+    expect(workflow).toContain('image: postgres:17-alpine');
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(login);
+    expect(workflow.slice(gate, login)).toContain("DRUVIA_RUN_UPDATER_ROLLBACK_GATE_INTEGRATION: '1'");
+    expect(workflow.slice(gate, login)).toContain('tests/integration/updater-projection-rollback-gate.test.ts');
+  });
+
+  it('builds shared before running updater bootstrap verification in a clean checkout', () => {
+    const workflow = readFileSync('.github/workflows/updater-bootstrap.yml', 'utf8');
+    const shared = workflow.indexOf('pnpm --filter @druvia/shared build');
+    const verify = workflow.indexOf('name: Verify updater bootstrap implementation');
+    expect(shared).toBeGreaterThan(0);
+    expect(shared).toBeLessThan(verify);
   });
 
   it('gates release images on project membership authorization', () => {

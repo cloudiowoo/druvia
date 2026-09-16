@@ -10,7 +10,7 @@ const SEMVER_PATTERN = new RegExp(
 );
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const CHANNELS = new Set(['stable', 'beta', 'nightly']);
-const REQUIRED_MIGRATION_TARGET = 26;
+const REQUIRED_MIGRATION_TARGET = 27;
 
 function required(env, key) {
   const value = env[key];
@@ -83,6 +83,36 @@ function releaseTagFromVersion(version) {
   return `v${version}`;
 }
 
+function compareStableVersions(left, right) {
+  const leftParts = left.split('.').map(Number);
+  const rightParts = right.split('.').map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) {
+      return leftParts[index] - rightParts[index];
+    }
+  }
+  return 0;
+}
+
+export function resolveUpdaterBootstrapMetadata(releaseValue, baseValue, migrationValue) {
+  const release = resolveReleaseMetadata(releaseValue, 'stable');
+  const base = resolveReleaseMetadata(baseValue, 'stable');
+  const migrationVersion = Number(migrationValue);
+
+  if (compareStableVersions(release.version, base.version) <= 0
+    || !Number.isInteger(migrationVersion)
+    || migrationVersion < 0
+    || migrationVersion >= REQUIRED_MIGRATION_TARGET) {
+    throw new Error('UNSAFE_UPDATER_BOOTSTRAP_INPUT');
+  }
+
+  return {
+    releaseVersion: release.version,
+    baseVersion: base.version,
+    migrationVersion,
+  };
+}
+
 function defaultReleaseUrl(env, tag, assetName) {
   const serverUrl = env.GITHUB_SERVER_URL || 'https://github.com';
   const repository = required(env, 'GITHUB_REPOSITORY');
@@ -98,7 +128,7 @@ function defaultReleaseNotesUrl(env, tag) {
 function buildImage(env, version, name, envPrefix) {
   return {
     repository: required(env, `${envPrefix}_IMAGE_REPOSITORY`),
-    tag: version,
+    tag: env[`${envPrefix}_IMAGE_TAG`] || version,
     digest: normalizeDigest(env, `${envPrefix}_IMAGE_DIGEST`),
   };
 }
@@ -122,13 +152,40 @@ export async function buildReleaseManifest(env = process.env, options = {}) {
   const migrationRequired = parseBoolean(env, 'DRUVIA_MIGRATION_REQUIRED', false);
   const requiresBackup = parseBoolean(env, 'DRUVIA_MIGRATION_REQUIRES_BACKUP', false);
   const reversible = parseBoolean(env, 'DRUVIA_MIGRATION_REVERSIBLE', false);
+  const releaseMode = env.DRUVIA_RELEASE_MODE || 'full';
+  const minUpdaterVersion = resolveReleaseMetadata(
+    env.DRUVIA_MIN_UPDATER_VERSION || '0.2.0',
+    'stable',
+  ).version;
   if (from > to) {
     throw new Error('INVALID_MIGRATION_RANGE');
   }
-  if (!migrationRequired || to !== REQUIRED_MIGRATION_TARGET || !requiresBackup || reversible) {
+  if (releaseMode === 'updater-bootstrap') {
+    const bootstrap = resolveUpdaterBootstrapMetadata(
+      version,
+      required(env, 'DRUVIA_BOOTSTRAP_BASE_VERSION'),
+      String(to),
+    );
+    if (channel !== 'stable'
+      || migrationRequired
+      || from !== to
+      || requiresBackup
+      || !reversible
+      || minUpdaterVersion !== '0.1.0'
+      || env.DRUVIA_API_IMAGE_TAG !== bootstrap.baseVersion
+      || env.DRUVIA_ADMIN_IMAGE_TAG !== bootstrap.baseVersion
+      || env.DRUVIA_WORKER_IMAGE_TAG !== bootstrap.baseVersion
+      || (env.DRUVIA_UPDATER_IMAGE_TAG || version) !== version) {
+      throw new Error('UNSAFE_UPDATER_BOOTSTRAP_CONTRACT');
+    }
+  } else if (releaseMode !== 'full') {
+    throw new Error(`INVALID_RELEASE_MODE: ${releaseMode}`);
+  } else if (!migrationRequired || to !== REQUIRED_MIGRATION_TARGET || !requiresBackup || reversible) {
     throw new Error(
       `UNSAFE_MIGRATION_CONTRACT: required=true, to=${REQUIRED_MIGRATION_TARGET}, requiresBackup=true, reversible=false`,
     );
+  } else if (compareStableVersions(minUpdaterVersion, '0.2.0') < 0) {
+    throw new Error('UNSAFE_MIN_UPDATER_VERSION: full release requires updater 0.2.0 or newer');
   }
 
   return {
@@ -137,7 +194,7 @@ export async function buildReleaseManifest(env = process.env, options = {}) {
     version,
     channel,
     createdAt: options.createdAt || new Date().toISOString(),
-    minUpdaterVersion: env.DRUVIA_MIN_UPDATER_VERSION || '0.1.0',
+    minUpdaterVersion,
     releaseNotesUrl: env.DRUVIA_RELEASE_NOTES_URL || defaultReleaseNotesUrl(env, tag),
     compose: {
       url: env.DRUVIA_COMPOSE_URL || defaultReleaseUrl(env, tag, 'docker-compose.release.yml'),

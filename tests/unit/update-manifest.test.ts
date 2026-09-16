@@ -82,6 +82,33 @@ describe('updater manifest helpers', () => {
     );
   });
 
+  it('allows an updater bootstrap to preserve older application image tags', () => {
+    const base = buildManifest();
+    const manifest = validateReleaseManifest(buildManifest({
+      images: {
+        ...base.images,
+        api: { ...base.images.api, tag: '0.1.0' },
+        admin: { ...base.images.admin, tag: '0.1.0' },
+        worker: { ...base.images.worker, tag: '0.1.0' },
+      },
+      migrations: {
+        required: false,
+        from: 26,
+        to: 26,
+        requiresBackup: false,
+        reversible: true,
+      },
+    }), {
+      currentVersion: '0.1.0',
+      channel: 'stable',
+      currentUpdaterVersion: '0.1.0',
+      allowedHosts: ['github.com'],
+    });
+
+    expect(manifest.images.api.tag).toBe('0.1.0');
+    expect(manifest.images.updater.tag).toBe('0.2.0');
+  });
+
   it('rejects downgrade or equal-version manifests', () => {
     expect(() =>
       validateReleaseManifest(buildManifest({ version: '0.1.0' }), {

@@ -67,6 +67,9 @@ export interface DruviaUpdateStatus {
   releaseNotesUrl: string | null;
   migration: DruviaReleaseManifest['migrations'] | null;
   operationId: string | null;
+  applyStage?: 'preparing_backup' | 'backup_ready' | 'files_switched' | 'rolling_back' | null;
+  rollbackBackupOperationId?: string | null;
+  lastAppliedBackup?: { operationId: string; targetVersion: string } | null;
   startedAt: string | null;
   finishedAt: string | null;
   message: string | null;

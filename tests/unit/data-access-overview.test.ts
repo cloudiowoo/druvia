@@ -370,4 +370,59 @@ describe('project data access overview aggregation', () => {
     expect(result.tables[0]?.managedState).toBe('recovery_required')
     expect(result.summary.actionRequiredTables).toBe(1)
   })
+
+  it('marks a v2 baseline with invalid dependencies as fail-closed attention', () => {
+    const result = buildProjectDataAccessOverview({
+      projectId,
+      schemaName,
+      runtimeMode: 'explicit',
+      roles,
+      inventory: [{ tableName: 'sessions', ...columnInventory, realtimeEnabled: false }],
+      tableMetadata: [table('sessions', {
+        select_permissions: [{
+          role: roles.authenticated,
+          permission: {
+            columns,
+            filter: {
+              _and: [
+                { owner_id: { _eq: 'X-Hasura-User-Id' } },
+                { access_projection: {
+                  owner_id: { _eq: 'X-Hasura-User-Id' }, allowed: { _eq: true },
+                } },
+              ],
+            },
+            allow_aggregations: false,
+          },
+        }],
+      })],
+      managedPolicies: [{
+        projectId, tableName: 'sessions', schemaName, policyVersion: 2,
+        policy: {
+          policyVersion: 2,
+          authenticated: {
+            select: 'owner', insert: 'none', update: 'none', delete: 'none',
+            ownerColumn: 'owner_id',
+            selectConstraint: {
+              type: 'authorization_projection', relationshipPath: ['access_projection'],
+              actorColumn: 'owner_id', allowColumn: 'allowed',
+            },
+          },
+          anonymous: { select: false },
+        },
+        columnGrants: { authenticated: { select: columns, insert: [], update: [] }, anonymous: { select: [] } },
+        capabilitiesSnapshot: {
+          readableColumns: columns, insertableColumns: columns, updateableColumns: columns,
+        },
+        permissionsSnapshot: [], metadataDigest: 'a'.repeat(64),
+        dependencySnapshot: null, dependencyDigest: 'b'.repeat(64),
+        revision: 1n, createdBy: 'usr_1', updatedBy: 'usr_1',
+        createdAt: new Date(), updatedAt: new Date(),
+      }],
+      dependencyInvalidTables: new Set(['sessions']),
+    })
+
+    expect(result.tables[0]?.managedState).toBe('dependency_invalid')
+    expect(result.tables[0]?.reviewRequired).toBe(true)
+    expect(result.summary.actionRequiredTables).toBe(1)
+  })
 })

@@ -64,7 +64,7 @@ describe('migration 026 project device wipe contract', () => {
     const generator = readFileSync('scripts/release/generate-manifest.mjs', 'utf8')
 
     expect(runner).toContain("26: 'druvia_project_device_wipe_mandates'")
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '26'/g)).toHaveLength(2)
-    expect(generator).toContain('const REQUIRED_MIGRATION_TARGET = 26')
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: '27'/g)).toHaveLength(2)
+    expect(generator).toContain('const REQUIRED_MIGRATION_TARGET = 27')
   })
 })

@@ -18,6 +18,7 @@ import {
   TableDataAccessEditor,
   TableDataAccessPanel,
 } from '../../../apps/admin/src/components/tables/TableDataAccessPanel.js'
+import { cloneTableDataAccessPolicy } from '../../../apps/admin/src/lib/table-data-access.js'
 import type {
   TableDataAccessPolicy,
   TableDataAccessState,
@@ -201,6 +202,17 @@ describe('TableDataAccessEditor', () => {
 })
 
 describe('TableDataAccessPanel', () => {
+  it('omits projection-only fields when cloning a v1 policy', () => {
+    const cloned = cloneTableDataAccessPolicy({
+      policyVersion: 1,
+      authenticated: {
+        select: 'owner', insert: 'none', update: 'none', delete: 'none',
+        ownerColumn: 'user_id', selectConstraint: undefined,
+      },
+      anonymous: { select: false },
+    })
+    expect(Object.hasOwn(cloned.authenticated, 'selectConstraint')).toBe(false)
+  })
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -335,6 +347,7 @@ describe('TableDataAccessPanel', () => {
       },
     })
     const safePolicy: TableDataAccessPolicy = {
+      policyVersion: 1,
       authenticated: {
         select: 'none', insert: 'none', update: 'none', delete: 'none', ownerColumn: null,
       },

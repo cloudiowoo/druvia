@@ -19,6 +19,22 @@ export async function dataAccessRoutes(app: FastifyInstance) {
     '/projects/:projectId/data-access/tables/:tableName',
     controller.updateTableDataAccess as never
   )
+  app.get(
+    '/projects/:projectId/data-access/authorization-projection',
+    controller.getActiveAuthorizationProjection as never
+  )
+  app.post(
+    '/projects/:projectId/data-access/authorization-projection/preview',
+    controller.previewAuthorizationProjection as never
+  )
+  app.post(
+    '/projects/:projectId/data-access/authorization-projection/:operationId/apply',
+    controller.applyAuthorizationProjection as never
+  )
+  app.post(
+    '/projects/:projectId/data-access/authorization-projection/:operationId/recover',
+    controller.recoverAuthorizationProjection as never
+  )
   app.post(
     '/projects/:projectId/data-access/tables/:tableName/adoption/preview',
     controller.previewPolicyAdoption as never

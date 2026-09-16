@@ -1,0 +1,249 @@
+name: Updater Bootstrap Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New stable product version reserved for the bootstrap release
+        required: true
+      base_version:
+        description: Existing stable version whose API/Admin/Worker digests must be preserved
+        required: true
+      migration_version:
+        description: Current database migration version; must be below 27
+        required: true
+        default: '26'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  bootstrap-updater:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: integration-password
+          POSTGRES_DB: druvia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d druvia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      GHCR_REGISTRY: ghcr.io
+      SELF_HOSTED_REGISTRY: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}
+      GHCR_API_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-api
+      GHCR_ADMIN_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-admin
+      GHCR_WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-worker
+      GHCR_UPDATER_IMAGE: ghcr.io/${{ github.repository_owner }}/druvia-updater
+      SELF_HOSTED_API_IMAGE: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}/druvia/druvia-api
+      SELF_HOSTED_ADMIN_IMAGE: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}/druvia/druvia-admin
+      SELF_HOSTED_WORKER_IMAGE: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}/druvia/druvia-worker
+      SELF_HOSTED_UPDATER_IMAGE: ${{ vars.DRUVIA_REGISTRY_HOST || 'druvia.forestpartner.com' }}/druvia/druvia-updater
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare bootstrap release metadata
+        env:
+          RELEASE_INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_INPUT_CHANNEL: stable
+        run: node scripts/release/prepare-release.mjs
+
+      - name: Validate bootstrap inputs before registry writes
+        env:
+          BOOTSTRAP_INPUT_BASE_VERSION: ${{ inputs.base_version }}
+          BOOTSTRAP_INPUT_MIGRATION_VERSION: ${{ inputs.migration_version }}
+        run: node scripts/release/prepare-updater-bootstrap.mjs
+
+      - name: Download immutable base release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p bootstrap-base
+          gh release download "v${BOOTSTRAP_BASE_VERSION}" \
+            --pattern release-manifest.json \
+            --pattern release-manifest.cn.json \
+            --pattern docker-compose.release.yml \
+            --dir bootstrap-base
+
+      - name: Verify immutable base release assets
+        id: base-assets
+        env:
+          BOOTSTRAP_BASE_DIR: bootstrap-base
+        run: node scripts/release/verify-updater-bootstrap-base.mjs
+
+      - name: Build shared package
+        run: pnpm --filter @druvia/shared build
+
+      - name: Verify updater bootstrap implementation
+        run: >-
+          pnpm vitest run
+          tests/unit/release-pipeline.test.ts
+          tests/unit/release-compose-files.test.ts
+          tests/unit/update-manifest.test.ts
+          tests/unit/updater-config.test.ts
+          tests/unit/update-compose-command.test.ts
+          tests/unit/updater-service.test.ts
+
+      - name: Verify updater rollback gate against PostgreSQL
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_USER: postgres
+          DB_NAME: druvia
+          POSTGRES_PASSWORD: integration-password
+          DRUVIA_RUN_UPDATER_ROLLBACK_GATE_INTEGRATION: '1'
+        run: pnpm vitest run tests/integration/updater-projection-rollback-gate.test.ts
+
+      - name: Build updater
+        run: pnpm --filter @druvia/updater build
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to self-hosted registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.SELF_HOSTED_REGISTRY }}
+          username: ${{ secrets.DRUVIA_REGISTRY_USERNAME }}
+          password: ${{ secrets.DRUVIA_REGISTRY_PASSWORD }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build rollback-gate capable updater only
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.updater
+          push: true
+          tags: |
+            ${{ env.GHCR_UPDATER_IMAGE }}:${{ env.RELEASE_VERSION }}
+            ${{ env.SELF_HOSTED_UPDATER_IMAGE }}:${{ env.RELEASE_VERSION }}
+
+      - name: Verify preserved images and resolve bootstrap updater digests
+        id: resolve-digests
+        shell: bash
+        env:
+          EXPECTED_GHCR_API: ${{ steps.base-assets.outputs.ghcr_api }}
+          EXPECTED_GHCR_ADMIN: ${{ steps.base-assets.outputs.ghcr_admin }}
+          EXPECTED_GHCR_WORKER: ${{ steps.base-assets.outputs.ghcr_worker }}
+          EXPECTED_SELF_HOSTED_API: ${{ steps.base-assets.outputs.self_hosted_api }}
+          EXPECTED_SELF_HOSTED_ADMIN: ${{ steps.base-assets.outputs.self_hosted_admin }}
+          EXPECTED_SELF_HOSTED_WORKER: ${{ steps.base-assets.outputs.self_hosted_worker }}
+        run: |
+          set -euo pipefail
+          resolve_digest() {
+            docker buildx imagetools inspect "$1:$2" --format '{{json .Manifest.Digest}}' | tr -d '"'
+          }
+          assert_digest() {
+            local actual
+            actual="$(resolve_digest "$1" "${BOOTSTRAP_BASE_VERSION}")"
+            test "$actual" = "$2" || {
+              echo "Base image tag drifted for $1:${BOOTSTRAP_BASE_VERSION}" >&2
+              exit 1
+            }
+            docker buildx imagetools inspect "$1@$2" >/dev/null
+          }
+          assert_digest "${GHCR_API_IMAGE}" "${EXPECTED_GHCR_API}"
+          assert_digest "${GHCR_ADMIN_IMAGE}" "${EXPECTED_GHCR_ADMIN}"
+          assert_digest "${GHCR_WORKER_IMAGE}" "${EXPECTED_GHCR_WORKER}"
+          assert_digest "${SELF_HOSTED_API_IMAGE}" "${EXPECTED_SELF_HOSTED_API}"
+          assert_digest "${SELF_HOSTED_ADMIN_IMAGE}" "${EXPECTED_SELF_HOSTED_ADMIN}"
+          assert_digest "${SELF_HOSTED_WORKER_IMAGE}" "${EXPECTED_SELF_HOSTED_WORKER}"
+          {
+            echo "ghcr_updater=$(resolve_digest "${GHCR_UPDATER_IMAGE}" "${RELEASE_VERSION}")"
+            echo "self_hosted_updater=$(resolve_digest "${SELF_HOSTED_UPDATER_IMAGE}" "${RELEASE_VERSION}")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate GHCR bootstrap manifest
+        env:
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+          DRUVIA_RELEASE_CHANNEL: stable
+          DRUVIA_RELEASE_MODE: updater-bootstrap
+          DRUVIA_RELEASE_COMPOSE_PATH: bootstrap-base/docker-compose.release.yml
+          DRUVIA_BOOTSTRAP_BASE_VERSION: ${{ env.BOOTSTRAP_BASE_VERSION }}
+          DRUVIA_MIN_UPDATER_VERSION: 0.1.0
+          DRUVIA_API_IMAGE_REPOSITORY: ${{ env.GHCR_API_IMAGE }}
+          DRUVIA_ADMIN_IMAGE_REPOSITORY: ${{ env.GHCR_ADMIN_IMAGE }}
+          DRUVIA_WORKER_IMAGE_REPOSITORY: ${{ env.GHCR_WORKER_IMAGE }}
+          DRUVIA_UPDATER_IMAGE_REPOSITORY: ${{ env.GHCR_UPDATER_IMAGE }}
+          DRUVIA_API_IMAGE_TAG: ${{ env.BOOTSTRAP_BASE_VERSION }}
+          DRUVIA_ADMIN_IMAGE_TAG: ${{ env.BOOTSTRAP_BASE_VERSION }}
+          DRUVIA_WORKER_IMAGE_TAG: ${{ env.BOOTSTRAP_BASE_VERSION }}
+          DRUVIA_UPDATER_IMAGE_TAG: ${{ env.RELEASE_VERSION }}
+          DRUVIA_API_IMAGE_DIGEST: ${{ steps.base-assets.outputs.ghcr_api }}
+          DRUVIA_ADMIN_IMAGE_DIGEST: ${{ steps.base-assets.outputs.ghcr_admin }}
+          DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.base-assets.outputs.ghcr_worker }}
+          DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
+          DRUVIA_MIGRATION_REQUIRED: 'false'
+          DRUVIA_MIGRATION_FROM: ${{ env.BOOTSTRAP_MIGRATION_VERSION }}
+          DRUVIA_MIGRATION_TO: ${{ env.BOOTSTRAP_MIGRATION_VERSION }}
+          DRUVIA_MIGRATION_REQUIRES_BACKUP: 'false'
+          DRUVIA_MIGRATION_REVERSIBLE: 'true'
+        run: node scripts/release/generate-manifest.mjs
+
+      - name: Generate self-hosted bootstrap manifest
+        env:
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+          DRUVIA_RELEASE_CHANNEL: stable
+          DRUVIA_RELEASE_MODE: updater-bootstrap
+          DRUVIA_RELEASE_COMPOSE_PATH: bootstrap-base/docker-compose.release.yml
+          DRUVIA_BOOTSTRAP_BASE_VERSION: ${{ env.BOOTSTRAP_BASE_VERSION }}
+          DRUVIA_MIN_UPDATER_VERSION: 0.1.0
+          DRUVIA_API_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_API_IMAGE }}
+          DRUVIA_ADMIN_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_ADMIN_IMAGE }}
+          DRUVIA_WORKER_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_WORKER_IMAGE }}
+          DRUVIA_UPDATER_IMAGE_REPOSITORY: ${{ env.SELF_HOSTED_UPDATER_IMAGE }}
+          DRUVIA_API_IMAGE_TAG: ${{ env.BOOTSTRAP_BASE_VERSION }}
+          DRUVIA_ADMIN_IMAGE_TAG: ${{ env.BOOTSTRAP_BASE_VERSION }}
+          DRUVIA_WORKER_IMAGE_TAG: ${{ env.BOOTSTRAP_BASE_VERSION }}
+          DRUVIA_UPDATER_IMAGE_TAG: ${{ env.RELEASE_VERSION }}
+          DRUVIA_API_IMAGE_DIGEST: ${{ steps.base-assets.outputs.self_hosted_api }}
+          DRUVIA_ADMIN_IMAGE_DIGEST: ${{ steps.base-assets.outputs.self_hosted_admin }}
+          DRUVIA_WORKER_IMAGE_DIGEST: ${{ steps.base-assets.outputs.self_hosted_worker }}
+          DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.self_hosted_updater }}
+          DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
+          DRUVIA_MIGRATION_REQUIRED: 'false'
+          DRUVIA_MIGRATION_FROM: ${{ env.BOOTSTRAP_MIGRATION_VERSION }}
+          DRUVIA_MIGRATION_TO: ${{ env.BOOTSTRAP_MIGRATION_VERSION }}
+          DRUVIA_MIGRATION_REQUIRES_BACKUP: 'false'
+          DRUVIA_MIGRATION_REVERSIBLE: 'true'
+        run: node scripts/release/generate-manifest.mjs
+
+      - name: Upload bootstrap release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: false
+          make_latest: false
+          files: |
+            release-manifest.json
+            release-manifest.cn.json
+            bootstrap-base/docker-compose.release.yml
