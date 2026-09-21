@@ -111,7 +111,8 @@ describe.skipIf(!runIntegration)('Project Actor RPC and Functions against Postgr
         SELECT jsonb_build_object(
           'claims', current_setting('request.jwt.claims', true)::jsonb,
           'headers', current_setting('request.headers', true)::jsonb,
-          'actor', current_setting('druvia.actor', true)::jsonb
+          'actor', current_setting('druvia.actor', true)::jsonb,
+          'service_environment', current_setting('druvia.service_environment', true)
         )
       $$
     `)
@@ -148,6 +149,12 @@ describe.skipIf(!runIntegration)('Project Actor RPC and Functions against Postgr
     await pool.query('UPDATE druvia_projects SET data_access_mode = $1 WHERE project_id IN ($2, $3)', [
       'explicit', projectA.projectId, projectB.projectId,
     ])
+    await pool.query(
+      `INSERT INTO druvia_project_runtime_contexts
+         (project_id, service_environment, created_by, updated_by)
+       VALUES ($1, 'sandbox', $3, $3), ($2, 'local', $3, $3)`,
+      [projectA.projectId, projectB.projectId, platformUserId],
+    )
     await pool.query(`
       CREATE TABLE "${projectA.schemaName}"."${TABLE_NAME}" (
         id serial PRIMARY KEY,
@@ -251,7 +258,7 @@ describe.skipIf(!runIntegration)('Project Actor RPC and Functions against Postgr
     config.hasura.adminSecret = originalAdminSecret
   }, 30_000)
 
-  it('propagates RPC claims and clears transaction-local settings on the same physical connection', async () => {
+  it('propagates RPC claims and isolated service environments on the same physical connection', async () => {
     const rpc = createRpcService({
       query: (async (text: string, params?: unknown[]) => {
         const result = await dedicatedPool.query(text, params)
@@ -276,6 +283,23 @@ describe.skipIf(!runIntegration)('Project Actor RPC and Functions against Postgr
     expect(projectResult.headers).toMatchObject({
       'x-druvia-actor-subject': 'project_user:pusr_owner',
     })
+    expect(projectResult.service_environment).toBe('sandbox')
+
+    const secondProjectResult = await rpc.callFunction(
+      rpcSchema,
+      'actor_context',
+      undefined,
+      projectUserActor(projectB.projectId)
+    ) as Record<string, Record<string, unknown>>
+    expect(secondProjectResult.service_environment).toBe('local')
+
+    const repeatProjectResult = await rpc.callFunction(
+      rpcSchema,
+      'actor_context',
+      undefined,
+      projectUserActor(projectA.projectId)
+    ) as Record<string, Record<string, unknown>>
+    expect(repeatProjectResult.service_environment).toBe('sandbox')
 
     const platformResult = await rpc.callFunction(
       rpcSchema,
@@ -297,13 +321,15 @@ describe.skipIf(!runIntegration)('Project Actor RPC and Functions against Postgr
         SELECT
           NULLIF(current_setting('request.jwt.claims', true), '') IS NULL AS claims_clear,
           NULLIF(current_setting('request.headers', true), '') IS NULL AS headers_clear,
-          NULLIF(current_setting('druvia.actor', true), '') IS NULL AS actor_clear
+          NULLIF(current_setting('druvia.actor', true), '') IS NULL AS actor_clear,
+          NULLIF(current_setting('druvia.service_environment', true), '') IS NULL AS service_environment_clear
       `)
       await reused.query('COMMIT')
       expect(residue.rows[0]).toEqual({
         claims_clear: true,
         headers_clear: true,
         actor_clear: true,
+        service_environment_clear: true,
       })
     } finally {
       reused.release()

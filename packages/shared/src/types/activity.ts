@@ -10,6 +10,8 @@ export type ActivityAction =
   | 'tenant.delete'
   | 'project.create'
   | 'project.delete'
+  | 'project.runtime_context_updated'
+  | 'project.runtime_context_disabled'
   | 'project_member.created'
   | 'project_member.role_updated'
   | 'project_member.removed'

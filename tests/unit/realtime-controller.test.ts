@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { rateLimitMock, tokenIssuerMock, publicUrlMock, projectServiceMock, loggerMock } = vi.hoisted(() => ({
+const { rateLimitMock, tokenIssuerMock, publicUrlMock, projectServiceMock, loggerMock, getProjectRuntimeContextMock } = vi.hoisted(() => ({
   rateLimitMock: vi.fn(),
   tokenIssuerMock: vi.fn(),
   publicUrlMock: vi.fn(),
@@ -11,6 +11,7 @@ const { rateLimitMock, tokenIssuerMock, publicUrlMock, projectServiceMock, logge
     info: vi.fn(),
     error: vi.fn(),
   },
+  getProjectRuntimeContextMock: vi.fn(),
 }))
 
 vi.mock('../../apps/api/src/db/index.js', () => ({
@@ -35,6 +36,16 @@ vi.mock('../../apps/api/src/middleware/ratelimit.js', () => ({
 }))
 
 vi.mock('../../apps/api/src/modules/project/project.service.js', () => projectServiceMock)
+
+vi.mock('../../apps/api/src/modules/project/project-runtime-context.service.js', () => ({
+  getProjectRuntimeContext: getProjectRuntimeContextMock,
+  getRuntimeContextHasuraSessionVariables: (runtimeContext: {
+    enabled: boolean;
+    serviceEnvironment?: string;
+  }) => runtimeContext.enabled
+    ? { 'x-hasura-druvia-service-environment': runtimeContext.serviceEnvironment }
+    : {},
+}))
 
 vi.mock('../../apps/api/src/modules/realtime/realtime-token.service.js', () => {
   class RealtimeTokenUnavailableError extends Error {
@@ -90,6 +101,7 @@ describe('Realtime Controller', () => {
       schemaName: 'dru_test',
       dataAccessMode: 'compatibility',
     })
+    getProjectRuntimeContextMock.mockResolvedValue({ enabled: false })
     rateLimitMock.mockResolvedValue(undefined)
     tokenIssuerMock.mockReturnValue({
       token: 'signed-realtime-token',
@@ -242,6 +254,53 @@ describe('Realtime Controller', () => {
           message: 'Realtime token service is unavailable',
         },
       })
+    })
+
+    it('adds the persisted runtime environment to the Realtime token claims context', async () => {
+      getProjectRuntimeContextMock.mockResolvedValueOnce({
+        enabled: true,
+        serviceEnvironment: 'sandbox',
+        revision: 1,
+        updatedAt: '2026-09-21T00:00:00.000Z',
+      })
+      const reply = createReply()
+
+      await realtimeController.issueToken({
+        id: 'req_runtime_context',
+        params: { projectId: 'proj_123' },
+        user: projectUser,
+      } as never, reply as never)
+
+      expect(getProjectRuntimeContextMock).toHaveBeenCalledWith('proj_123')
+      expect(tokenIssuerMock).toHaveBeenCalledWith(expect.objectContaining({
+        projectId: 'proj_123',
+        context: expect.objectContaining({
+          sessionVariables: expect.objectContaining({
+            'x-hasura-druvia-service-environment': 'sandbox',
+          }),
+        }),
+      }))
+    })
+
+    it('fails closed when runtime context resolution fails before signing a token', async () => {
+      getProjectRuntimeContextMock.mockRejectedValueOnce(new Error('database unavailable'))
+      const reply = createReply()
+
+      await realtimeController.issueToken({
+        id: 'req_runtime_context_unavailable',
+        params: { projectId: 'proj_123' },
+        user: projectUser,
+      } as never, reply as never)
+
+      expect(reply.status).toHaveBeenCalledWith(503)
+      expect(reply.send).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE',
+          message: 'Project runtime context is unavailable',
+        },
+      })
+      expect(tokenIssuerMock).not.toHaveBeenCalled()
     })
 
     it('loads one project, signs its actor context and returns only public fields', async () => {

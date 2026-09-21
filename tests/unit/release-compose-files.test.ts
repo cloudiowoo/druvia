@@ -193,6 +193,18 @@ describe('release-mode compose and Dockerfiles', () => {
     }
   });
 
+  it('strips client-controlled runtime environment headers before direct Hasura access', () => {
+    for (const path of [
+      'docker/nginx/conf.d/30-druvia-prod.conf',
+      'docker/nginx/conf.d/40-druvia-uat.conf',
+      'docker/nginx/conf.d.local/10-local.conf',
+    ]) {
+      const nginx = read(path)
+      expect(nginx.match(/location = \/v1\/graphql(?:\/ws)? \{[\s\S]*?\n    \}/g)).toHaveLength(2)
+      expect(nginx.match(/proxy_set_header X-Hasura-Druvia-Service-Environment "";/g)).toHaveLength(2)
+    }
+  });
+
   it('mounts migrations into the local API so the packaged CLI can run', () => {
     const compose = read('docker/docker-compose.local.yml');
 

@@ -21,6 +21,13 @@ vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
   getProjectById: vi.fn(),
 }))
 
+vi.mock('../../apps/api/src/modules/project/project-runtime-context.service.js', () => ({
+  ProjectRuntimeContextError: class ProjectRuntimeContextError extends Error {
+    code = 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE'
+    statusCode = 503
+  },
+}))
+
 vi.mock('../../apps/api/src/lib/project-authorization.js', () => ({
   assertProjectCapability: vi.fn(),
 }))
@@ -33,6 +40,7 @@ import * as rpcController from '../../apps/api/src/modules/rpc/rpc.controller.js
 import { callFunction, RpcError } from '../../apps/api/src/modules/rpc/rpc.service.js'
 import { getProjectById } from '../../apps/api/src/modules/project/project.service.js'
 import { assertProjectCapability } from '../../apps/api/src/lib/project-authorization.js'
+import { ProjectRuntimeContextError } from '../../apps/api/src/modules/project/project-runtime-context.service.js'
 
 type ReplyStub = {
   status: ReturnType<typeof vi.fn>
@@ -248,5 +256,32 @@ describe('RPC Controller', () => {
       error: { code: 'RPC_ERROR', message: 'RPC execution failed' },
     })
     expect(rpcLogger.error).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed when the project runtime context cannot be loaded', async () => {
+    vi.mocked(callFunction).mockRejectedValue(new ProjectRuntimeContextError())
+    const reply = createReply()
+
+    await rpcController.invokeRpc({
+      params: { projectId: 'proj_123', functionName: 'get_profile' },
+      body: {},
+      user: {
+        kind: 'project_user',
+        sub: 'pusr_123',
+        projectId: 'proj_123',
+        authType: 'project_user',
+        role: 'authenticated',
+        provider: 'trusted_backend',
+      },
+    } as never, reply as never)
+
+    expect(reply.status).toHaveBeenCalledWith(503)
+    expect(reply.payload).toEqual({
+      data: null,
+      error: {
+        code: 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE',
+        message: 'Project runtime context is unavailable',
+      },
+    })
   })
 })

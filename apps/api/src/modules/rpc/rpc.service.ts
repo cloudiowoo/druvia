@@ -5,6 +5,10 @@ import {
   toProjectActorHeaders,
   type ProjectActorContext,
 } from '../../lib/project-actor.js';
+import {
+  getProjectRuntimeContextInTransaction,
+  ProjectRuntimeContextError,
+} from '../project/project-runtime-context.service.js';
 
 interface FunctionSignature {
   argNames: string[];
@@ -242,6 +246,19 @@ export function createRpcService(dependencies: RpcServiceDependencies) {
           JSON.stringify(toProjectActorHeaders(actor)),
         ]);
         await client.query("SELECT set_config('druvia.actor', $1, true)", [claims]);
+        // Mask any database- or role-level default before reading optional project configuration.
+        await client.query("SELECT set_config('druvia.service_environment', $1, true)", ['']);
+        let runtimeContext;
+        try {
+          runtimeContext = await getProjectRuntimeContextInTransaction(client, actor.projectId);
+        } catch {
+          throw new ProjectRuntimeContextError();
+        }
+        if (runtimeContext.enabled) {
+          await client.query("SELECT set_config('druvia.service_environment', $1, true)", [
+            runtimeContext.serviceEnvironment,
+          ]);
+        }
         phase = 'invoke';
         const result = await client.query(invocation.sql, invocation.values);
         phase = 'commit';

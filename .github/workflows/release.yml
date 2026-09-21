@@ -197,6 +197,20 @@ jobs:
           tests/unit/release-compose-files.test.ts
           tests/unit/release-pipeline.test.ts
 
+      - name: Verify project runtime context
+        run: >-
+          pnpm vitest run
+          tests/unit/project-runtime-context.test.ts
+          tests/unit/project-runtime-context-schema.test.ts
+          tests/unit/project-runtime-context-mutation.test.ts
+          tests/unit/project-runtime-context.controller.test.ts
+          tests/unit/project-runtime-context.routes.test.ts
+          tests/unit/openapi-graphql-route.test.ts
+          tests/unit/functions-internal-graphql.test.ts
+          tests/unit/rpc.test.ts
+          tests/unit/realtime-controller.test.ts
+          tests/unit/admin/project-runtime-context-panel.test.tsx
+
       - name: Verify project data access migration
         run: >-
           pnpm vitest run
@@ -481,7 +495,7 @@ jobs:
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
           DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: '27'
+          DRUVIA_MIGRATION_TO: '28'
           DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
           DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs
@@ -503,7 +517,7 @@ jobs:
           DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
           DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: '27'
+          DRUVIA_MIGRATION_TO: '28'
           DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
           DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs

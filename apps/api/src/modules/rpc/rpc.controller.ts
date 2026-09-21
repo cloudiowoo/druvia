@@ -4,6 +4,7 @@ import * as projectService from '../project/project.service.js';
 import { checkProjectAccess } from '../../lib/access.js';
 import { assertProjectCapability, AuthorizationError } from '../../lib/project-authorization.js';
 import { isPlatformUser, isProjectUser } from '../../middleware/auth.js';
+import { ProjectRuntimeContextError } from '../project/project-runtime-context.service.js';
 import {
   resolvePlatformProjectActor,
   resolveScopedProjectActor,
@@ -103,6 +104,16 @@ export async function invokeRpc(
       ...toProjectActorAuditContext(verified.actor),
       functionName,
     };
+    if (error instanceof ProjectRuntimeContextError) {
+      logger.error('rpc project runtime context unavailable', auditContext, error);
+      return reply.status(error.statusCode).send({
+        data: null,
+        error: {
+          code: error.code,
+          message: 'Project runtime context is unavailable',
+        },
+      });
+    }
     if (error instanceof RpcError) {
       if (error.code === 'RPC_REJECTED') {
         logger.warn('rpc invocation rejected', auditContext);

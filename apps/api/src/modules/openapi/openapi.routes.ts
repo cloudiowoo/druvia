@@ -6,6 +6,10 @@ import { checkProjectGraphqlRateLimit, createRateLimiter } from '../../middlewar
 import { config } from '../../config/index.js';
 import { getProjectById } from '../project/project.service.js';
 import {
+  getProjectRuntimeContext,
+  getRuntimeContextHasuraSessionVariables,
+} from '../project/project-runtime-context.service.js';
+import {
   isProjectDataActor,
   resolveProjectDataExecutionContext,
 } from '../data-access/project-data-actor.js';
@@ -74,12 +78,29 @@ export async function openapiRoutes(fastify: FastifyInstance) {
               schemaName: string | null;
               settings: Record<string, unknown>;
               dataAccessMode: ProjectDataAccessMode;
+              runtimeSessionVariables?: Record<string, string>;
             };
           }).project = {
             schemaName: project.schemaName,
             settings: project.settings,
             dataAccessMode: project.dataAccessMode,
           };
+
+          try {
+            const runtimeContext = await getProjectRuntimeContext(projectId);
+            (request as FastifyRequest & {
+              project?: { runtimeSessionVariables?: Record<string, string> };
+            }).project!.runtimeSessionVariables = getRuntimeContextHasuraSessionVariables(runtimeContext);
+          } catch (error) {
+            fastify.log.error({ err: error, projectId }, 'Project runtime context lookup failed');
+            return reply.status(503).send({
+              success: false,
+              error: {
+                code: 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE',
+                message: 'Project runtime context is unavailable',
+              },
+            });
+          }
 
           const rateLimitConfig = (project.settings as Record<string, unknown> | undefined)
             ?.rateLimits as Record<string, unknown> | undefined;
@@ -99,6 +120,7 @@ export async function openapiRoutes(fastify: FastifyInstance) {
         project?: {
           schemaName: string | null;
           dataAccessMode: ProjectDataAccessMode;
+          runtimeSessionVariables?: Record<string, string>;
         };
       }).project;
 
@@ -131,6 +153,7 @@ export async function openapiRoutes(fastify: FastifyInstance) {
           'x-hasura-default-schema': schemaName,
           'x-hasura-role': executionContext.role,
           ...executionContext.sessionVariables,
+          ...project.runtimeSessionVariables,
         };
 
         const response = await fetch(`${HASURA_URL}/v1/graphql`, {

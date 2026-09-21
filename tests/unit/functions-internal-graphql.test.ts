@@ -13,6 +13,20 @@ vi.mock('../../apps/api/src/db/index.js', () => ({
   },
 }))
 
+const { getProjectRuntimeContextMock } = vi.hoisted(() => ({
+  getProjectRuntimeContextMock: vi.fn(),
+}))
+
+vi.mock('../../apps/api/src/modules/project/project-runtime-context.service.js', () => ({
+  getProjectRuntimeContext: getProjectRuntimeContextMock,
+  getRuntimeContextHasuraSessionVariables: (runtimeContext: {
+    enabled: boolean;
+    serviceEnvironment?: string;
+  }) => runtimeContext.enabled
+    ? { 'x-hasura-druvia-service-environment': runtimeContext.serviceEnvironment }
+    : {},
+}))
+
 import { pool } from '../../apps/api/src/db/index.js'
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
 import { internalFunctionsGraphqlRoutes } from '../../apps/api/src/modules/functions/internal-graphql.routes.js'
@@ -83,7 +97,10 @@ function mockHasuraSuccess() {
 describe('Functions Internal GraphQL Route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(pool.query).mockReset()
+    getProjectRuntimeContextMock.mockReset()
     vi.stubGlobal('fetch', vi.fn())
+    getProjectRuntimeContextMock.mockResolvedValue({ enabled: false })
   })
 
   afterEach(() => {
@@ -130,6 +147,65 @@ describe('Functions Internal GraphQL Route', () => {
         variables: { id: 1 },
         operationName: undefined,
       })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('adds the persisted runtime environment to internal GraphQL requests', async () => {
+    const app = Fastify()
+    await app.register(internalFunctionsGraphqlRoutes, { prefix: '/api' })
+    mockProject('explicit')
+    mockHasuraSuccess()
+    getProjectRuntimeContextMock.mockResolvedValueOnce({
+      enabled: true,
+      serviceEnvironment: 'sandbox',
+      revision: 1,
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    })
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/internal/functions/graphql',
+        headers: { 'x-druvia-internal-token': tokenFor(projectUserActor) },
+        payload: { query: 'query { __typename }' },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(getProjectRuntimeContextMock).toHaveBeenCalledWith('proj_123')
+      const [, init] = vi.mocked(global.fetch).mock.calls[0]
+      expect(init!.headers).toMatchObject({
+        'x-hasura-druvia-service-environment': 'sandbox',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('fails closed when runtime context resolution fails', async () => {
+    const app = Fastify()
+    await app.register(internalFunctionsGraphqlRoutes, { prefix: '/api' })
+    mockProject('explicit')
+    getProjectRuntimeContextMock.mockRejectedValueOnce(new Error('database unavailable'))
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/internal/functions/graphql',
+        headers: { 'x-druvia-internal-token': tokenFor(projectUserActor) },
+        payload: { query: 'query { __typename }' },
+      })
+
+      expect(response.statusCode).toBe(503)
+      expect(response.json()).toEqual({
+        success: false,
+        error: {
+          code: 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE',
+          message: 'Project runtime context is unavailable',
+        },
+      })
+      expect(global.fetch).not.toHaveBeenCalled()
     } finally {
       await app.close()
     }

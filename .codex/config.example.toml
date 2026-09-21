@@ -1,0 +1,13 @@
+# Copy to .codex/config.toml and replace the placeholder connection string.
+# The real file is intentionally ignored because MCP arguments include credentials.
+
+[mcp_servers.druvia_postgis_mm10]
+command = "npx"
+args = [
+  "--cache",
+  "/private/tmp/druvia-mcp-npm-cache",
+  "-y",
+  "@modelcontextprotocol/server-postgres",
+  "postgresql://postgres:URL_ENCODED_PASSWORD@POSTGRES_HOST:5532/postgres",
+]
+startup_timeout_sec = 30

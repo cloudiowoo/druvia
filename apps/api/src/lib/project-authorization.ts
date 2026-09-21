@@ -13,6 +13,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<ProjectEffectiveRole, readonly P
   owner: [
     'project:read',
     'project:update',
+    'runtime_context:manage',
     'project:delete',
     'members:read',
     'members:manage',

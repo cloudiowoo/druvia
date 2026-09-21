@@ -510,6 +510,77 @@ test -d postgres_postgis_data
 
 不要为清理 Druvia 服务使用 `--remove-orphans`，本机可能存在共享 Compose project 名下的其他数据库容器。禁止使用 `down -v`、`rm -v` 或手工删除任一数据库目录。
 
+### 将现有双库 PostGIS 数据切为本地单库
+
+当当前开发数据已经位于 `docker/postgres_postgis_data`，但不再需要并行运行普通 PostgreSQL 时，使用 `docker-compose.local.postgis.yml` 将该目录挂载到唯一的逻辑服务 `postgres`。API 和 Hasura 因此继续连接 `postgres:5432`，而无需迁移当前 PostGIS catalog、Hasura metadata 或项目数据。
+
+该流程只适用于本地；它不能与 `docker-compose.local.dual-db.yml` 同时使用，也不得用于 prod、release 或 OTA。`docker/postgres_data` 会保留但不挂载，不能通过物理复制目录替代数据库迁移。开始前仍应对当前 PostGIS 库完成 custom archive 备份并验证可读。
+
+先在 `docker/.env` 将 `DRUVIA_LOCAL_DB_HOST` 设为 `postgres`，然后渲染目标配置。单库 PostGIS 的宿主端口使用 `POSTGRES_PORT`（当前默认 `5532`）；`POSTGRES_POSTGIS_PORT` 在该模式下不使用。
+
+```bash
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  -f docker-compose.local.postgis.yml \
+  config --format json \
+  | jq '{
+      postgresImage: .services.postgres.image,
+      postgresData: [.services.postgres.volumes[]
+        | select(.target == "/var/lib/postgresql/data") | .source],
+      apiDbHost: .services.api.environment.DB_HOST,
+      hasPostgisSidecar: (.services | has("postgres-postgis"))
+    }'
+```
+
+输出必须显示 PostGIS 镜像、`postgres_postgis_data`、`apiDbHost: "postgres"` 及 `hasPostgisSidecar: false`。确认后停止写入服务，并只删除旧的数据库容器；以下操作不会删除 bind mount 数据目录：
+
+```bash
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  stop api admin deno hasura postgres postgres-postgis
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  rm -f postgres postgres-postgis
+```
+
+使用单库组合启动数据库与 Redis，确认扩展，再启动完整本地服务：
+
+```bash
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  -f docker-compose.local.postgis.yml \
+  up -d postgres redis
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  -f docker-compose.local.postgis.yml \
+  --profile postgis-tools \
+  run --rm postgis-enable
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.postgis.yml \
+  -f docker-compose.local.postgis.yml \
+  --profile with-nginx \
+  up -d
+```
+
+之后所有本地 Compose、数据库导入、migration 与维护命令均须使用这三份文件。恢复双库时，先停止单库服务且不带 `-v`，再移除 `druvia-postgres` 容器；恢复 `docker-compose.local.yml` 加 `docker-compose.local.dual-db.yml`，并按上文完整切换流程选择目标库。不要使用 `down -v`、`rm -v`、`--remove-orphans`，也不要删除 `postgres_data` 或 `postgres_postgis_data`。
+
 ### 本地单库切换为 PostGIS
 
 以下是原地替换数据库镜像的单库流程，适用于需要模拟生产单库 PostGIS 的场景；日常本地开发优先使用上述双库模式。命令只替换 `druvia-postgres` 容器，继续使用 `docker/postgres_data` bind mount。开始前先进入 Docker 目录，并确认实际挂载符合预期：
@@ -1350,7 +1421,7 @@ pnpm migrate up
 pnpm migrate status
 ```
 
-Docker 双库环境必须对当前 API/Hasura 实际连接的库执行；另一数据库不会自动同步。release/OTA manifest 的 migration ceiling 必须至少为 `27`。
+Docker 双库环境必须对当前 API/Hasura 实际连接的库执行；另一数据库不会自动同步。当前 release/OTA manifest 的 migration ceiling 必须为 `28`。
 
 4. 由应用仓库的前向 migration 在项目 schema 安装以下三个函数，保持普通 Hasura 客户端零 CRUD：
 
@@ -1390,7 +1461,7 @@ production/release Compose 的 API 端口默认只发布到宿主机 `127.0.0.1:
 本流程只负责 Druvia 平台 migration 和受管 Hasura metadata。应用业务 view 及其 DDL 仍由应用仓库 migration 维护；不要把应用 SQL 复制进 Druvia Core migration。
 
 1. 确认 API 与 Hasura 当前连接的数据库。在双库环境中分别检查 `DB_HOST`，不要误把 migration 应用到备用普通 PostgreSQL。
-2. 备份当前数据库和 Hasura metadata，再将平台数据库升级到 migration `027`：
+2. 备份当前数据库和 Hasura metadata，再将平台数据库执行 `migrate up` 至当前 migration `028`：
 
 ```bash
 docker exec druvia-api node apps/api/dist/cli/migrate.js status
@@ -1403,7 +1474,7 @@ docker exec druvia-api node apps/api/dist/cli/migrate.js up
 6. timeout、transport 或 5xx 等未知 metadata 写结果进入恢复状态后，必须等待 writer deadline 加 drain window；不能通过立即点击恢复与迟到的 Hasura 写入竞争。
 7. 若状态为“授权依赖异常”，使用“安全关闭”入口并输入项目别名。Druvia 会在项目锁内只允许最新成功 apply 的批次进入恢复；成功 apply 标记在 fail-closed 后仍保留，历史 operation 不能因此重新获得恢复资格。已成功批次即使当前 metadata 恰好回到预检时的旧 source，也会按漂移失败关闭，不能按“未应用”恢复 owner-only。活动状态不会被后续 failed、superseded 或未应用 preview 遮蔽；若尚有 `preview_ready`，恢复会在同一事务中先将其 supersede，再 claim 成功批次，claim 失败则保留原 preview。依赖仍漂移或无法证明完整 target 时，关闭合同内全部来源表的 authenticated select。修复应用 view/关系合同后重新导入完整合同预检，不能逐表退回 owner-only。
 8. 验收 query、cross-user、allow=false/missing projection、relationship traversal 和 Realtime 使用同一 select 结果。不可读候选如需继续写入，mutation 只请求 `affected_rows`；Hasura 2.48 的 `returning`/`insert_one` 是本次写入回显，不受 select 行过滤抑制，不得用作读取授权证明。
-9. 首次发布 migration `027` 前，先运行 GitHub Actions 的 `Updater Bootstrap Release`：`version` 必须是高于 `base_version` 的新稳定 SemVer，`base_version` 必须是当前部署产品版本，`migration_version` 必须与活动数据库当前版本精确相等且小于 `27`。workflow 会先下载 `v<base_version>` 的双 Registry manifest 与 Compose，校验版本、migration、Compose SHA、repository/tag/digest，并在登录 Registry/推送镜像前运行 PostgreSQL 17 rollback-gate 集成门禁；Registry tag 只用于确认没有漂移，应用 digest 不从可变 tag 重新推导。workflow 只构建 updater，生成 `required=false`、`from=to`、`minUpdaterVersion=0.1.0` 的双 Registry manifest，上传旧 release 的原 Compose，并以 `make_latest=false` 发布。bootstrap 会占用一个新的产品版本，但不会改变全局 stable latest；后续包含 migration `027` 的完整 stable release 必须再使用更高版本。
+9. 以下 `027` bootstrap 步骤仅适用于尚未发布 rollback-gate capable updater `0.2.0` 的历史首次升级，不是当前 migration `028` 的常规升级流程：首次发布 migration `027` 前，先运行 GitHub Actions 的 `Updater Bootstrap Release`：`version` 必须是高于 `base_version` 的新稳定 SemVer，`base_version` 必须是当前部署产品版本，`migration_version` 必须与活动数据库当前版本精确相等且小于 `27`。workflow 会先下载 `v<base_version>` 的双 Registry manifest 与 Compose，校验版本、migration、Compose SHA、repository/tag/digest，并在登录 Registry/推送镜像前运行 PostgreSQL 17 rollback-gate 集成门禁；Registry tag 只用于确认没有漂移，应用 digest 不从可变 tag 重新推导。workflow 只构建 updater，生成 `required=false`、`from=to`、`minUpdaterVersion=0.1.0` 的双 Registry manifest，上传旧 release 的原 Compose，并以 `make_latest=false` 发布。bootstrap 会占用一个新的产品版本，但不会改变全局 stable latest；后续包含 migration `027` 的完整 stable release 必须再使用更高版本。
 10. 在目标主机先确认 `.env.release` 的 `DRUVIA_VERSION` 等于 `base_version`，并用 migration status 确认数据库恰为输入版本。临时将 `DRUVIA_RELEASE_MANIFEST_URL` 指向 bootstrap 的显式版本资产，例如 `https://github.com/cloudiowoo/druvia/releases/download/v<bootstrap-version>/release-manifest.json`；自建 Registry 使用同 tag 下的 `release-manifest.cn.json`。不得将其他客户端或全局 `releases/latest/download` 指向 bootstrap。随后在现有 updater `0.1.0` 界面执行检查、下载和应用；服务可能按 Compose 编排重启，但 API/Admin/Worker digest 与 Compose 必须保持 base release 原值，只有 updater digest 变化。完成后从镜像内读取不可由 Compose 覆盖的能力版本：
 
 ```bash
@@ -1413,7 +1484,7 @@ docker exec druvia-updater node -e \
 
 输出必须为 `0.2.0`。未完成 bootstrap 的 updater `0.1.0` 会因后续 manifest 的 `minUpdaterVersion` 门禁拒绝 migration `027` release；不得通过环境变量伪造版本或降低 manifest 要求绕过。完整 stable release 成为 latest 后，将客户端 manifest URL 恢复到常规 stable 地址。
 若状态停在 `finalizing`，新版 updater 会在轮询时查询具名 finalizer：容器仍运行则等待，Docker 暂不可用则保持原状态；确认容器不存在/停止后会显示“核心版本已更新，但 updater finalizer 未完成”。这个状态不代表 bootstrap 能力验收成功，必须按上面的容器内版本检查确认运行实例已经是 `0.2.0`；未通过时先排查并修复 updater 自更新，再继续 migration `027` 发布。
-11. 完整 stable 发布时确认 manifest migration ceiling 为 `27`、`minUpdaterVersion >= 0.2.0`；manifest 生成器会严格解析并拒绝更低或非 SemVer 的最低 updater 版本，不能通过手工 workflow 参数降低门禁。本版 API 启动要求活动数据库 migration 正好处于其支持的 floor/ceiling `27`。migration `027` 及后续版本执行文件回滚时，updater 先停止 API/Admin/Worker、先持久启用 `file_rollback` gate，再在 gate 保持激活期间清理上次失败遗留的 holder，等待 Data Access 全局排他锁排空已有 mutation，并检查活动数据库中的 v2 baseline 和全部 projection operation。检查通过后具名 PostgreSQL session 持有同一 exclusive advisory lock，覆盖 release 文件恢复、pre-027 API 启动和健康验证；updater 在每一阶段及健康轮询持续探测 holder，丢失后取消命令并停止旧服务。存在历史或活动 v2 状态时保留 gate 并拒绝 file-only rollback，必须先按数据库备份恢复方案处理。健康通过后 updater 关闭 gate 并确认 holder 释放；若关闭/确认失败，同样停止旧服务并保留 operation。updater 在 `applying/verifying` 中重启时会先停止旧服务，将原 operation 标为只能回滚的失败状态；修复镜像/Compose/服务问题后从 updater 重试同一 rollback，重试会在服务保持停止时清理旧 holder 并重新建立冻结。migration `027 down` 遇 holder/gate 会在取得表独占锁前快速失败。只有确认匹配的发布文件和服务已恢复、健康检查通过且 v2 状态与目标代码兼容时，才可在审计后用数据库管理员执行以下应急解除，不能把它当作普通重试步骤：
+11. 完整 stable 发布时确认 manifest migration ceiling 为当前 `28`、`minUpdaterVersion >= 0.2.0`；manifest 生成器会严格解析并拒绝更低或非 SemVer 的最低 updater 版本，不能通过手工 workflow 参数降低门禁。本版 API 启动要求活动数据库 migration 正好处于其支持的 floor/ceiling `28`。migration `027` 及后续版本执行文件回滚时，updater 先停止 API/Admin/Worker、先持久启用 `file_rollback` gate，再在 gate 保持激活期间清理上次失败遗留的 holder，等待 Data Access 全局排他锁排空已有 mutation，并检查活动数据库中的 v2 baseline 和全部 projection operation。检查通过后具名 PostgreSQL session 持有同一 exclusive advisory lock，覆盖 release 文件恢复、pre-027 API 启动和健康验证；updater 在每一阶段及健康轮询持续探测 holder，丢失后取消命令并停止旧服务。存在历史或活动 v2 状态时保留 gate 并拒绝 file-only rollback，必须先按数据库备份恢复方案处理。健康通过后 updater 关闭 gate 并确认 holder 释放；若关闭/确认失败，同样停止旧服务并保留 operation。updater 在 `applying/verifying` 中重启时会先停止旧服务，将原 operation 标为只能回滚的失败状态；修复镜像/Compose/服务问题后从 updater 重试同一 rollback，重试会在服务保持停止时清理旧 holder 并重新建立冻结。migration `027 down` 遇 holder/gate 会在取得表独占锁前快速失败。只有确认匹配的发布文件和服务已恢复、健康检查通过且 v2 状态与目标代码兼容时，才可在审计后用数据库管理员执行以下应急解除，不能把它当作普通重试步骤：
 
 数据库仍处于 pre-027（不存在 gate 表）时，holder 不会自行退出；updater 将在旧服务健康检查通过后显式结束具名数据库会话并确认锁释放，不能直接杀掉 holder 继续运行旧服务。对于 migration `027+`，关闭 gate 前仍会在数据库内确认 holder 持锁，确认失败时停止旧服务。回滚停止服务和数据库探针使用固定 release 容器名 `druvia-api`、`druvia-admin`、`druvia-deno`、`druvia-postgres`，不依赖已切换的新 Compose 文件能否解析。apply 在备份复制完成前中断或尚未切换发布文件时无需按旧镜像回滚；文件可能已切换或手工回滚中断则必须保留原始备份 ID，并在重试前检查 `.env.release` 和 `docker-compose.release.yml` 备份都存在。预检发现 v2 状态后不得继续发起其他更新，必须先处理数据库备份/目标版本兼容。
 

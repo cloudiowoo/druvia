@@ -1,0 +1,7 @@
+# Local-only final overlay for promoting the existing PostGIS development data
+# to Druvia's single logical `postgres` service. Combine after
+# docker-compose.local.yml and docker-compose.postgis.yml.
+services:
+  postgres:
+    volumes:
+      - ./postgres_postgis_data:/var/lib/postgresql/data

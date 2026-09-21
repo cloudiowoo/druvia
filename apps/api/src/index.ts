@@ -12,6 +12,7 @@ import authPlugin from './middleware/auth.js';
 import { tenantRoutes } from './modules/tenant/tenant.routes.js';
 import { userRoutes } from './modules/user/user.routes.js';
 import { projectRoutes } from './modules/project/project.routes.js';
+import { projectRuntimeContextRoutes } from './modules/project/project-runtime-context.routes.js';
 import { fileRoutes } from './modules/file/file.routes.js';
 import { oauthRoutes } from './modules/oauth/oauth.routes.js';
 import { tableRoutes } from './modules/table/table.routes.js';
@@ -216,6 +217,7 @@ export function buildApp(options: { trustProxy?: boolean } = {}) {
   app.register(userRoutes, { prefix: '/api/v1' });
   app.register(tenantRoutes, { prefix: '/api/v1' });
   app.register(projectRoutes, { prefix: '/api/v1' });
+  app.register(projectRuntimeContextRoutes, { prefix: '/api/v1' });
   app.register(fileRoutes, { prefix: '/api/v1' });
   app.register(oauthRoutes, { prefix: '/api/v1' });
   app.register(tableRoutes, { prefix: '/api/v1' });

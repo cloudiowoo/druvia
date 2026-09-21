@@ -7,6 +7,10 @@ import { assertProjectCapability, AuthorizationError } from '../../lib/project-a
 import { queryOne } from '../../db/index.js';
 import { checkRealtimeTokenRateLimit } from '../../middleware/ratelimit.js';
 import * as projectService from '../project/project.service.js';
+import {
+  getProjectRuntimeContext,
+  getRuntimeContextHasuraSessionVariables,
+} from '../project/project-runtime-context.service.js';
 import { createApiLogger } from '../../lib/logger.js';
 import {
   isRealtimeActor,
@@ -173,12 +177,38 @@ export async function issueToken(
   await checkRealtimeTokenRateLimit(request, reply, projectId);
   if (reply.sent) return;
 
+  let runtimeSessionVariables: Record<string, string>;
   try {
-    const context = resolveRealtimeExecutionContext({
+    runtimeSessionVariables = getRuntimeContextHasuraSessionVariables(
+      await getProjectRuntimeContext(projectId),
+    );
+  } catch (error) {
+    logger.error('Project runtime context lookup failed', {
+      requestId: request.id,
+      projectId,
+    }, error instanceof Error ? error : undefined);
+    return reply.status(503).send({
+      success: false,
+      error: {
+        code: 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE',
+        message: 'Project runtime context is unavailable',
+      },
+    });
+  }
+
+  try {
+    const baseContext = resolveRealtimeExecutionContext({
       projectId,
       runtimeMode: project.dataAccessMode,
       actor,
     });
+    const context = {
+      ...baseContext,
+      sessionVariables: {
+        ...baseContext.sessionVariables,
+        ...runtimeSessionVariables,
+      },
+    };
     const result = issueRealtimeAccessToken({ projectId, context });
 
     logger.info('Realtime access token issued', {

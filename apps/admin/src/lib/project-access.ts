@@ -40,6 +40,7 @@ export function requiredProjectCapability(pathname: string): ProjectCapability |
   if (path === 'api' || path.startsWith('api/')) return 'database:read';
   if (path.startsWith('settings/api-keys')) return 'api_keys:manage';
   if (path.startsWith('settings/environments')) return 'environments:manage';
+  if (path.startsWith('settings/runtime-context')) return 'runtime_context:manage';
   if (path.startsWith('settings/data-access')) return 'data_access:manage';
   if (path.startsWith('settings/rate-limits')) return 'project:update';
   if (path.startsWith('settings/members')) return 'members:read';

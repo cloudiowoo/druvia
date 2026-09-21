@@ -46,6 +46,7 @@ describe('admin project access', () => {
   it('maps direct project routes to their required capability', () => {
     expect(requiredProjectCapability('/t/default/p/proj_1/auth')).toBe('auth:manage')
     expect(requiredProjectCapability('/t/default/p/proj_1/settings/api-keys')).toBe('api_keys:manage')
+    expect(requiredProjectCapability('/t/default/p/proj_1/settings/runtime-context')).toBe('runtime_context:manage')
     expect(requiredProjectCapability('/t/default/p/proj_1/settings/members')).toBe('members:read')
     expect(requiredProjectCapability('/t/default/p/proj_1/tables/orders')).toBe('database:read')
     expect(requiredProjectCapability('/t/default/p/proj_1/api')).toBe('database:read')

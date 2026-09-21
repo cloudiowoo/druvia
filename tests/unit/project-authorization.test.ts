@@ -45,7 +45,9 @@ describe('project authorization', () => {
 
   it('uses the fixed capability matrix for each effective role', () => {
     expect(ROLE_CAPABILITIES.owner).toContain('members:manage')
+    expect(ROLE_CAPABILITIES.owner).toContain('runtime_context:manage')
     expect(ROLE_CAPABILITIES.project_admin).toContain('auth:manage')
+    expect(ROLE_CAPABILITIES.project_admin).not.toContain('runtime_context:manage')
     expect(ROLE_CAPABILITIES.project_admin).not.toContain('trusted_keys:manage')
     expect(ROLE_CAPABILITIES.database_admin).toContain('database:write')
     expect(ROLE_CAPABILITIES.database_admin).not.toContain('auth:manage')

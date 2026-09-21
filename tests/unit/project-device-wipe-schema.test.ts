@@ -58,13 +58,9 @@ describe('migration 026 project device wipe contract', () => {
     expect(sql).toContain("ERRCODE = '55006'")
   })
 
-  it('registers migration 026 as the bootstrap and release ceiling', () => {
+  it('registers migration 026 for the device wipe schema', () => {
     const runner = readFileSync('apps/api/src/cli/migrate.ts', 'utf8')
-    const workflow = readFileSync('.github/workflows/release.yml', 'utf8')
-    const generator = readFileSync('scripts/release/generate-manifest.mjs', 'utf8')
 
     expect(runner).toContain("26: 'druvia_project_device_wipe_mandates'")
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '27'/g)).toHaveLength(2)
-    expect(generator).toContain('const REQUIRED_MIGRATION_TARGET = 27')
   })
 })

@@ -1,5 +1,5 @@
-export const API_SUPPORTED_MIGRATION_CEILING = 27
-export const API_REQUIRED_MIGRATION_FLOOR = 27
+export const API_SUPPORTED_MIGRATION_CEILING = 28
+export const API_REQUIRED_MIGRATION_FLOOR = 28
 
 interface MigrationVersionReader {
   query<T extends Record<string, unknown>>(sql: string): Promise<{ rows: T[] }>

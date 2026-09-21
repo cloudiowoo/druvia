@@ -7,9 +7,22 @@ const { discoveryQuery, clientQuery, releaseClient, getClient } = vi.hoisted(() 
   getClient: vi.fn(),
 }))
 
+const { getProjectRuntimeContextInTransaction, ProjectRuntimeContextError } = vi.hoisted(() => ({
+  getProjectRuntimeContextInTransaction: vi.fn(),
+  ProjectRuntimeContextError: class ProjectRuntimeContextError extends Error {
+    code = 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE'
+    statusCode = 503
+  },
+}))
+
 vi.mock('../../apps/api/src/db/index.js', () => ({
   query: discoveryQuery,
   getClient,
+}))
+
+vi.mock('../../apps/api/src/modules/project/project-runtime-context.service.js', () => ({
+  getProjectRuntimeContextInTransaction,
+  ProjectRuntimeContextError,
 }))
 
 import type { ProjectActorContext } from '../../apps/api/src/lib/project-actor.js'
@@ -42,6 +55,7 @@ describe('RPC Service', () => {
     clearSignatureCache()
     functionRows = []
     getClient.mockResolvedValue({ query: clientQuery, release: releaseClient })
+    getProjectRuntimeContextInTransaction.mockResolvedValue({ enabled: false })
     clientQuery.mockImplementation(async (sql: string) => {
       if (sql.startsWith('SELECT * FROM')) {
         return { rows: functionRows.shift() ?? [] }
@@ -62,6 +76,12 @@ describe('RPC Service', () => {
   it('sets all actor claims and executes the function on one transaction client', async () => {
     discoveryQuery.mockResolvedValueOnce([{ proargnames: null }])
     queueFunctionRows([{ count: 42 }])
+    getProjectRuntimeContextInTransaction.mockResolvedValueOnce({
+      enabled: true,
+      serviceEnvironment: 'sandbox',
+      revision: 2,
+      updatedAt: '2026-09-21T08:00:00.000Z',
+    })
 
     await expect(invoke('get_count')).resolves.toBe(42)
 
@@ -71,6 +91,8 @@ describe('RPC Service', () => {
       expect.stringContaining("set_config('request.jwt.claims'"),
       expect.stringContaining("set_config('request.headers'"),
       expect.stringContaining("set_config('druvia.actor'"),
+      expect.stringContaining("set_config('druvia.service_environment'"),
+      expect.stringContaining("set_config('druvia.service_environment'"),
       expect.stringContaining('SELECT * FROM'),
       'COMMIT',
     ])
@@ -87,7 +109,39 @@ describe('RPC Service', () => {
       actor_type: 'project_user',
       project_user_id: 'pusr_123',
     })
+    expect(calls[4][1]).toEqual([''])
+    expect(calls[5][1]).toEqual(['sandbox'])
+    expect(getProjectRuntimeContextInTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ query: clientQuery }),
+      'proj_123',
+    )
     expect(releaseClient).toHaveBeenCalledOnce()
+  })
+
+  it('masks any ambient service environment for legacy RPC calls', async () => {
+    discoveryQuery.mockResolvedValueOnce([{ proargnames: null }])
+    queueFunctionRows([{ count: 42 }])
+
+    await expect(invoke('get_count')).resolves.toBe(42)
+
+    const environmentCall = clientQuery.mock.calls.find(([sql]) =>
+      sql.includes("set_config('druvia.service_environment'"),
+    )
+    expect(environmentCall?.[1]).toEqual([''])
+  })
+
+  it('fails closed when the runtime context query is unavailable', async () => {
+    discoveryQuery.mockResolvedValueOnce([{ proargnames: null }])
+    getProjectRuntimeContextInTransaction.mockRejectedValueOnce(new Error('runtime context query failed'))
+
+    await expect(invoke('get_count')).rejects.toMatchObject({
+      code: 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE',
+      statusCode: 503,
+    })
+    expect(clientQuery.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK')
+    expect(clientQuery.mock.calls.map(([sql]) => sql)).not.toContain(
+      expect.stringContaining('SELECT * FROM'),
+    )
   })
 
   it('rolls back and releases the client when function execution fails', async () => {

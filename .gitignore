@@ -115,6 +115,7 @@ tests/.storage/
 # Codex / Claude local files
 # ================================
 # Track project-level Codex rules/skills/docs, ignore only local overrides/cache.
+.codex/config.toml
 .codex/**/*.local.*
 .codex/tmp/
 .codex/temp/

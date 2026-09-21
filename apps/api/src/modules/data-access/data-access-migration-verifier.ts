@@ -284,10 +284,15 @@ export async function verifyMigrationRealtimeActors(input: {
   issueToken?: (input: { projectId: string; context: RealtimeExecutionContext }) => { token: string }
   openConnection?: (url: string, token: string, timeoutMs: number) => Promise<DisposableRealtimeConnection>
   contexts?: RealtimeExecutionContext[]
+  runtimeSessionVariables?: Record<string, string>
   timeoutMs?: number
 }): Promise<void> {
   const contexts = input.contexts
-    ?? buildMigrationRealtimeContexts(input.projectId, input.runtimeMode)
+    ?? buildMigrationRealtimeContexts(
+      input.projectId,
+      input.runtimeMode,
+      input.runtimeSessionVariables,
+    )
   const openConnections: DisposableRealtimeConnection[] = []
   try {
     for (const context of contexts) {
@@ -318,7 +323,8 @@ export function createInternalHasuraWebSocketUrl(endpoint: string): string {
 
 export function buildActiveRuntimeHttpContexts(
   projectId: string,
-  runtimeMode: ProjectDataAccessMode
+  runtimeMode: ProjectDataAccessMode,
+  runtimeSessionVariables: Record<string, string> = {}
 ): Array<{ actor: 'authenticated' | 'anonymous'; context: ProjectDataExecutionContext }> {
   const explicit = runtimeMode === 'explicit'
   return [
@@ -334,8 +340,9 @@ export function buildActiveRuntimeHttpContexts(
               'x-hasura-user-id': `migration_probe:authenticated:${projectId}`,
               'x-hasura-project-id': projectId,
               'x-hasura-actor-type': 'project_user',
+              ...runtimeSessionVariables,
             }
-          : {},
+          : runtimeSessionVariables,
       },
     },
     {
@@ -349,8 +356,9 @@ export function buildActiveRuntimeHttpContexts(
           ? {
               'x-hasura-project-id': projectId,
               'x-hasura-actor-type': 'apikey',
+              ...runtimeSessionVariables,
             }
-          : {},
+          : runtimeSessionVariables,
       },
     },
   ]
@@ -358,7 +366,8 @@ export function buildActiveRuntimeHttpContexts(
 
 export function buildMigrationRealtimeContexts(
   projectId: string,
-  runtimeMode: ProjectDataAccessMode
+  runtimeMode: ProjectDataAccessMode,
+  runtimeSessionVariables: Record<string, string> = {}
 ): RealtimeExecutionContext[] {
   const explicit = runtimeMode === 'explicit'
   return [
@@ -372,6 +381,7 @@ export function buildMigrationRealtimeContexts(
         'x-hasura-user-id': `migration_probe:authenticated:${projectId}`,
         'x-hasura-project-id': projectId,
         'x-hasura-actor-type': 'project_user',
+        ...runtimeSessionVariables,
       },
     },
     {
@@ -383,6 +393,7 @@ export function buildMigrationRealtimeContexts(
       sessionVariables: {
         'x-hasura-project-id': projectId,
         'x-hasura-actor-type': 'apikey',
+        ...runtimeSessionVariables,
       },
     },
   ]

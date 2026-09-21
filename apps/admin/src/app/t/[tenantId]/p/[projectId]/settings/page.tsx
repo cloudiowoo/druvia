@@ -16,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { GitBranch, Key, Gauge, ChevronRight, ShieldCheck, Users } from 'lucide-react';
+import { GitBranch, Key, Gauge, ChevronRight, ShieldCheck, Users, ServerCog } from 'lucide-react';
 import { useProjectAccess } from '@/hooks/use-project-access';
 
 interface ProjectDetails {
@@ -234,6 +234,19 @@ export default function ProjectSettingsPage() {
                 <div>
                   <div className="font-medium">环境管理</div>
                   <div className="text-sm text-gray-500">管理开发、测试和生产环境</div>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-gray-400" />
+            </Link>}
+            {can('runtime_context:manage') && <Link
+              href={`/t/${tenantId}/p/${projectId}/settings/runtime-context`}
+              className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 border-b"
+            >
+              <div className="flex items-center gap-3">
+                <ServerCog className="h-5 w-5 text-gray-400" />
+                <div>
+                  <div className="font-medium">运行环境</div>
+                  <div className="text-sm text-gray-500">管理项目服务环境上下文</div>
                 </div>
               </div>
               <ChevronRight className="h-5 w-5 text-gray-400" />

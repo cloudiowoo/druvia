@@ -9,6 +9,7 @@ const {
   checkProjectAccessMock,
   getProjectByIdMock,
   checkProjectGraphqlRateLimitMock,
+  getProjectRuntimeContextMock,
 } = vi.hoisted(() => ({
   authState: { user: undefined as unknown },
   authenticateMock: vi.fn(),
@@ -16,6 +17,7 @@ const {
   checkProjectAccessMock: vi.fn(),
   getProjectByIdMock: vi.fn(),
   checkProjectGraphqlRateLimitMock: vi.fn(),
+  getProjectRuntimeContextMock: vi.fn(),
 }))
 
 vi.mock('../../apps/api/src/lib/redis.js', () => ({
@@ -41,6 +43,17 @@ vi.mock('../../apps/api/src/lib/access.js', () => ({
 
 vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
   getProjectById: getProjectByIdMock,
+}))
+
+vi.mock('../../apps/api/src/modules/project/project-runtime-context.service.js', () => ({
+  getProjectRuntimeContext: getProjectRuntimeContextMock,
+  getRuntimeContextHasuraSessionVariables: (runtimeContext: {
+    enabled: boolean;
+    serviceEnvironment?: string;
+  }) => runtimeContext.enabled
+    ? { 'x-hasura-druvia-service-environment': runtimeContext.serviceEnvironment }
+    : {},
+  ProjectRuntimeContextError: class ProjectRuntimeContextError extends Error {},
 }))
 
 vi.mock('../../apps/api/src/middleware/ratelimit.js', async () => {
@@ -101,6 +114,7 @@ describe('OpenAPI GraphQL proxy route', () => {
       },
     })
     checkProjectGraphqlRateLimitMock.mockImplementation(async () => {})
+    getProjectRuntimeContextMock.mockResolvedValue({ enabled: false })
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({ data: { __typename: 'query_root' } }),
@@ -208,6 +222,49 @@ describe('OpenAPI GraphQL proxy route', () => {
     expect(headers.get('x-hasura-user-id')).toBe('pusr_123')
     expect(headers.get('x-hasura-project-id')).toBe('proj_123')
     expect(headers.get('x-hasura-actor-type')).toBe('project_user')
+  })
+
+  it('injects the persisted runtime environment and ignores a caller supplied value', async () => {
+    authState.user = projectUser
+    getProjectRuntimeContextMock.mockResolvedValueOnce({
+      enabled: true,
+      serviceEnvironment: 'sandbox',
+      revision: 3,
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    })
+
+    const response = await injectGraphql({
+      'x-hasura-druvia-service-environment': 'production',
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(getProjectRuntimeContextMock).toHaveBeenCalledWith('proj_123')
+    expect(proxiedHeaders().get('x-hasura-druvia-service-environment')).toBe('sandbox')
+  })
+
+  it('keeps legacy GraphQL requests free of the runtime environment header when unconfigured', async () => {
+    const response = await injectGraphql({
+      'x-hasura-druvia-service-environment': 'production',
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(proxiedHeaders().get('x-hasura-druvia-service-environment')).toBeNull()
+  })
+
+  it('fails closed when runtime context resolution is unavailable', async () => {
+    getProjectRuntimeContextMock.mockRejectedValueOnce(new Error('database unavailable'))
+
+    const response = await injectGraphql()
+
+    expect(response.statusCode).toBe(503)
+    expect(response.json()).toEqual({
+      success: false,
+      error: {
+        code: 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE',
+        message: 'Project runtime context is unavailable',
+      },
+    })
+    expect(global.fetch).not.toHaveBeenCalled()
   })
 
   it('maps an explicit api key to anonymous headers without user identity', async () => {

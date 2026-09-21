@@ -10,6 +10,7 @@ export type ProjectEffectiveRole = 'owner' | ProjectMemberRole;
 export const PROJECT_CAPABILITIES = [
   'project:read',
   'project:update',
+  'runtime_context:manage',
   'project:delete',
   'members:read',
   'members:manage',

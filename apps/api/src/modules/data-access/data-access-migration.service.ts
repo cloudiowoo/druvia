@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto'
 import type { Project, ProjectDataAccessMode } from '@druvia/shared'
 import { createApiLogger } from '../../lib/logger.js'
 import * as projectService from '../project/project.service.js'
+import {
+  getProjectRuntimeContext,
+  getRuntimeContextHasuraSessionVariables,
+} from '../project/project-runtime-context.service.js'
 import { hasuraMetadataRequest } from '../realtime/realtime.service.js'
 import type { ProjectDataExecutionContext } from './project-data-actor.js'
 import { getDataAccessInventory } from './data-access-inventory.js'
@@ -621,6 +625,9 @@ export const defaultDataAccessMigrationDependencies: DataAccessMigrationServiceD
   },
   async verifyPreparedHttp(current, plan) {
     const roles = projectRoles(current.projectId)
+    const runtimeSessionVariables = getRuntimeContextHasuraSessionVariables(
+      await getProjectRuntimeContext(current.projectId),
+    )
     const contexts: Array<{
       actor: 'authenticated' | 'anonymous'
       context: ProjectDataExecutionContext
@@ -634,6 +641,7 @@ export const defaultDataAccessMigrationDependencies: DataAccessMigrationServiceD
             'x-hasura-user-id': `migration-probe:${current.projectId}`,
             'x-hasura-project-id': current.projectId,
             'x-hasura-actor-type': 'project_user',
+            ...runtimeSessionVariables,
           },
         },
       },
@@ -645,6 +653,7 @@ export const defaultDataAccessMigrationDependencies: DataAccessMigrationServiceD
           sessionVariables: {
             'x-hasura-project-id': current.projectId,
             'x-hasura-actor-type': 'apikey',
+            ...runtimeSessionVariables,
           },
         },
       },
@@ -657,14 +666,20 @@ export const defaultDataAccessMigrationDependencies: DataAccessMigrationServiceD
     }
   },
   async verifyPreparedRealtime(current) {
+    const runtimeSessionVariables = getRuntimeContextHasuraSessionVariables(
+      await getProjectRuntimeContext(current.projectId),
+    )
     await verifyMigrationRealtimeActors({
       projectId: current.projectId,
       runtimeMode: 'compatibility',
-      contexts: buildMigrationRealtimeContexts(current.projectId, 'explicit'),
+      contexts: buildMigrationRealtimeContexts(current.projectId, 'explicit', runtimeSessionVariables),
     })
   },
   async verifyRuntime(current, plan, mode) {
     const roles = projectRoles(current.projectId)
+    const runtimeSessionVariables = getRuntimeContextHasuraSessionVariables(
+      await getProjectRuntimeContext(current.projectId),
+    )
     const runtimePlan = mode === 'explicit'
       ? plan
       : buildProjectMigrationPlan(current, roles)
@@ -678,15 +693,15 @@ export const defaultDataAccessMigrationDependencies: DataAccessMigrationServiceD
       })
     }
     const contexts = mode === 'explicit'
-      ? buildActiveRuntimeHttpContexts(current.projectId, mode)
+      ? buildActiveRuntimeHttpContexts(current.projectId, mode, runtimeSessionVariables)
       : [
           {
             actor: 'authenticated' as const,
-            context: { kind: 'project_actor' as const, role: 'user', sessionVariables: {} },
+            context: { kind: 'project_actor' as const, role: 'user', sessionVariables: runtimeSessionVariables },
           },
           {
             actor: 'anonymous' as const,
-            context: { kind: 'project_actor' as const, role: 'anonymous', sessionVariables: {} },
+            context: { kind: 'project_actor' as const, role: 'anonymous', sessionVariables: runtimeSessionVariables },
           },
         ]
     for (const item of contexts) {
@@ -695,7 +710,11 @@ export const defaultDataAccessMigrationDependencies: DataAccessMigrationServiceD
         actor: item.actor, context: item.context,
       })
     }
-    await verifyMigrationRealtimeActors({ projectId: current.projectId, runtimeMode: mode })
+    await verifyMigrationRealtimeActors({
+      projectId: current.projectId,
+      runtimeMode: mode,
+      runtimeSessionVariables,
+    })
   },
   withLock: withProjectDataAccessMutationLock as DataAccessMigrationServiceDependencies['withLock'],
   now: () => new Date(),

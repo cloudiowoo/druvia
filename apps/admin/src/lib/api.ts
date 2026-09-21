@@ -1409,6 +1409,34 @@ class ApiClient {
     }>('GET', `/api/v1/projects/${projectId}/device-wipe`);
   }
 
+  async getProjectRuntimeContext(projectId: string) {
+    return this.request<{
+      enabled: boolean;
+      serviceEnvironment?: 'local' | 'sandbox' | 'testflight' | 'production';
+      revision?: number;
+      updatedAt?: string;
+    }>('GET', `/api/v1/projects/${projectId}/runtime-context`);
+  }
+
+  async updateProjectRuntimeContext(
+    projectId: string,
+    serviceEnvironment: 'local' | 'sandbox' | 'testflight' | 'production',
+  ) {
+    return this.request<{
+      enabled: true;
+      serviceEnvironment: 'local' | 'sandbox' | 'testflight' | 'production';
+      revision: number;
+      updatedAt: string;
+    }>('PUT', `/api/v1/projects/${projectId}/runtime-context`, { serviceEnvironment });
+  }
+
+  async disableProjectRuntimeContext(projectId: string) {
+    return this.request<{ enabled: false }>(
+      'DELETE',
+      `/api/v1/projects/${projectId}/runtime-context`,
+    );
+  }
+
   async updateProjectDeviceWipeConfig(projectId: string, enabled: boolean) {
     return this.request<{
       enabled: boolean;

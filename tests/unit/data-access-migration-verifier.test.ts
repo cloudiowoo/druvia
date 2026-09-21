@@ -78,6 +78,22 @@ describe('data access migration verifier', () => {
     expect(JSON.stringify(realtimeContexts)).not.toContain('apiKeyPrefix')
   })
 
+  it('carries the server-derived runtime environment through HTTP and Realtime probes', () => {
+    const runtimeSessionVariables = {
+      'x-hasura-druvia-service-environment': 'sandbox',
+    }
+
+    const httpContexts = buildActiveRuntimeHttpContexts(projectId, 'explicit', runtimeSessionVariables)
+    const realtimeContexts = buildMigrationRealtimeContexts(projectId, 'explicit', runtimeSessionVariables)
+
+    expect(httpContexts.every((item) => (
+      item.context.sessionVariables['x-hasura-druvia-service-environment'] === 'sandbox'
+    ))).toBe(true)
+    expect(realtimeContexts.every((context) => (
+      context.sessionVariables['x-hasura-druvia-service-environment'] === 'sandbox'
+    ))).toBe(true)
+  })
+
   it('verifies exact scoped metadata before cutover and legacy absence after cutover', () => {
     const prepared: ProjectDataAccessMigrationSnapshot = {
       ...sourceSnapshot,

@@ -12,6 +12,10 @@ import {
   assertProjectRuntimeAvailable,
   assertProjectSessionUsable,
 } from '../project-auth/project-session-state.js';
+import {
+  getProjectRuntimeContext,
+  getRuntimeContextHasuraSessionVariables,
+} from '../project/project-runtime-context.service.js';
 
 const INTERNAL_TOKEN_HEADER = 'x-druvia-internal-token';
 
@@ -132,6 +136,20 @@ export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
     }
 
     const schemaName = projectResult.rows[0].schema_name as string;
+    let runtimeSessionVariables: Record<string, string>;
+    try {
+      const runtimeContext = await getProjectRuntimeContext(tokenPayload.projectId);
+      runtimeSessionVariables = getRuntimeContextHasuraSessionVariables(runtimeContext);
+    } catch (error) {
+      app.log.error({ err: error, projectId: tokenPayload.projectId }, 'Project runtime context lookup failed');
+      return reply.status(503).send({
+        success: false,
+        error: {
+          code: 'PROJECT_RUNTIME_CONTEXT_UNAVAILABLE',
+          message: 'Project runtime context is unavailable',
+        },
+      });
+    }
     const executionContext = resolveProjectDataExecutionContext({
       projectId: tokenPayload.projectId,
       runtimeMode: projectResult.rows[0].data_access_mode as string | null,
@@ -176,6 +194,7 @@ export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
           'x-hasura-default-schema': schemaName,
           'x-hasura-role': executionContext.role,
           ...executionContext.sessionVariables,
+          ...runtimeSessionVariables,
         },
         body: JSON.stringify({ query, variables, operationName }),
       });
