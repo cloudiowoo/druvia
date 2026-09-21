@@ -13,6 +13,19 @@ export interface ProjectEnvironment {
   createdAt: Date;
 }
 
+interface ForeignKeyDefinition {
+  constraint_name: string;
+  source_columns: string[];
+  foreign_schema_name: string;
+  foreign_table_name: string;
+  foreign_columns: string[];
+  update_action: string;
+  delete_action: string;
+  match_type: string;
+  deferrable: boolean;
+  initially_deferred: boolean;
+}
+
 export class EnvironmentSchemaConflictError extends Error {
   readonly code = 'ENVIRONMENT_SCHEMA_CONFLICT';
 
@@ -27,6 +40,30 @@ export function resolveSchemaName(baseSchema: string, env?: string): string {
     return baseSchema;
   }
   return `${baseSchema}_${env}`;
+}
+
+function foreignKeyAction(clause: 'UPDATE' | 'DELETE', action: string): string {
+  const actions: Record<string, string> = {
+    a: 'NO ACTION',
+    r: 'RESTRICT',
+    c: 'CASCADE',
+    n: 'SET NULL',
+    d: 'SET DEFAULT',
+  };
+  const value = actions[action];
+  if (!value || value === 'NO ACTION') return '';
+  return ` ON ${clause} ${value}`;
+}
+
+function foreignKeyMatch(matchType: string): string {
+  if (matchType === 'f') return ' MATCH FULL';
+  if (matchType === 'p') return ' MATCH PARTIAL';
+  return '';
+}
+
+function foreignKeyDeferrability(foreignKey: ForeignKeyDefinition): string {
+  if (!foreignKey.deferrable) return '';
+  return foreignKey.initially_deferred ? ' DEFERRABLE INITIALLY DEFERRED' : ' DEFERRABLE';
 }
 
 export async function listEnvironments(projectId: string): Promise<ProjectEnvironment[]> {
@@ -183,29 +220,55 @@ export async function createEnvironment(
     for (const tableName of clonedTables) {
       const fkResult = await client.query(
         `SELECT
-           tc.constraint_name,
-           kcu.column_name,
-           ccu.table_name AS foreign_table_name,
-           ccu.column_name AS foreign_column_name
-         FROM information_schema.table_constraints AS tc
-         JOIN information_schema.key_column_usage AS kcu
-           ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-         JOIN information_schema.constraint_column_usage AS ccu
-           ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-         WHERE tc.constraint_type = 'FOREIGN KEY'
-           AND tc.table_schema = $1
-           AND tc.table_name = $2`,
+           con.conname AS constraint_name,
+           ARRAY_AGG(source_attribute.attname::text ORDER BY source_key.ordinality) AS source_columns,
+           foreign_namespace.nspname AS foreign_schema_name,
+           foreign_table.relname AS foreign_table_name,
+           ARRAY_AGG(foreign_attribute.attname::text ORDER BY source_key.ordinality) AS foreign_columns,
+           con.confupdtype::text AS update_action,
+           con.confdeltype::text AS delete_action,
+           con.confmatchtype::text AS match_type,
+           con.condeferrable AS deferrable,
+           con.condeferred AS initially_deferred
+         FROM pg_constraint con
+         JOIN pg_class source_table ON source_table.oid = con.conrelid
+         JOIN pg_namespace source_namespace ON source_namespace.oid = source_table.relnamespace
+         JOIN pg_class foreign_table ON foreign_table.oid = con.confrelid
+         JOIN pg_namespace foreign_namespace ON foreign_namespace.oid = foreign_table.relnamespace
+         JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS source_key(attnum, ordinality) ON TRUE
+         JOIN pg_attribute source_attribute
+           ON source_attribute.attrelid = con.conrelid
+          AND source_attribute.attnum = source_key.attnum
+         JOIN pg_attribute foreign_attribute
+           ON foreign_attribute.attrelid = con.confrelid
+          AND foreign_attribute.attnum = con.confkey[source_key.ordinality]
+         WHERE con.contype = 'f'
+           AND source_namespace.nspname = $1
+           AND source_table.relname = $2
+         GROUP BY
+           con.oid,
+           con.conname,
+           foreign_namespace.nspname,
+           foreign_table.relname,
+           con.confupdtype,
+           con.confdeltype,
+           con.confmatchtype,
+           con.condeferrable,
+           con.condeferred
+         ORDER BY con.conname`,
         [baseSchema, tableName]
       );
 
-      for (const fk of fkResult.rows) {
-        // Only recreate FK if the referenced table exists in the new schema
-        if (clonedTables.includes(fk.foreign_table_name)) {
+      for (const fk of fkResult.rows as ForeignKeyDefinition[]) {
+        // Do not turn external references into a reference to an unrelated cloned table.
+        if (fk.foreign_schema_name === baseSchema && clonedTables.includes(fk.foreign_table_name)) {
+          const sourceColumns = fk.source_columns.map(column => format('%I', column)).join(', ');
+          const foreignColumns = fk.foreign_columns.map(column => format('%I', column)).join(', ');
           await client.query(
             format(
-              'ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES %I.%I(%I)',
+              `ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (${sourceColumns}) REFERENCES %I.%I (${foreignColumns})${foreignKeyMatch(fk.match_type)}${foreignKeyAction('UPDATE', fk.update_action)}${foreignKeyAction('DELETE', fk.delete_action)}${foreignKeyDeferrability(fk)}`,
               newSchema, tableName, `${fk.constraint_name}_clone`,
-              fk.column_name, newSchema, fk.foreign_table_name, fk.foreign_column_name
+              newSchema, fk.foreign_table_name
             )
           );
         }

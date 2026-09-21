@@ -37,7 +37,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '17',
-      DRUVIA_MIGRATION_TO: '28',
+      DRUVIA_MIGRATION_TO: '29',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
       DRUVIA_MIGRATION_REVERSIBLE: 'false',
     }, {
@@ -60,7 +60,7 @@ describe('release manifest generator', () => {
       migrations: {
         required: true,
         from: 17,
-        to: 28,
+        to: 29,
         requiresBackup: true,
         reversible: false,
       },
@@ -131,7 +131,12 @@ describe('release manifest generator', () => {
       baseVersion: '0.3.10',
       migrationVersion: 27,
     });
-    expect(() => resolveUpdaterBootstrapMetadata('0.4.0', '0.3.10', '28'))
+    expect(resolveUpdaterBootstrapMetadata('0.4.0', '0.3.10', '28')).toEqual({
+      releaseVersion: '0.4.0',
+      baseVersion: '0.3.10',
+      migrationVersion: 28,
+    });
+    expect(() => resolveUpdaterBootstrapMetadata('0.4.0', '0.3.10', '29'))
       .toThrow(/UNSAFE_UPDATER_BOOTSTRAP_INPUT/);
   });
 
@@ -260,7 +265,7 @@ describe('release manifest generator', () => {
     }, { composePath })).rejects.toThrow(/RELEASE_CHANNEL_MISMATCH/);
   });
 
-  it('rejects release manifests that can skip migration 028 or its backup', async () => {
+  it('rejects release manifests that can skip migration 029 or its backup', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'druvia-release-'));
     const composePath = join(dir, 'docker-compose.release.yml');
     await writeFile(composePath, 'services:\n  api:\n    image: test\n', 'utf8');
@@ -277,7 +282,7 @@ describe('release manifest generator', () => {
       DRUVIA_UPDATER_IMAGE_DIGEST: digest('d'),
       DRUVIA_MIGRATION_REQUIRED: 'true',
       DRUVIA_MIGRATION_FROM: '18',
-      DRUVIA_MIGRATION_TO: '28',
+      DRUVIA_MIGRATION_TO: '29',
       DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true',
     };
 
@@ -481,7 +486,7 @@ describe('release workflow', () => {
     expect(workflow).toContain('prerelease: ${{ env.RELEASE_PRERELEASE }}');
   });
 
-  it('marks migration 028 as the safe default for tag and manual releases', () => {
+  it('marks migration 029 as the safe default for tag and manual releases', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 
     expect(workflow).not.toContain("\n      migration_required:");
@@ -491,7 +496,7 @@ describe('release workflow', () => {
     expect(workflow).not.toContain("\n      migration_reversible:");
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRED: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_FROM: \$\{\{ inputs\.migration_from \|\| '18' \}\}/g)).toHaveLength(2);
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '28'/g)).toHaveLength(2);
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: '29'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'/g)).toHaveLength(2);
     expect(workflow.match(/DRUVIA_MIGRATION_REVERSIBLE: 'false'/g)).toHaveLength(2);
   });

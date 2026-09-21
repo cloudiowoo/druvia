@@ -5,6 +5,10 @@ import * as projectService from '../../apps/api/src/modules/project/project.serv
 import * as tenantService from '../../apps/api/src/modules/tenant/tenant.service.js';
 import * as tableService from '../../apps/api/src/modules/table/table.service.js';
 
+function quoteIdentifier(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
 describe('EnvironmentService Integration', () => {
   let testUserId: number;
   let testTenantId: string;
@@ -150,6 +154,52 @@ describe('EnvironmentService Integration', () => {
       );
       expect(dataResult.rows.length).toBe(1);
       expect(dataResult.rows[0].email).toBe('test@example.com');
+    });
+
+    it('clones a composite foreign key once with its complete column mapping', async () => {
+      await pool.query(
+        `DROP TABLE IF EXISTS ${quoteIdentifier(testSchemaName)}.${quoteIdentifier('environment_fk_child')} CASCADE`,
+      );
+      await pool.query(
+        `DROP TABLE IF EXISTS ${quoteIdentifier(testSchemaName)}.${quoteIdentifier('environment_fk_parent')} CASCADE`,
+      );
+      await pool.query(
+        `CREATE TABLE ${quoteIdentifier(testSchemaName)}.${quoteIdentifier('environment_fk_parent')} (
+          id BIGINT NOT NULL,
+          user_id BIGINT NOT NULL,
+          PRIMARY KEY (id, user_id)
+        )`,
+      );
+      await pool.query(
+        `CREATE TABLE ${quoteIdentifier(testSchemaName)}.${quoteIdentifier('environment_fk_child')} (
+          id BIGINT PRIMARY KEY,
+          parent_id BIGINT NOT NULL,
+          user_id BIGINT NOT NULL,
+          CONSTRAINT environment_fk_child_parent_user_fk
+            FOREIGN KEY (parent_id, user_id)
+            REFERENCES ${quoteIdentifier(testSchemaName)}.${quoteIdentifier('environment_fk_parent')} (id, user_id)
+            ON DELETE CASCADE
+            DEFERRABLE INITIALLY DEFERRED
+        )`,
+      );
+
+      const environment = await environmentService.createEnvironment(testProjectId, 'compositefk', false);
+      const constraint = await pool.query<{ definition: string }>(
+        `SELECT pg_get_constraintdef(con.oid, true) AS definition
+         FROM pg_constraint con
+         JOIN pg_class rel ON rel.oid = con.conrelid
+         JOIN pg_namespace namespace ON namespace.oid = rel.relnamespace
+         WHERE namespace.nspname = $1
+           AND rel.relname = 'environment_fk_child'
+           AND con.contype = 'f'`,
+        [environment.schemaName],
+      );
+
+      expect(constraint.rows).toHaveLength(1);
+      expect(constraint.rows[0]?.definition).toContain('FOREIGN KEY (parent_id, user_id)');
+      expect(constraint.rows[0]?.definition).toContain('REFERENCES');
+      expect(constraint.rows[0]?.definition).toContain('ON DELETE CASCADE');
+      expect(constraint.rows[0]?.definition).toContain('DEFERRABLE INITIALLY DEFERRED');
     });
 
     it('should throw error for non-existent project', async () => {

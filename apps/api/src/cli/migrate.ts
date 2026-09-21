@@ -222,6 +222,7 @@ async function bootstrap(): Promise<void> {
     26: 'druvia_project_device_wipe_mandates',
     27: 'druvia_data_access_projection_operations',
     28: 'druvia_project_runtime_contexts',
+    29: 'druvia_project_runtime_context_fences',
   };
 
   // 纯数据迁移：通过查询数据行判断是否已应用

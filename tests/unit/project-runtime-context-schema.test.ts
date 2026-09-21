@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 
 const upPath = 'migrations/028_project_runtime_contexts.up.sql'
 const downPath = 'migrations/028_project_runtime_contexts.down.sql'
+const compatibilityUpPath = 'migrations/029_project_runtime_context_fences.up.sql'
+const compatibilityDownPath = 'migrations/029_project_runtime_context_fences.down.sql'
 
 describe('migration 028 project runtime context contract', () => {
   it('stores only a typed, versioned service environment per project', () => {
@@ -29,16 +31,34 @@ describe('migration 028 project runtime context contract', () => {
     expect(sql).toContain("ERRCODE = '55006'")
   })
 
-  it('registers migration 028 as the API and release ceiling', () => {
+  it('upgrades databases that applied the original migration 028 without fences', () => {
+    expect(existsSync(compatibilityUpPath)).toBe(true)
+    expect(existsSync(compatibilityDownPath)).toBe(true)
+    if (!existsSync(compatibilityUpPath) || !existsSync(compatibilityDownPath)) return
+
+    const up = readFileSync(compatibilityUpPath, 'utf8')
+    const down = readFileSync(compatibilityDownPath, 'utf8')
+
+    expect(up).toContain('CREATE TABLE IF NOT EXISTS druvia_project_runtime_context_fences')
+    expect(up).toContain('INSERT INTO druvia_project_runtime_context_fences')
+    expect(up).toContain('SELECT project_id, created_at')
+    expect(up).toContain('FROM druvia_project_runtime_contexts')
+    expect(up).toContain('ON CONFLICT (project_id) DO NOTHING')
+    expect(down).toContain('cannot roll back migration 029 while project runtime context state exists')
+    expect(down).toContain("ERRCODE = '55006'")
+  })
+
+  it('registers migration 029 as the API and release ceiling', () => {
     const runner = readFileSync('apps/api/src/cli/migrate.ts', 'utf8')
     const compatibility = readFileSync('apps/api/src/db/migration-compatibility.ts', 'utf8')
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8')
     const generator = readFileSync('scripts/release/generate-manifest.mjs', 'utf8')
 
     expect(runner).toContain("28: 'druvia_project_runtime_contexts'")
-    expect(compatibility).toContain('API_SUPPORTED_MIGRATION_CEILING = 28')
-    expect(compatibility).toContain('API_REQUIRED_MIGRATION_FLOOR = 28')
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '28'/g)).toHaveLength(2)
-    expect(generator).toContain('const REQUIRED_MIGRATION_TARGET = 28')
+    expect(runner).toContain("29: 'druvia_project_runtime_context_fences'")
+    expect(compatibility).toContain('API_SUPPORTED_MIGRATION_CEILING = 29')
+    expect(compatibility).toContain('API_REQUIRED_MIGRATION_FLOOR = 29')
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: '29'/g)).toHaveLength(2)
+    expect(generator).toContain('const REQUIRED_MIGRATION_TARGET = 29')
   })
 })

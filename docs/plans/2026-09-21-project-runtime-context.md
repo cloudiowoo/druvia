@@ -68,7 +68,7 @@ type ProjectRuntimeContext =
 
 ## 5. 实施任务
 
-- [x] 新增 migration `028` 与共享类型，建立配置存储、约束和活动日志 action。
+- [x] 新增 migration `028` 与共享类型，建立配置存储、约束和活动日志 action；migration `029` 为已应用早期 `028` 但缺少 fence 表的数据库补齐表结构并回填既有配置。
 - [x] 实现 runtime context repository/service、受限管理 API 与 Admin 设置界面。
 - [x] 在 RPC 事务内、GraphQL 代理和 Functions internal GraphQL 中统一注入上下文。
 - [x] 在 Realtime JWT、Data Access HTTP/Realtime verifier 中统一携带上下文。
@@ -87,15 +87,15 @@ type ProjectRuntimeContext =
 
 ## 7. 发布顺序
 
-1. 先应用 Druvia migration `028`，发布 API/Admin/nginx；既有项目仍无运行时上下文。
+1. 先应用 Druvia migration `029`，发布 API/Admin/nginx；既有项目仍无运行时上下文。
 2. 通过受控管理 API 将 PITCHETCH Global 配置为 `sandbox`。
 3. 由 PITCHETCH 应用 V23，并以受控 Project Session 联调 RPC、GraphQL、Realtime。
-4. 发布包的 migration ceiling 升至 `28`；本地、release、GHCR、自建 Registry 和 OTA 依旧遵循既有
+4. 发布包的 migration ceiling 升至 `29`；本地、release、GHCR、自建 Registry 和 OTA 依旧遵循既有
    migration/backup/人工 apply 规则。
 
 ## 8. 实施证据
 
-- `DB_HOST=127.0.0.1 DB_PORT=5632 pnpm run migrate up`：活动 PostGIS 从 `027` 成功升级至 `028`；随后 `status` 确认当前版本 `28`。
+- `DB_HOST=127.0.0.1 DB_PORT=5632 pnpm migrate up`：活动 PostGIS 先从 `027` 升级至 `028`，再由 `029_project_runtime_context_fences` 补齐缺失 fence 表；随后 `status` 确认当前版本 `29`。
 - `pnpm vitest run` 定向回归：145 项通过，覆盖 runtime context repository、mutation audit、controller/routes、RPC、GraphQL proxy、Functions internal GraphQL、Realtime、Data Access verifier、Nginx 和 Admin panel；独立审查补充了 RPC 空 GUC 遮蔽、管理/调用读取失败的 503 错误映射和 migration 026 测试职责分离回归。
 - `pnpm vitest run tests/unit/release-pipeline.test.ts tests/unit/project-runtime-context-schema.test.ts`：29 项通过，完整 release target 为 `28`，bootstrap 仍仅接受 `< 28` 的历史 migration。
 - `pnpm --filter @druvia/shared build`、`pnpm --filter @druvia/api build`、`pnpm --filter @druvia/admin build`：通过；Admin 路由包含 `/settings/runtime-context`。

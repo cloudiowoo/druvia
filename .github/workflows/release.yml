@@ -495,7 +495,7 @@ jobs:
           DRUVIA_UPDATER_IMAGE_DIGEST: ${{ steps.resolve-digests.outputs.ghcr_updater }}
           DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: '28'
+          DRUVIA_MIGRATION_TO: '29'
           DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
           DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs
@@ -517,7 +517,7 @@ jobs:
           DRUVIA_RELEASE_MANIFEST_OUTPUT: release-manifest.cn.json
           DRUVIA_MIGRATION_REQUIRED: 'true'
           DRUVIA_MIGRATION_FROM: ${{ inputs.migration_from || '18' }}
-          DRUVIA_MIGRATION_TO: '28'
+          DRUVIA_MIGRATION_TO: '29'
           DRUVIA_MIGRATION_REQUIRES_BACKUP: 'true'
           DRUVIA_MIGRATION_REVERSIBLE: 'false'
         run: node scripts/release/generate-manifest.mjs
