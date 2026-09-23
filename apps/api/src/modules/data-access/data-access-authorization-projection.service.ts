@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import { createApiLogger } from '../../lib/logger.js'
 import * as projectService from '../project/project.service.js'
+import { getProjectRuntimeContextInTransaction } from '../project/project-runtime-context.service.js'
 import * as tableService from '../table/table.service.js'
 import {
   HasuraMetadataRequestError,
@@ -107,6 +108,7 @@ export async function previewAuthorizationProjection(
   const project = await requireProject(projectId)
   const operationId = `dapo_${randomUUID()}`
   return withProjectDataAccessMutationLock(projectId, async (client) => {
+    await assertEnvironmentRuntimeContext(client, projectId, contract)
     await assertContractCoversExistingProjectionBaselines(
       client, projectId, project.schemaName, contract
     )
@@ -189,6 +191,7 @@ export async function applyAuthorizationProjection(
     if (operation.status !== 'preview_ready') {
       throw conflict('Projection operation is not ready to apply')
     }
+    await assertEnvironmentRuntimeContext(client, projectId, operation.contract)
 
     const current = await exportVersionedMetadata()
     if (BigInt(current.resource_version) !== operation.sourceResourceVersion) {
@@ -315,12 +318,15 @@ export async function recoverAuthorizationProjection(
       const current = await exportVersionedMetadata()
       const currentDigest = metadataDigest(current.metadata, operation)
       if (currentDigest === operation.targetDigest) {
+        const runtimeValid = operation.contract.contractVersion !== 2
+          || await getProjectRuntimeContextInTransaction(client, projectId)
+            .then((context) => context.enabled)
         const dependencyValid = await loadAuthorizationProjectionDependencies({
           client, projectId, schemaName: project.schemaName,
           contract: operation.contract, metadata: current.metadata,
         }).then((dependency) => dependency.snapshot.digest === operation.dependencyDigest)
           .catch(() => false)
-        if (dependencyValid) {
+        if (runtimeValid && dependencyValid) {
           const baselines = await loadBaselinesForRecovery(
             client, projectId, project.schemaName, operation
           )
@@ -480,6 +486,9 @@ function buildTargetPolicies(
           relationshipPath: [relationship.name],
           actorColumn: relationship.actorColumn,
           allowColumn: relationship.allowColumn,
+          ...(contract.view.environmentColumn
+            ? { environmentColumn: contract.view.environmentColumn }
+            : {}),
         },
       },
       anonymous: { ...baseline.policy.anonymous },
@@ -497,6 +506,12 @@ async function loadBaselines(
   const entries = await Promise.all(contract.relationships.map(async (relationship) => {
     const baseline = await getManagedPolicyWithClient(client, projectId, schemaName, relationship.table)
     if (!baseline) throw invalid(`Managed baseline is required for table ${relationship.table}`)
+    if (contract.contractVersion === 1 && baseline.policy.authenticated.selectConstraint?.environmentColumn) {
+      throw invalid(`Environment-scoped table ${relationship.table} cannot use a legacy projection contract`)
+    }
+    if (contract.contractVersion === 2 && baseline.policy.anonymous.select) {
+      throw invalid(`Anonymous select must be closed for environment-scoped table ${relationship.table}`)
+    }
     if (expected && expected[relationship.table] !== baseline.revision.toString()) {
       throw conflict('Projection baseline revision changed after preview')
     }
@@ -506,6 +521,16 @@ async function loadBaselines(
     throw conflict('Projection baseline confirmation does not match the contract')
   }
   return new Map(entries)
+}
+
+async function assertEnvironmentRuntimeContext(
+  client: PoolClient,
+  projectId: string,
+  contract: AuthorizationProjectionContract
+): Promise<void> {
+  if (contract.contractVersion !== 2) return
+  const context = await getProjectRuntimeContextInTransaction(client, projectId)
+  if (!context.enabled) throw invalid('Project runtime context must be enabled for environment-scoped projection')
 }
 
 async function assertProjectionBaselineCapabilitiesCurrent(

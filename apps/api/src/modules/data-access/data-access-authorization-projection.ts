@@ -2,16 +2,17 @@ import type { PoolClient } from 'pg'
 import { stableDigest } from './data-access-managed-policy.js'
 
 const IDENTIFIER_PATTERN = /^[a-z_][a-z0-9_]*$/
-const COLUMN_TYPES = new Set(['uuid', 'boolean', 'text'])
+const COLUMN_TYPES = new Set(['uuid', 'boolean', 'text', 'jsonb'])
 
 export interface AuthorizationProjectionContract {
-  contractVersion: 1
+  contractVersion: 1 | 2
   policyVersion: 2
   view: {
     name: string
     projectionMode: 'sparse_allow_list'
     key: string[]
-    columns: Record<string, 'uuid' | 'boolean' | 'text'>
+    columns: Record<string, 'uuid' | 'boolean' | 'text' | 'jsonb'>
+    environmentColumn?: string
     clientPermissions: { select: false; insert: false; update: false; delete: false }
   }
   relationships: AuthorizationProjectionRelationship[]
@@ -466,13 +467,13 @@ export function parseAuthorizationProjectionContract(
 ): AuthorizationProjectionContract {
   assertRecord(value, 'Projection contract must be an object')
   assertExactKeys(value, ['contractVersion', 'policyVersion', 'view', 'relationships'])
-  if (value.contractVersion !== 1 || value.policyVersion !== 2) {
+  if ((value.contractVersion !== 1 && value.contractVersion !== 2) || value.policyVersion !== 2) {
     throw new AuthorizationProjectionValidationError('Unsupported projection contract version')
   }
   assertRecord(value.view, 'Projection view must be an object')
-  assertExactKeys(value.view, [
-    'name', 'projectionMode', 'key', 'columns', 'clientPermissions',
-  ])
+  assertExactKeys(value.view, value.contractVersion === 2
+    ? ['name', 'projectionMode', 'key', 'columns', 'environmentColumn', 'clientPermissions']
+    : ['name', 'projectionMode', 'key', 'columns', 'clientPermissions'])
   assertIdentifier(value.view.name, 'Projection view name')
   if (value.view.projectionMode !== 'sparse_allow_list') {
     throw new AuthorizationProjectionValidationError('Unsupported projection mode')
@@ -487,13 +488,20 @@ export function parseAuthorizationProjectionContract(
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, type]) => {
       assertIdentifier(name, 'Projection column')
-      if (typeof type !== 'string' || !COLUMN_TYPES.has(type)) {
+      if (typeof type !== 'string' || !COLUMN_TYPES.has(type)
+        || (value.contractVersion === 1 && type === 'jsonb')) {
         throw new AuthorizationProjectionValidationError('Unsupported projection column type')
       }
       return [name, type]
     })) as AuthorizationProjectionContract['view']['columns']
   if (key.some((name) => !(name in columns))) {
     throw new AuthorizationProjectionValidationError('Projection key references an unknown column')
+  }
+  if (value.contractVersion === 2) {
+    assertIdentifier(value.view.environmentColumn, 'Projection environment column')
+    if (columns[value.view.environmentColumn] !== 'jsonb' || key.includes(value.view.environmentColumn)) {
+      throw new AuthorizationProjectionValidationError('Projection environment column must be non-key JSONB')
+    }
   }
   assertRecord(value.view.clientPermissions, 'Projection client permissions must be an object')
   assertExactKeys(value.view.clientPermissions, ['select', 'insert', 'update', 'delete'])
@@ -567,13 +575,14 @@ export function parseAuthorizationProjectionContract(
   }).sort((left, right) => left.table.localeCompare(right.table) || left.name.localeCompare(right.name))
 
   return {
-    contractVersion: 1,
+    contractVersion: value.contractVersion,
     policyVersion: 2,
     view: {
       name: value.view.name,
       projectionMode: 'sparse_allow_list',
       key,
       columns,
+      ...(value.contractVersion === 2 ? { environmentColumn: value.view.environmentColumn as string } : {}),
       clientPermissions: { select: false, insert: false, update: false, delete: false },
     },
     relationships,
@@ -636,9 +645,15 @@ export function buildAuthorizationProjectionDependencySnapshot(input: {
     }
     const actor = actualColumns.find((column) => column.name === relationship.actorColumn)
     const allow = actualColumns.find((column) => column.name === relationship.allowColumn)
+    const environment = contract.view.environmentColumn
+      ? actualColumns.find((column) => column.name === contract.view.environmentColumn)
+      : null
     if (normalizeType(actor?.type) !== 'uuid') fail('Projection actor column must be UUID')
     if (normalizeType(allow?.type) !== 'boolean') {
       fail('Projection allow column must be boolean')
+    }
+    if (contract.view.environmentColumn && normalizeType(environment?.type) !== 'jsonb') {
+      fail('Projection environment column must be JSONB')
     }
     const source = catalog.sourceTables.find((table) => table.table === relationship.table)
     if (!source) fail('Projection source table is unavailable')

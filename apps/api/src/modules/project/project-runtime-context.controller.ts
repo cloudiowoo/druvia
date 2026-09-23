@@ -5,6 +5,7 @@ import {
   disableProjectRuntimeContext,
   getProjectRuntimeContext,
   ProjectRuntimeContextError,
+  ProjectRuntimeContextInUseError,
   ProjectRuntimeContextNotFoundError,
   setProjectRuntimeContext,
 } from './project-runtime-context.service.js'
@@ -23,6 +24,12 @@ function validContextBody(value: unknown): value is { serviceEnvironment: Servic
 }
 
 function sendError(reply: FastifyReply, error: unknown) {
+  if (error instanceof ProjectRuntimeContextInUseError) {
+    return reply.status(error.statusCode).send({
+      success: false,
+      error: { code: error.code, message: 'Project runtime context is in use' },
+    })
+  }
   if (error instanceof ProjectRuntimeContextError) {
     return reply.status(error.statusCode).send({
       success: false,

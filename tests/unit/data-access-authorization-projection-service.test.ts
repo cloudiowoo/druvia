@@ -15,10 +15,14 @@ const mocks = vi.hoisted(() => ({
   transitionOperation: vi.fn(),
   supersedeProjectionPreviews: vi.fn(),
   loadDependencies: vi.fn(),
+  getRuntimeContext: vi.fn(),
 }))
 
 vi.mock('../../apps/api/src/modules/project/project.service.js', () => ({
   getProjectById: mocks.getProjectById,
+}))
+vi.mock('../../apps/api/src/modules/project/project-runtime-context.service.js', () => ({
+  getProjectRuntimeContextInTransaction: mocks.getRuntimeContext,
 }))
 vi.mock('../../apps/api/src/modules/table/table.service.js', () => ({
   getTableMetadata: mocks.getTableMetadata,
@@ -92,6 +96,11 @@ const contract = {
     actorColumn: 'user_id', allowColumn: 'allowed',
   }],
 } as const
+const environmentContract = {
+  ...contract, contractVersion: 2,
+  view: { ...contract.view, environmentColumn: 'allowed_environments',
+    columns: { ...contract.view.columns, allowed_environments: 'jsonb' } },
+}
 const baseline = {
   projectId: 'proj_1', schemaName: 'dru_default_test', tableName: 'orders', policyVersion: 1,
   policy: {
@@ -130,6 +139,7 @@ describe('authorization projection service', () => {
       projectId: 'proj_1', schemaName: 'dru_default_test', alias: 'test',
     })
     mocks.getManagedPolicyWithClient.mockResolvedValue(baseline)
+    mocks.getRuntimeContext.mockResolvedValue({ enabled: true, serviceEnvironment: 'sandbox' })
     mocks.getTableMetadata.mockResolvedValue({
       schemaName: 'dru_default_test', tableName: 'orders',
       columns: ['id', 'user_id'].map((name) => ({
@@ -184,6 +194,68 @@ describe('authorization projection service', () => {
       policy: expect.objectContaining({ policyVersion: 2 }),
       dependencyDigest: 'a'.repeat(64), expectedRevision: 2n,
     }))
+  })
+
+  it('previews the environment-scoped select filter from the v2 contract', async () => {
+    mocks.metadataRequest.mockResolvedValueOnce({ resource_version: 7, metadata: sourceMetadata })
+    await previewAuthorizationProjection('proj_1', environmentContract, 'usr_1')
+    const operation = await mocks.createOperation.mock.results[0].value
+    const table = operation.targetMetadata.sources[0].tables[0]
+    expect(table.select_permissions[0].permission.filter).toEqual({
+      _and: [
+        { user_id: { _eq: 'X-Hasura-User-Id' } },
+        { access_projection: {
+          user_id: { _eq: 'X-Hasura-User-Id' }, allowed: { _eq: true },
+          allowed_environments: { _has_key: 'X-Hasura-Druvia-Service-Environment' },
+        } },
+      ],
+    })
+  })
+
+  it('rejects environment-scoped preview when an anonymous select would bypass it', async () => {
+    mocks.getManagedPolicyWithClient.mockResolvedValue({
+      ...baseline, policy: { ...baseline.policy, anonymous: { select: true } },
+    })
+    mocks.metadataRequest.mockResolvedValueOnce({ resource_version: 7, metadata: sourceMetadata })
+    await expect(previewAuthorizationProjection('proj_1', environmentContract, 'usr_1'))
+      .rejects.toThrow(/anonymous/i)
+    expect(mocks.createOperation).not.toHaveBeenCalled()
+  })
+
+  it('rejects preview and apply if the managed project runtime environment is unavailable', async () => {
+    mocks.getRuntimeContext.mockResolvedValue({ enabled: false })
+    mocks.metadataRequest.mockResolvedValueOnce({ resource_version: 7, metadata: sourceMetadata })
+    await expect(previewAuthorizationProjection('proj_1', environmentContract, 'usr_1'))
+      .rejects.toThrow(/runtime context/i)
+    expect(mocks.createOperation).not.toHaveBeenCalled()
+
+    mocks.getRuntimeContext.mockResolvedValue({ enabled: true, serviceEnvironment: 'sandbox' })
+    mocks.metadataRequest.mockResolvedValueOnce({ resource_version: 7, metadata: sourceMetadata })
+    await previewAuthorizationProjection('proj_1', environmentContract, 'usr_1')
+    const operation = await mocks.createOperation.mock.results[0].value
+    mocks.getOperationWithClient.mockResolvedValue(operation)
+    mocks.getRuntimeContext.mockResolvedValue({ enabled: false })
+    await expect(applyAuthorizationProjection('proj_1', operation.operationId, {
+      projectAlias: 'test', sourceDigest: operation.sourceDigest,
+      targetDigest: operation.targetDigest, dependencyDigest: operation.dependencyDigest,
+      baselineRevisions: { orders: '2' },
+    })).rejects.toThrow(/runtime context/i)
+    expect(mocks.metadataRequest.mock.calls.filter(([type]) => type === 'replace_metadata')).toHaveLength(0)
+  })
+
+  it('rejects a v1 contract replacing an environment-scoped baseline', async () => {
+    mocks.getManagedPolicyWithClient.mockResolvedValue({
+      ...baseline, policyVersion: 2,
+      policy: { ...baseline.policy, policyVersion: 2, authenticated: {
+        ...baseline.policy.authenticated,
+        selectConstraint: { type: 'authorization_projection', relationshipPath: ['access_projection'],
+          actorColumn: 'user_id', allowColumn: 'allowed', environmentColumn: 'allowed_environments' },
+      } },
+    })
+    mocks.metadataRequest.mockResolvedValueOnce({ resource_version: 7, metadata: sourceMetadata })
+    await expect(previewAuthorizationProjection('proj_1', contract, 'usr_1'))
+      .rejects.toThrow(/environment-scoped/i)
+    expect(mocks.createOperation).not.toHaveBeenCalled()
   })
 
   it('treats an omitted Hasura false aggregation default as the managed baseline', async () => {
@@ -389,6 +461,42 @@ describe('authorization projection service', () => {
         status: 'failed',
         error: expect.objectContaining({ code: 'DATA_ACCESS_PROJECTION_FAILED_CLOSED' }),
       })
+    )
+  })
+
+  it('fails closed instead of persisting a recovered environment-scoped target without runtime context', async () => {
+    mocks.metadataRequest.mockResolvedValueOnce({ resource_version: 7, metadata: sourceMetadata })
+    await previewAuthorizationProjection('proj_1', environmentContract, 'usr_1')
+    const previewOperation = await mocks.createOperation.mock.results[0].value
+    const operation = {
+      ...previewOperation,
+      status: 'recovery_required' as const,
+      writeDeadlineAt: new Date(Date.now() - 60_000),
+      startedAt: new Date(Date.now() - 120_000),
+      error: { code: 'DATA_ACCESS_PROJECTION_RECOVERY_REQUIRED', message: 'unknown result' },
+    }
+    mocks.getOperationWithClient.mockResolvedValue(operation)
+    mocks.getRuntimeContext.mockResolvedValue({ enabled: false })
+    mocks.transitionOperation.mockImplementation(async (_client, _id, _statuses, patch) => ({
+      ...operation, ...patch,
+    }))
+    let closedMetadata: Record<string, unknown> | undefined
+    mocks.metadataRequest.mockImplementation(async (type, args) => {
+      if (type === 'export_metadata') {
+        return closedMetadata
+          ? { resource_version: 9, metadata: closedMetadata }
+          : { resource_version: 8, metadata: operation.targetMetadata }
+      }
+      closedMetadata = args.metadata
+      return { message: 'success' }
+    })
+
+    await expect(recoverAuthorizationProjection('proj_1', operation.operationId, 'test'))
+      .resolves.toMatchObject({ status: 'failed' })
+    expect(mocks.saveManagedPolicy).not.toHaveBeenCalled()
+    expect(mocks.metadataRequest).toHaveBeenCalledWith(
+      'replace_metadata', expect.objectContaining({ allow_inconsistent_metadata: false }),
+      expect.objectContaining({ resourceVersion: 8n })
     )
   })
 

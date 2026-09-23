@@ -31,6 +31,16 @@ const contract = {
   }],
 }
 
+const environmentContract = {
+  ...contract,
+  contractVersion: 2,
+  view: {
+    ...contract.view,
+    environmentColumn: 'allowed_environments',
+    columns: { ...contract.view.columns, allowed_environments: 'jsonb' },
+  },
+}
+
 const managedRelationship = {
   table: 'football_session',
   name: 'session_access_projection',
@@ -52,6 +62,21 @@ const managedRelationship = {
 describe('data access authorization projection contract', () => {
   it('parses and canonicalizes a strict project-local contract', () => {
     expect(parseAuthorizationProjectionContract(contract)).toEqual(contract)
+  })
+
+  it('accepts an environment-scoped contract without changing the complete relationship key', () => {
+    expect(parseAuthorizationProjectionContract(environmentContract)).toEqual(environmentContract)
+  })
+
+  it.each([
+    { ...environmentContract, view: { ...environmentContract.view, environmentColumn: 'missing' } },
+    { ...environmentContract, view: { ...environmentContract.view, columns: { ...contract.view.columns, allowed_environments: 'text' } } },
+    { ...environmentContract, view: { ...environmentContract.view, environmentColumn: 'user_id' } },
+    { ...contract, view: { ...environmentContract.view } },
+    { ...environmentContract, view: { ...contract.view } },
+    { ...contract, view: { ...contract.view, columns: { ...contract.view.columns, extra: 'jsonb' } } },
+  ])('rejects missing, mistyped, or version-mismatched environment columns', (value) => {
+    expect(() => parseAuthorizationProjectionContract(value)).toThrow()
   })
 
   it.each([
@@ -140,6 +165,41 @@ describe('data access authorization projection contract', () => {
     expect(snapshot.view.relationDependencies).toEqual(relationDependencies)
     expect(snapshot.relationships[0].mapping).toEqual({ id: 'session_id', user_id: 'user_id' })
     expect(snapshot.digest).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('binds an environment-scoped contract to the JSONB view column and its definition', () => {
+    const parsed = parseAuthorizationProjectionContract(environmentContract)
+    const base = {
+      schemaName: 'dru_default_pitchetch', projectDbUser: 'dru_default_pitchetch_user',
+      contract: parsed,
+      catalog: {
+        relationKind: 'v', owner: 'dru_default_pitchetch_user', securityBarrier: true,
+        securityInvoker: false, relationOptions: ['security_barrier=true'],
+        publicPrivileges: [], publicColumnPrivileges: [], definition: 'select allowed_environments from entitlement',
+        columns: [
+          { name: 'session_id', type: 'uuid', nullable: false },
+          { name: 'user_id', type: 'uuid', nullable: false },
+          { name: 'can_read_basic', type: 'boolean', nullable: false },
+          { name: 'allowed_environments', type: 'jsonb', nullable: true },
+        ],
+        projectionKeyUnique: true, functionDependencies: [],
+        relationDependencies: [{ schemaName: 'dru_default_pitchetch', relationName: 'entitlement', relationKind: 'r', view: null }],
+        sourceTables: [{ table: 'football_session', columns: [
+          { name: 'id', type: 'uuid', nullable: false }, { name: 'user_id', type: 'uuid', nullable: false },
+        ] }],
+      },
+      metadata: { viewTracked: true, viewScopedPermissions: [],
+        trackedTables: ['football_session'], relationships: [managedRelationship] },
+    }
+    const snapshot = buildAuthorizationProjectionDependencySnapshot(base)
+    expect(snapshot.view.columns).toContainEqual({ name: 'allowed_environments', type: 'jsonb', nullable: true })
+    expect(buildAuthorizationProjectionDependencySnapshot({ ...base, catalog: {
+      ...base.catalog, definition: 'select filtered_environments from entitlement',
+    } }).digest).not.toBe(snapshot.digest)
+    expect(() => buildAuthorizationProjectionDependencySnapshot({ ...base, catalog: {
+      ...base.catalog, columns: base.catalog.columns.map((column) => column.name === 'allowed_environments'
+        ? { ...column, type: 'text' } : column),
+    } })).toThrow()
   })
 
   it('fails closed when the view or relationship dependency is unsafe', () => {

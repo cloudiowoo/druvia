@@ -296,6 +296,25 @@ describe('data access controller', () => {
     expect(service.updateTableDataAccess).not.toHaveBeenCalled()
   })
 
+  it('passes the fixed environment-scoped constraint through the v2 policy envelope', async () => {
+    const body = {
+      ...policy, policyVersion: 2, operationId: 'operation_123',
+      authenticated: {
+        ...policy.authenticated, select: 'owner', ownerColumn: 'owner_id',
+        selectConstraint: {
+          type: 'authorization_projection', relationshipPath: ['session_access_projection'],
+          actorColumn: 'user_id', allowColumn: 'can_read_basic', environmentColumn: 'allowed_environments',
+        },
+      },
+    }
+    const reply = createReply()
+    await controller.updateTableDataAccess({
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 }, body,
+    } as never, reply as never)
+    expect(service.updateTableDataAccess).toHaveBeenCalledWith('proj_123', 'orders', body, 'usr_123')
+  })
+
   it('rejects v1 policies that explicitly include a projection constraint field', async () => {
     const reply = createReply()
     await controller.updateTableDataAccess({

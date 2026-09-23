@@ -236,6 +236,26 @@ describe('table data access policy materializer', () => {
     }])
   })
 
+  it('requires the managed environment key in addition to owner and projection allow', () => {
+    const result = materializeTableDataAccessPolicy(policy({
+      policyVersion: 2,
+      authenticated: {
+        select: 'owner', insert: 'none', update: 'none', delete: 'none', ownerColumn: 'owner_id',
+        selectConstraint: { ...projectionConstraint, environmentColumn: 'allowed_environments' },
+      },
+    }), { roles, capabilities })
+    expect(result[0].permission.filter).toEqual({
+      _and: [
+        { owner_id: { _eq: 'X-Hasura-User-Id' } },
+        { session_access_projection: {
+          user_id: { _eq: 'X-Hasura-User-Id' },
+          can_read_basic: { _eq: true },
+          allowed_environments: { _has_key: 'X-Hasura-Druvia-Service-Environment' },
+        } },
+      ],
+    })
+  })
+
   it('rejects projection constraints outside the v2 owner-select contract', () => {
     expect(() => validateTableDataAccessInput(policy({
       authenticated: {
@@ -251,5 +271,21 @@ describe('table data access policy materializer', () => {
         ownerColumn: null, selectConstraint: projectionConstraint,
       },
     }), capabilities)).toThrow(/owner select/i)
+  })
+
+  it('rejects arbitrary operators and ambiguous environment columns in direct policy calls', () => {
+    for (const selectConstraint of [
+      { ...projectionConstraint, environmentColumn: 'allowed_environments', condition: { _or: [] } },
+      { ...projectionConstraint, environmentColumn: 'user_id' },
+      { ...projectionConstraint, environmentColumn: 'can_read_basic' },
+    ]) {
+      expect(() => validateTableDataAccessInput(policy({
+        policyVersion: 2,
+        authenticated: {
+          select: 'owner', insert: 'none', update: 'none', delete: 'none', ownerColumn: 'owner_id',
+          selectConstraint,
+        },
+      }), capabilities)).toThrow(/constraint/i)
+    }
   })
 })

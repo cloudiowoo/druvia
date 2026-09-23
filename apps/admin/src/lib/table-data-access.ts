@@ -14,6 +14,7 @@ export interface TableDataAccessPolicy {
       relationshipPath: [string]
       actorColumn: string
       allowColumn: string
+      environmentColumn?: string
     } | null
   }
   anonymous: {

@@ -12,6 +12,10 @@ vi.mock('../../apps/api/src/modules/project/project-runtime-context.service.js',
     code = 'PROJECT_NOT_FOUND'
     statusCode = 404
   },
+  ProjectRuntimeContextInUseError: class ProjectRuntimeContextInUseError extends Error {
+    code = 'PROJECT_RUNTIME_CONTEXT_IN_USE'
+    statusCode = 409
+  },
 }))
 
 import * as controller from '../../apps/api/src/modules/project/project-runtime-context.controller.js'
@@ -32,6 +36,21 @@ const owner = {
 
 describe('project runtime context controller', () => {
   beforeEach(() => vi.clearAllMocks())
+
+  it('returns a conflict without disabling an environment required by Data Access', async () => {
+    vi.mocked(service.disableProjectRuntimeContext).mockRejectedValue(
+      new service.ProjectRuntimeContextInUseError()
+    )
+    const reply = replyStub()
+    await controller.disableRuntimeContext({
+      id: 'req_locked', params: { projectId: 'proj_global' }, user: owner,
+    } as never, reply as never)
+    expect(reply.status).toHaveBeenCalledWith(409)
+    expect(reply.send).toHaveBeenCalledWith({
+      success: false,
+      error: { code: 'PROJECT_RUNTIME_CONTEXT_IN_USE', message: 'Project runtime context is in use' },
+    })
+  })
 
   it('returns the resolved context without accepting a caller-supplied environment', async () => {
     vi.mocked(service.getProjectRuntimeContext).mockResolvedValue({

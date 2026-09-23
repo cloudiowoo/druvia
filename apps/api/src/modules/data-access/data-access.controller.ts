@@ -505,7 +505,7 @@ function isTableDataAccessPolicy(value: unknown): value is TableDataAccessInput 
 
 function isAuthorizationProjectionConstraint(value: unknown): boolean {
   if (!isRecord(value) || !hasOnlyKeys(value, [
-    'type', 'relationshipPath', 'actorColumn', 'allowColumn',
+    'type', 'relationshipPath', 'actorColumn', 'allowColumn', 'environmentColumn',
   ])) return false
   return value.type === 'authorization_projection'
     && Array.isArray(value.relationshipPath)
@@ -516,6 +516,8 @@ function isAuthorizationProjectionConstraint(value: unknown): boolean {
     && value.actorColumn.length > 0
     && typeof value.allowColumn === 'string'
     && value.allowColumn.length > 0
+    && (value.environmentColumn === undefined
+      || (typeof value.environmentColumn === 'string' && value.environmentColumn.length > 0))
 }
 
 function isColumnGrants(value: unknown): value is DataAccessColumnGrants {

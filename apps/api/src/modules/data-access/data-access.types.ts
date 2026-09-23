@@ -9,6 +9,7 @@ export interface AuthorizationProjectionSelectConstraint {
   relationshipPath: [string]
   actorColumn: string
   allowColumn: string
+  environmentColumn?: string
 }
 
 export interface AuthenticatedTableAccess {

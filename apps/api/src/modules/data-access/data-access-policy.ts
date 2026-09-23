@@ -12,6 +12,7 @@ import type {
 const ACCESS_MODES = new Set<AuthenticatedAccessMode>(['none', 'all', 'owner'])
 const OPERATIONS: DataAccessOperation[] = ['select', 'insert', 'update', 'delete']
 const USER_ID_SESSION_VARIABLE = 'X-Hasura-User-Id'
+const SERVICE_ENVIRONMENT_SESSION_VARIABLE = 'X-Hasura-Druvia-Service-Environment'
 
 export class DataAccessValidationError extends Error {}
 
@@ -155,6 +156,11 @@ function createAuthenticatedPermission(
               [selectConstraint.relationshipPath[0]]: {
                 [selectConstraint.actorColumn]: { _eq: USER_ID_SESSION_VARIABLE },
                 [selectConstraint.allowColumn]: { _eq: true },
+                ...(selectConstraint.environmentColumn
+                  ? { [selectConstraint.environmentColumn]: {
+                      _has_key: SERVICE_ENVIRONMENT_SESSION_VARIABLE,
+                    } }
+                  : {}),
               },
             },
           ],
@@ -201,13 +207,20 @@ function createAuthenticatedPermission(
 function validateProjectionConstraint(
   constraint: AuthorizationProjectionSelectConstraint
 ): void {
+  const allowedKeys = ['type', 'relationshipPath', 'actorColumn', 'allowColumn', 'environmentColumn']
   if (
     constraint.type !== 'authorization_projection'
+    || Object.keys(constraint).some((key) => !allowedKeys.includes(key))
     || !Array.isArray(constraint.relationshipPath)
     || constraint.relationshipPath.length !== 1
     || !constraint.relationshipPath[0]
     || !constraint.actorColumn
     || !constraint.allowColumn
+    || (constraint.environmentColumn !== undefined && !constraint.environmentColumn)
+    || (constraint.environmentColumn !== undefined && (
+      constraint.environmentColumn === constraint.actorColumn
+      || constraint.environmentColumn === constraint.allowColumn
+    ))
   ) {
     throw new DataAccessValidationError('Invalid authorization projection constraint')
   }

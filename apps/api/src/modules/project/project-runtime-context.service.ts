@@ -5,6 +5,7 @@ import {
 } from '@druvia/shared'
 import { getClient, queryOne } from '../../db/index.js'
 import { logActivity } from '../activity/activity.service.js'
+import { projectDataAccessLockId } from '../data-access/data-access-mutation-lock.js'
 
 interface RuntimeContextRow {
   service_environment: string
@@ -70,6 +71,16 @@ export class ProjectRuntimeContextNotFoundError extends Error {
   constructor() {
     super('Project not found')
     this.name = 'ProjectRuntimeContextNotFoundError'
+  }
+}
+
+export class ProjectRuntimeContextInUseError extends Error {
+  readonly code = 'PROJECT_RUNTIME_CONTEXT_IN_USE'
+  readonly statusCode = 409
+
+  constructor() {
+    super('Project runtime context is required by a managed authorization projection')
+    this.name = 'ProjectRuntimeContextInUseError'
   }
 }
 
@@ -243,10 +254,20 @@ export function createProjectRuntimeContextService(dependencies: ProjectRuntimeC
     },
 
     async disableProjectRuntimeContext(input: DisableProjectRuntimeContextInput): Promise<ProjectRuntimeContext> {
+      const lockId = projectDataAccessLockId(input.projectId)
       const client = await dependencies.getClient()
       let transactionStarted = false
       let releaseError: Error | undefined
+      let projectionLocked = false
       try {
+        const lock = await client.query(
+          'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
+          [lockId],
+        )
+        if ((lock.rows[0] as { acquired?: boolean } | undefined)?.acquired !== true) {
+          throw new ProjectRuntimeContextError()
+        }
+        projectionLocked = true
         await client.query('BEGIN')
         transactionStarted = true
 
@@ -270,6 +291,22 @@ export function createProjectRuntimeContextService(dependencies: ProjectRuntimeC
         const current: ProjectRuntimeContext = currentRow
           ? normalizeRuntimeContext(currentRow)
           : { enabled: false as const }
+        const projection = await client.query(
+          `SELECT EXISTS (
+             SELECT 1 FROM druvia_data_access_managed_policies
+             WHERE project_id = $1 AND policy_version = 2
+               AND policy->'authenticated'->'selectConstraint' ? 'environmentColumn'
+             UNION ALL
+             SELECT 1 FROM druvia_data_access_projection_operations
+             WHERE project_id = $1
+               AND contract->>'contractVersion' = '2'
+               AND status IN ('applying', 'recovering', 'recovery_required')
+           ) AS required`,
+          [input.projectId],
+        )
+        if ((projection.rows[0] as { required?: boolean } | undefined)?.required !== false) {
+          throw new ProjectRuntimeContextInUseError()
+        }
         if (!current.enabled) {
           await client.query('COMMIT')
           return current
@@ -303,7 +340,18 @@ export function createProjectRuntimeContextService(dependencies: ProjectRuntimeC
         }
         throw releaseError ?? error
       } finally {
-        client.release(releaseError)
+        try {
+          if (projectionLocked) {
+            try {
+              await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [lockId])
+            } catch (error) {
+              releaseError = error instanceof Error ? error : new Error(String(error))
+              throw error
+            }
+          }
+        } finally {
+          client.release(releaseError)
+        }
       }
     },
   }

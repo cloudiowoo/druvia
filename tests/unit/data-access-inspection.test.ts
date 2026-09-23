@@ -235,6 +235,32 @@ describe('data access metadata inspection', () => {
     })
   })
 
+  it('recognizes only the fixed environment-scoped projection rule as managed', () => {
+    const projection = {
+      user_id: { _eq: 'X-Hasura-User-Id' },
+      can_read_basic: { _eq: true },
+      allowed_environments: { _has_key: 'X-Hasura-Druvia-Service-Environment' },
+    }
+    const inspect = (rule: Record<string, unknown>) => inspectTableDataAccessMetadata({
+      table: { schema: 'dru_test', name: 'orders' },
+      select_permissions: [{ role: roles.authenticated, permission: {
+        columns, filter: { _and: [
+          { owner_id: { _eq: 'X-Hasura-User-Id' } },
+          { session_access_projection: rule },
+        ] }, allow_aggregations: false,
+      } }],
+    }, roles, capabilities)
+    expect(inspect(projection).policy.authenticated.selectConstraint).toEqual({
+      type: 'authorization_projection', relationshipPath: ['session_access_projection'],
+      actorColumn: 'user_id', allowColumn: 'can_read_basic',
+      environmentColumn: 'allowed_environments',
+    })
+    expect(inspect(projection).authenticatedState).toBe('managed')
+    expect(inspect({ ...projection, allowed_environments: { _has_key: 'X-Hasura-User-Id' } })
+      .authenticatedState).toBe('custom')
+    expect(inspect({ ...projection, extra: { _eq: true } }).authenticatedState).toBe('custom')
+  })
+
   it('keeps non-canonical projection filters custom', () => {
     const result = inspectTableDataAccessMetadata({
       table: { schema: 'dru_test', name: 'orders' },

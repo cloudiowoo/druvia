@@ -1,11 +1,12 @@
 export interface AuthorizationProjectionContract {
-  contractVersion: 1
+  contractVersion: 1 | 2
   policyVersion: 2
   view: {
     name: string
     projectionMode: 'sparse_allow_list'
     key: string[]
-    columns: Record<string, 'uuid' | 'boolean' | 'text'>
+    columns: Record<string, 'uuid' | 'boolean' | 'text' | 'jsonb'>
+    environmentColumn?: string
     clientPermissions: { select: false; insert: false; update: false; delete: false }
   }
   relationships: Array<{

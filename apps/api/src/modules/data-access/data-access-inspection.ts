@@ -15,6 +15,7 @@ import type {
 
 const OPERATIONS: DataAccessOperation[] = ['select', 'insert', 'update', 'delete']
 const USER_ID_SESSION_VARIABLE = 'X-Hasura-User-Id'
+const SERVICE_ENVIRONMENT_SESSION_VARIABLE = 'X-Hasura-Druvia-Service-Environment'
 
 export interface HasuraPermissionEntry {
   role: string
@@ -265,12 +266,17 @@ function parseProjectionRule(value: unknown): {
   const [relationship, projectionRule] = relationshipEntries[0]
   if (!relationship || !isRecord(projectionRule)) return null
   const entries = Object.entries(projectionRule)
-  if (entries.length !== 2) return null
+  if (entries.length !== 2 && entries.length !== 3) return null
   const actor = entries.find(([, condition]) => (
     deepEqual(condition, { _eq: USER_ID_SESSION_VARIABLE })
   ))
   const allow = entries.find(([, condition]) => deepEqual(condition, { _eq: true }))
-  if (!actor || !allow || actor[0] === allow[0]) return null
+  const environment = entries.find(([, condition]) => (
+    deepEqual(condition, { _has_key: SERVICE_ENVIRONMENT_SESSION_VARIABLE })
+  ))
+  if (!actor || !allow || actor[0] === allow[0]
+    || (entries.length === 3 && (!environment
+      || environment[0] === actor[0] || environment[0] === allow[0]))) return null
   return {
     ownerColumn,
     constraint: {
@@ -278,6 +284,7 @@ function parseProjectionRule(value: unknown): {
       relationshipPath: [relationship],
       actorColumn: actor[0],
       allowColumn: allow[0],
+      ...(environment ? { environmentColumn: environment[0] } : {}),
     },
   }
 }

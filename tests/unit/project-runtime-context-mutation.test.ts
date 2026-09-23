@@ -117,6 +117,8 @@ describe('project runtime context mutations', () => {
 
   it('disables a configured context atomically and records its prior environment', async () => {
     clientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ acquired: true }] }
+      if (sql.includes('FROM druvia_data_access_managed_policies')) return { rows: [{ required: false }] }
       if (sql.includes('FROM druvia_projects') && sql.includes('FOR UPDATE')) {
         return { rows: [{ project_id: 'proj_global' }] }
       }
@@ -148,5 +150,60 @@ describe('project runtime context mutations', () => {
       },
       expect.objectContaining({ query: clientQuery }),
     )
+  })
+
+  it('refuses to disable an environment required by managed projection baselines', async () => {
+    clientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ acquired: true }] }
+      if (sql.includes('FROM druvia_projects')) return { rows: [{ project_id: 'proj_global' }] }
+      if (sql.includes('FROM druvia_project_runtime_contexts')) return { rows: [{
+        service_environment: 'sandbox', revision: '3', updated_at: new Date('2026-09-21T08:00:00.000Z'),
+      }] }
+      if (sql.includes('FROM druvia_data_access_managed_policies')) return { rows: [{ required: true }] }
+      return { rows: [] }
+    })
+    await expect(service.disableProjectRuntimeContext({
+      projectId: 'proj_global', actorUserId: 'usr_owner',
+    })).rejects.toThrow(/projection/i)
+    expect(clientQuery.mock.calls.map(([sql]) => sql)).not.toContainEqual(
+      expect.stringContaining('DELETE FROM druvia_project_runtime_contexts')
+    )
+    expect(logActivity).not.toHaveBeenCalled()
+    expect(clientQuery).toHaveBeenCalledWith(
+      expect.stringContaining('pg_advisory_unlock'), ['data-access-migration:proj_global']
+    )
+  })
+
+  it('refuses to disable while an environment-scoped projection write needs recovery', async () => {
+    clientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ acquired: true }] }
+      if (sql.includes('FROM druvia_projects')) return { rows: [{ project_id: 'proj_global' }] }
+      if (sql.includes('FROM druvia_project_runtime_contexts')) return { rows: [{
+        service_environment: 'sandbox', revision: '3', updated_at: new Date('2026-09-21T08:00:00.000Z'),
+      }] }
+      if (sql.includes('FROM druvia_data_access_managed_policies')) {
+        return { rows: [{ required: sql.includes('FROM druvia_data_access_projection_operations') }] }
+      }
+      return { rows: [] }
+    })
+    await expect(service.disableProjectRuntimeContext({
+      projectId: 'proj_global', actorUserId: 'usr_owner',
+    })).rejects.toThrow(/projection/i)
+    expect(clientQuery).not.toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM druvia_project_runtime_contexts'), expect.anything()
+    )
+    expect(clientQuery).toHaveBeenCalledWith(
+      expect.stringContaining('pg_advisory_unlock'), ['data-access-migration:proj_global']
+    )
+  })
+
+  it('does not race a projection apply when its project lock is held', async () => {
+    clientQuery.mockImplementation(async (sql: string) => sql.includes('pg_try_advisory_lock')
+      ? { rows: [{ acquired: false }] } : { rows: [] })
+    await expect(service.disableProjectRuntimeContext({
+      projectId: 'proj_global', actorUserId: 'usr_owner',
+    })).rejects.toThrow()
+    expect(clientQuery).not.toHaveBeenCalledWith('BEGIN')
+    expect(logActivity).not.toHaveBeenCalled()
   })
 })
