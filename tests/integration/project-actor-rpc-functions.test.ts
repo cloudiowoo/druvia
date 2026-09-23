@@ -1,14 +1,21 @@
 import { randomUUID } from 'node:crypto'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { Pool } from 'pg'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../../apps/api/src/middleware/ratelimit.js', () => ({
+  createRateLimiter: () => async () => undefined,
+  checkProjectGraphqlRateLimit: async () => undefined,
+}))
 
 import { config } from '../../apps/api/src/config/index.js'
 import { pool } from '../../apps/api/src/db/index.js'
+import { signProjectUserToken } from '../../apps/api/src/middleware/auth.js'
 import type { ProjectActorContext } from '../../apps/api/src/lib/project-actor.js'
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
 import { internalFunctionsGraphqlRoutes } from '../../apps/api/src/modules/functions/internal-graphql.routes.js'
 import { signInternalFunctionToken } from '../../apps/api/src/modules/functions/internal-token.js'
+import { openapiRoutes } from '../../apps/api/src/modules/openapi/openapi.routes.js'
 import { clearSignatureCache, createRpcService } from '../../apps/api/src/modules/rpc/rpc.service.js'
 import * as projectService from '../../apps/api/src/modules/project/project.service.js'
 import * as tenantService from '../../apps/api/src/modules/tenant/tenant.service.js'
@@ -167,6 +174,34 @@ describe.skipIf(!runIntegration)('Project Actor RPC and Functions against Postgr
        VALUES ($1, 'private'), ($2, 'private'), ($2, 'public')`,
       ['pusr_owner', 'pusr_other']
     )
+    await pool.query(`
+      CREATE FUNCTION "${projectA.schemaName}".require_graphql_project_session_context()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $$
+      DECLARE
+        session_variables jsonb := current_setting('hasura.user', true)::jsonb;
+      BEGIN
+        IF session_variables IS NULL
+          OR session_variables ->> 'x-hasura-druvia-actor-contract-version' <> '1'
+          OR session_variables ->> 'x-hasura-druvia-actor-type' <> 'project_user'
+          OR session_variables ->> 'x-hasura-druvia-actor-source' <> 'project_session'
+          OR session_variables ->> 'x-hasura-druvia-project-id' <> '${projectA.projectId.replaceAll("'", "''")}'
+          OR session_variables ->> 'x-hasura-druvia-project-user-id' <> 'pusr_owner'
+          OR session_variables ->> 'x-hasura-druvia-service-environment' <> 'sandbox'
+        THEN
+          RAISE EXCEPTION 'missing managed Project GraphQL actor context'
+            USING ERRCODE = 'P0001';
+        END IF;
+        RETURN NEW;
+      END;
+      $$
+    `)
+    await pool.query(`
+      CREATE TRIGGER require_graphql_project_session_context
+      BEFORE INSERT ON "${projectA.schemaName}"."${TABLE_NAME}"
+      FOR EACH ROW EXECUTE FUNCTION "${projectA.schemaName}".require_graphql_project_session_context()
+    `)
     await metadataRequest('pg_track_table', {
       source: 'default',
       table: { schema: projectA.schemaName, name: TABLE_NAME },
@@ -189,9 +224,19 @@ describe.skipIf(!runIntegration)('Project Actor RPC and Functions against Postgr
         filter: { label: { _eq: 'public' } },
       },
     })
+    await metadataRequest('pg_create_insert_permission', {
+      source: 'default',
+      table: { schema: projectA.schemaName, name: TABLE_NAME },
+      role: resolveDataScopeRole({ projectId: projectA.projectId, actor: 'authenticated' }),
+      permission: {
+        columns: ['owner_id', 'label'],
+        check: { owner_id: { _eq: 'X-Hasura-User-Id' } },
+      },
+    })
 
     app = Fastify()
     await app.register(internalFunctionsGraphqlRoutes, { prefix: '/api' })
+    await app.register(openapiRoutes, { prefix: '/api/v1' })
   }, 30_000)
 
   afterAll(async () => {
@@ -360,6 +405,80 @@ describe.skipIf(!runIntegration)('Project Actor RPC and Functions against Postgr
     expect(apiKeyResponse.json().data[rootField]).toEqual([
       { owner_id: 'pusr_other', label: 'public' },
     ])
+  })
+
+  it('makes the managed Project Session actor contract available to Function GraphQL triggers', async () => {
+    const rootField = `insert_${projectA.schemaName}_${TABLE_NAME}_one`
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/internal/functions/graphql',
+      headers: { 'x-druvia-internal-token': internalToken(projectUserActor(projectA.projectId)) },
+      payload: {
+        query: `mutation { ${rootField}(object: { owner_id: "pusr_owner", label: "function" }) { owner_id label } }`,
+      },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().errors).toBeUndefined()
+    expect(response.json().data[rootField]).toEqual({ owner_id: 'pusr_owner', label: 'function' })
+  })
+
+  it('makes the managed Project Session actor contract available to GraphQL triggers', async () => {
+    const accessToken = signProjectUserToken({
+      sub: 'pusr_owner',
+      projectId: projectA.projectId,
+      authType: 'project_user',
+      role: 'authenticated',
+      provider: 'integration',
+    }, 120)
+    const rootField = `insert_${projectA.schemaName}_${TABLE_NAME}_one`
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${projectA.projectId}/graphql`,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        'x-hasura-druvia-actor-source': 'forged-source',
+        'x-hasura-druvia-project-user-id': 'forged-user',
+        'x-hasura-druvia-service-environment': 'production',
+      },
+      payload: {
+        query: `mutation { ${rootField}(object: { owner_id: "pusr_owner", label: "graphql" }) { owner_id label } }`,
+      },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().errors).toBeUndefined()
+    expect(response.json().data[rootField]).toEqual({ owner_id: 'pusr_owner', label: 'graphql' })
+  })
+
+  it('rejects Project Session JWTs and forged actor headers through direct Hasura access', async () => {
+    const accessToken = signProjectUserToken({
+      sub: 'pusr_owner',
+      projectId: projectA.projectId,
+      authType: 'project_user',
+      role: 'authenticated',
+      provider: 'integration',
+    }, 120)
+
+    const response = await fetch(`${config.hasura.endpoint}/v1/graphql`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        'content-type': 'application/json',
+        'x-hasura-druvia-actor-contract-version': '1',
+        'x-hasura-druvia-actor-type': 'project_user',
+        'x-hasura-druvia-actor-source': 'project_session',
+        'x-hasura-druvia-project-id': projectA.projectId,
+        'x-hasura-druvia-project-user-id': 'pusr_owner',
+      },
+      body: JSON.stringify({ query: 'query { __typename }' }),
+    })
+
+    expect(response.status).toBe(200)
+    const body = await response.json() as {
+      errors?: Array<{ extensions?: { code?: string } }>
+    }
+    expect(body.errors?.[0]?.extensions?.code).toMatch(/^(invalid-jwt|jwt-invalid-claims)$/)
   })
 
   it('rejects Platform and cross-project actors before Hasura execution', async () => {

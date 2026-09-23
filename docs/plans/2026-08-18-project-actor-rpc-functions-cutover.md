@@ -4,6 +4,10 @@ Date: 2026-08-18
 
 Status: Implemented
 
+> **2026-09-22 security amendment:** The legacy host-API `docker-compose.yml` and `docker-compose.dev.yml` no longer
+> start the Deno worker. They are infrastructure-only modes and do not support Project Functions; the historical
+> references below to loopback Worker publication are superseded by the Project GraphQL Actor Contract network boundary.
+
 > **Execution rule:** Implement this document inline in the main checkout with TDD. Complete the slice tasks in order without per-task review checkpoints. Review the whole slice before commit. Do not use worktrees or subagents for this slice.
 
 **Goal:** Establish one auditable project actor contract for application execution paths, remove the SDK platform-session fallback from RPC and Functions, propagate caller identity into PostgreSQL RPC and the Deno runtime, and enforce Project Data Access permissions for `druvia.graphql()`.

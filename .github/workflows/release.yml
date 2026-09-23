@@ -50,6 +50,8 @@ jobs:
         env:
           HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:integration-password@postgres:5432/druvia
           HASURA_GRAPHQL_ADMIN_SECRET: integration-hasura-secret
+          HASURA_GRAPHQL_JWT_SECRET: '{"type":"HS256","key":"integration-test-secret-at-least-32-characters","issuer":"druvia","audience":"druvia-hasura"}'
+          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: anonymous
           HASURA_GRAPHQL_ENABLE_CONSOLE: 'false'
         ports:
           - 8080:8080
@@ -87,6 +89,20 @@ jobs:
           DB_NAME: druvia
           POSTGRES_PASSWORD: integration-password
         run: pnpm migrate up
+
+      - name: Verify Project GraphQL actor contract against PostgreSQL and Hasura
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_USER: postgres
+          DB_NAME: druvia
+          POSTGRES_PASSWORD: integration-password
+          HASURA_ENDPOINT: http://127.0.0.1:8080
+          HASURA_ADMIN_SECRET: integration-hasura-secret
+          DRUVIA_INTEGRATION_HASURA_ADMIN_SECRET: integration-hasura-secret
+          JWT_SECRET: integration-test-secret-at-least-32-characters
+          DRUVIA_RUN_PROJECT_ACTOR_INTEGRATION: '1'
+        run: pnpm vitest run tests/integration/project-actor-rpc-functions.test.ts
 
       - name: Verify managed-policy reconciliation against PostgreSQL and Hasura
         env:

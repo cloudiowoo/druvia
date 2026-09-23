@@ -260,6 +260,35 @@
 - 手工 OTA 回滚必须在开始持久状态转换前选定并持久化真实备份 operation ID；更新成功状态通常没有原操作 ID，进程重启后不得将当前新回滚 ID 误当作旧备份 ID。
 - updater 的可回滚备份身份由最近一次成功 apply 的独立 `{operationId, targetVersion}` 状态证明；普通检查/下载/重启失败不能覆盖或冒充此证据。没有与当前版本匹配的备份证据时拒绝回滚，不按备份目录 mtime 猜测。失败 apply 的恢复仅使用持久 `files_switched` 阶段或明确的 rollback recovery 标记；并发准入在首次 await 前占用进程内锁。成功回滚后从备份 env 恢复当前版本并清除已撤销版本的备份引用。
 
+## Project GraphQL Actor Contract
+
+- Project GraphQL Actor Contract v1 与 `ProjectActorContext` 使用同一版本和 actor 语义，但通过 Hasura session
+  variables 传递，而不是试图在 API 数据库连接上设置 `druvia.actor`。Hasura 的 GraphQL 事务运行在其自身的
+  连接池中；项目 schema 的 trigger、`SECURITY DEFINER` 函数和权限辅助函数必须从
+  `current_setting('hasura.user', true)::jsonb` 读取合同。
+- 仅受管项目 GraphQL 代理和已验证的 Functions internal GraphQL 可生成该合同。固定字段为
+  `x-hasura-druvia-actor-contract-version=1`、`x-hasura-druvia-actor-type`、
+  `x-hasura-druvia-actor-source`、`x-hasura-druvia-project-id`，以及只对 `project_user` 生成的
+  `x-hasura-druvia-project-user-id`。Project Session 的 type/source 固定为
+  `project_user/project_session`；项目 API Key 为 `apikey/project_api_key`，不得得到 Project User ID。
+- 项目 GraphQL 代理在验证身份和项目范围后覆盖客户端输入；公开 nginx 的 `/v1/graphql` 与
+  `/v1/graphql/ws` 必须删除所有合同 Header。Data Access verifier、Platform User、Trusted Backend Key 和
+  客户端均不能伪造 `project_session`。prod/release Compose 不得发布 Hasura host port；本地暴露的 Hasura
+  端口只用于开发，不是受管 Project GraphQL 的信任边界。Project Session JWT 直连 Hasura 时必须被拒绝：密钥
+  不同为 `invalid-jwt`，密钥相同时仍因缺少 Hasura JWT claims 返回 `jwt-invalid-claims`。
+- 项目 Function Deno worker 运行在独立的 `druvia-functions-network`，不与 Hasura 共享网络；只有 API 同时连接
+  Functions 网络和 `druvia-network`。functions-capable local/prod/release 也不得发布 Hasura host port，避免 Docker
+  Desktop 的 host gateway 绕过隔离。Function 的原始 `fetch` 因而不能解析或直连 Hasura，访问应用数据必须经过 API
+  内部受管路径及其 server-derived actor 合同；本地浏览器 GraphQL/Realtime 必须经 `with-nginx`。
+- 遗留 host-API `docker-compose.yml` 与 `docker-compose.dev.yml` 不运行 Deno worker，Hasura 仅绑定宿主 loopback。
+  它们不支持 Project Functions；需要 Function runtime 必须使用已隔离的 local/prod/release Compose，不能用 host
+  gateway 作为安全例外。
+- 该合同不改变现有 `x-hasura-user-id`、`x-hasura-project-id`、`x-hasura-actor-type` 及 scoped role 的
+  Data Access permission 语义。compatibility 项目保持原有 role 行为，但可获得同样的服务端 actor 合同，供
+  项目数据库安全逻辑消费。项目代码必须对缺少、非法或不匹配的全部字段失败关闭。
+- Project GraphQL Actor Contract 不能仅由 mock 路由单测证明。release 的 `data-access-integration` job 必须以与 API
+  相同的 Project Session JWT verifier 配置 Hasura，并在镜像构建前运行真实 PostgreSQL/Hasura contract 集成测试。
+
 ## 平台项目成员与管理授权
 
 - 当前产品仍是单租户多项目。平台角色 `admin` 只表示可登录控制台，不授予全局、workspace 或项目管理能力。

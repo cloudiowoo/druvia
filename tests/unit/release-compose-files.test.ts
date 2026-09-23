@@ -193,7 +193,7 @@ describe('release-mode compose and Dockerfiles', () => {
     }
   });
 
-  it('strips client-controlled runtime environment headers before direct Hasura access', () => {
+  it('strips client-controlled runtime and actor contract headers before direct Hasura access', () => {
     for (const path of [
       'docker/nginx/conf.d/30-druvia-prod.conf',
       'docker/nginx/conf.d/40-druvia-uat.conf',
@@ -202,8 +202,56 @@ describe('release-mode compose and Dockerfiles', () => {
       const nginx = read(path)
       expect(nginx.match(/location = \/v1\/graphql(?:\/ws)? \{[\s\S]*?\n    \}/g)).toHaveLength(2)
       expect(nginx.match(/proxy_set_header X-Hasura-Druvia-Service-Environment "";/g)).toHaveLength(2)
+      expect(nginx.match(/proxy_set_header X-Hasura-Druvia-Actor-Contract-Version "";/g)).toHaveLength(2)
+      expect(nginx.match(/proxy_set_header X-Hasura-Druvia-Actor-Type "";/g)).toHaveLength(2)
+      expect(nginx.match(/proxy_set_header X-Hasura-Druvia-Actor-Source "";/g)).toHaveLength(2)
+      expect(nginx.match(/proxy_set_header X-Hasura-Druvia-Project-Id "";/g)).toHaveLength(2)
+      expect(nginx.match(/proxy_set_header X-Hasura-Druvia-Project-User-Id "";/g)).toHaveLength(2)
     }
   });
+
+  it('keeps Hasura network-internal in production and release deployments', () => {
+    for (const path of [
+      'docker/docker-compose.prod.yml',
+      'docker/docker-compose.release.yml',
+    ]) {
+      const compose = read(path)
+      const hasuraBlock = compose.slice(compose.indexOf('  hasura:'), compose.indexOf('\n  api:'))
+      expect(hasuraBlock).not.toContain('ports:')
+    }
+
+    expect(read('docker/.env.prod.example')).not.toContain('HASURA_PORT=')
+  });
+
+  it('isolates untrusted Functions from Hasura while preserving their managed API path', () => {
+    for (const path of [
+      'docker/docker-compose.local.yml',
+      'docker/docker-compose.prod.yml',
+      'docker/docker-compose.release.yml',
+    ]) {
+      const compose = read(path)
+      const hasuraBlock = compose.slice(compose.indexOf('  hasura:'), compose.indexOf('\n  api:'))
+      const apiBlock = compose.slice(compose.indexOf('  api:'), compose.indexOf('\n  admin:'))
+      const denoStart = compose.indexOf('  deno:')
+      const updaterIndex = compose.indexOf('\n  updater:', denoStart)
+      const denoEnd = updaterIndex === -1
+        ? compose.indexOf('\n  loki:', denoStart)
+        : updaterIndex
+      const denoBlock = compose.slice(denoStart, denoEnd)
+
+      expect(hasuraBlock).toContain('- druvia-network')
+      expect(hasuraBlock).not.toContain('druvia-functions-network')
+      if (path.endsWith('docker-compose.local.yml')) {
+        expect(hasuraBlock).not.toContain('ports:')
+      }
+      expect(apiBlock).toContain('- druvia-network')
+      expect(apiBlock).toContain('- druvia-functions-network')
+      expect(denoBlock).toContain('DRUVIA_API_URL: http://api:3001')
+      expect(denoBlock).toContain('- druvia-functions-network')
+      expect(denoBlock).not.toContain('- druvia-network')
+      expect(compose).toContain('  druvia-functions-network:\n    driver: bridge')
+    }
+  })
 
   it('mounts migrations into the local API so the packaged CLI can run', () => {
     const compose = read('docker/docker-compose.local.yml');

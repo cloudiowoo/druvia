@@ -13,11 +13,12 @@ import {
   isProjectDataActor,
   resolveProjectDataExecutionContext,
 } from '../data-access/project-data-actor.js';
+import {
+  resolveScopedProjectActor,
+  toProjectActorHasuraSessionVariables,
+} from '../../lib/project-actor.js';
 import type { ProjectDataAccessMode } from '@druvia/shared';
 import YAML from 'yaml';
-
-const HASURA_URL = config.hasura.endpoint;
-const HASURA_ADMIN_SECRET = config.hasura.adminSecret;
 
 // Rate limiter for OpenAPI generation (10 requests per minute)
 const openapiRateLimiter = createRateLimiter({
@@ -145,18 +146,22 @@ export async function openapiRoutes(fastify: FastifyInstance) {
         runtimeMode: project.dataAccessMode,
         actor,
       });
+      const actorSessionVariables = toProjectActorHasuraSessionVariables(
+        resolveScopedProjectActor(actor, request.params.projectId),
+      );
 
       try {
         const hasuraHeaders: Record<string, string> = {
           'Content-Type': 'application/json',
-          'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
+          'x-hasura-admin-secret': config.hasura.adminSecret,
           'x-hasura-default-schema': schemaName,
           'x-hasura-role': executionContext.role,
           ...executionContext.sessionVariables,
+          ...actorSessionVariables,
           ...project.runtimeSessionVariables,
         };
 
-        const response = await fetch(`${HASURA_URL}/v1/graphql`, {
+        const response = await fetch(`${config.hasura.endpoint}/v1/graphql`, {
           method: 'POST',
           headers: hasuraHeaders,
           body: JSON.stringify({ query, variables, operationName }),

@@ -184,11 +184,17 @@ describe('OpenAPI GraphQL proxy route', () => {
     }
   )
 
-  it.each([projectUser, apiKey])(
-    'preserves compatibility headers for $kind',
-    async (actor) => {
+  it.each([
+    [projectUser, 'project_user', 'project_session', 'pusr_123'],
+    [apiKey, 'apikey', 'project_api_key', null],
+  ] as const)(
+    'adds the v1 actor contract to compatibility $kind requests',
+    async (actor, actorType, actorSource, projectUserId) => {
       authState.user = actor
-      const response = await injectGraphql()
+      const response = await injectGraphql({
+        'x-hasura-druvia-actor-source': 'forged-source',
+        'x-hasura-druvia-project-user-id': 'forged-user',
+      })
 
       expect(response.statusCode).toBe(200)
       const headers = proxiedHeaders()
@@ -196,6 +202,11 @@ describe('OpenAPI GraphQL proxy route', () => {
       expect(headers.get('x-hasura-user-id')).toBeNull()
       expect(headers.get('x-hasura-project-id')).toBeNull()
       expect(headers.get('x-hasura-actor-type')).toBeNull()
+      expect(headers.get('x-hasura-druvia-actor-contract-version')).toBe('1')
+      expect(headers.get('x-hasura-druvia-actor-type')).toBe(actorType)
+      expect(headers.get('x-hasura-druvia-actor-source')).toBe(actorSource)
+      expect(headers.get('x-hasura-druvia-project-id')).toBe('proj_123')
+      expect(headers.get('x-hasura-druvia-project-user-id')).toBe(projectUserId)
     }
   )
 
@@ -222,6 +233,11 @@ describe('OpenAPI GraphQL proxy route', () => {
     expect(headers.get('x-hasura-user-id')).toBe('pusr_123')
     expect(headers.get('x-hasura-project-id')).toBe('proj_123')
     expect(headers.get('x-hasura-actor-type')).toBe('project_user')
+    expect(headers.get('x-hasura-druvia-actor-contract-version')).toBe('1')
+    expect(headers.get('x-hasura-druvia-actor-type')).toBe('project_user')
+    expect(headers.get('x-hasura-druvia-actor-source')).toBe('project_session')
+    expect(headers.get('x-hasura-druvia-project-id')).toBe('proj_123')
+    expect(headers.get('x-hasura-druvia-project-user-id')).toBe('pusr_123')
   })
 
   it('injects the persisted runtime environment and ignores a caller supplied value', async () => {
@@ -290,6 +306,11 @@ describe('OpenAPI GraphQL proxy route', () => {
     expect(headers.get('x-hasura-user-id')).toBeNull()
     expect(headers.get('x-hasura-project-id')).toBe('proj_123')
     expect(headers.get('x-hasura-actor-type')).toBe('apikey')
+    expect(headers.get('x-hasura-druvia-actor-contract-version')).toBe('1')
+    expect(headers.get('x-hasura-druvia-actor-type')).toBe('apikey')
+    expect(headers.get('x-hasura-druvia-actor-source')).toBe('project_api_key')
+    expect(headers.get('x-hasura-druvia-project-id')).toBe('proj_123')
+    expect(headers.get('x-hasura-druvia-project-user-id')).toBeNull()
   })
 
   it('loads the project once and forwards its rate-limit settings', async () => {

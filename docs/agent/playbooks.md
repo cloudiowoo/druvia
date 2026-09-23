@@ -1,5 +1,22 @@
 # Druvia Playbooks
 
+## 本地 Functions 与 Hasura 边界
+
+`docker-compose.local.yml` 是可运行 Project Functions 的本地 Compose。该模式不发布 Hasura 宿主端口，避免 Deno
+Function 通过 Docker Desktop host gateway 伪造 Hasura actor contract。浏览器 GraphQL/Realtime 必须通过本地 Nginx：
+
+```bash
+cd /Users/cloudio/Developer/nodejs/Druvia/docker
+docker compose --env-file .env \
+  -f docker-compose.local.yml \
+  -f docker-compose.local.dual-db.yml \
+  --profile with-nginx up -d
+```
+
+启用单库 PostGIS 时，用 `docker-compose.postgis.yml` 和 `docker-compose.local.postgis.yml` 替换上述 dual-db overlay。
+需要诊断 Hasura 时使用 `docker exec druvia-hasura`，不要重新发布 `8080`。宿主机运行 API 的遗留
+`docker-compose.yml` / `docker-compose.dev.yml` 不启动 Deno，不能用于 Project Functions。
+
 常用操作手册。用于新会话快速恢复高频验证和排查动作。
 
 ## 运行常用验证

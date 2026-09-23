@@ -413,6 +413,19 @@ describe('release workflow', () => {
     expect(workflow).toContain('DRUVIA_MIN_UPDATER_VERSION: 0.2.0');
   });
 
+  it('requires real Project GraphQL actor propagation before release', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+    const migration = workflow.indexOf('name: Apply database migrations');
+    const actorContract = workflow.indexOf('name: Verify Project GraphQL actor contract against PostgreSQL and Hasura');
+    const releaseJob = workflow.indexOf('\n  release:');
+
+    expect(workflow).toContain('HASURA_GRAPHQL_JWT_SECRET: \'{"type":"HS256","key":"integration-test-secret-at-least-32-characters","issuer":"druvia","audience":"druvia-hasura"}\'');
+    expect(actorContract).toBeGreaterThan(migration);
+    expect(actorContract).toBeLessThan(releaseJob);
+    expect(workflow).toContain("DRUVIA_RUN_PROJECT_ACTOR_INTEGRATION: '1'");
+    expect(workflow).toContain('tests/integration/project-actor-rpc-functions.test.ts');
+  });
+
   it('gates image publication on the Project Actor, Functions Worker, rollback, and SDK cutover', () => {
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
     const actorGate = workflow.indexOf('name: Verify Project Actor RPC and Functions cutover');

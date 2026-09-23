@@ -6,6 +6,11 @@ import type {
 } from '../middleware/auth.js';
 
 export const PROJECT_ACTOR_CONTRACT_VERSION = 1 as const;
+export const HASURA_PROJECT_ACTOR_CONTRACT_VERSION_HEADER = 'x-hasura-druvia-actor-contract-version';
+export const HASURA_PROJECT_ACTOR_TYPE_HEADER = 'x-hasura-druvia-actor-type';
+export const HASURA_PROJECT_ACTOR_SOURCE_HEADER = 'x-hasura-druvia-actor-source';
+export const HASURA_PROJECT_ACTOR_PROJECT_ID_HEADER = 'x-hasura-druvia-project-id';
+export const HASURA_PROJECT_ACTOR_PROJECT_USER_ID_HEADER = 'x-hasura-druvia-project-user-id';
 
 export type ProjectActorType = 'platform_user' | 'project_user' | 'apikey';
 export type ProjectActorSource = 'platform_session' | 'project_session' | 'project_api_key';
@@ -302,6 +307,20 @@ export function toProjectActorHeaders(actor: ProjectActorContext): Record<string
           'x-druvia-api-key-id': String(actor.apiKeyId),
           'x-druvia-api-key-prefix': actor.apiKeyPrefix,
         }
+      : {}),
+  };
+}
+
+export function toProjectActorHasuraSessionVariables(
+  actor: Extract<ProjectActorContext, { actorType: 'project_user' | 'apikey' }>,
+): Record<string, string> {
+  return {
+    [HASURA_PROJECT_ACTOR_CONTRACT_VERSION_HEADER]: String(PROJECT_ACTOR_CONTRACT_VERSION),
+    [HASURA_PROJECT_ACTOR_TYPE_HEADER]: actor.actorType,
+    [HASURA_PROJECT_ACTOR_SOURCE_HEADER]: actor.source,
+    [HASURA_PROJECT_ACTOR_PROJECT_ID_HEADER]: actor.projectId,
+    ...(actor.actorType === 'project_user'
+      ? { [HASURA_PROJECT_ACTOR_PROJECT_USER_ID_HEADER]: actor.projectUserId }
       : {}),
   };
 }

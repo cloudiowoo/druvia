@@ -1,9 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const composeFiles = [
-  'docker/docker-compose.yml',
-  'docker/docker-compose.dev.yml',
+const functionsComposeFiles = [
   'docker/docker-compose.local.yml',
   'docker/docker-compose.prod.yml',
   'docker/docker-compose.release.yml',
@@ -18,7 +16,7 @@ function serviceBlock(source: string, service: string): string {
   return source.slice(match.index, end)
 }
 
-describe.each(composeFiles)('%s Worker security contract', (file) => {
+describe.each(functionsComposeFiles)('%s Worker security contract', (file) => {
   const source = readFileSync(file, 'utf8')
   const deno = serviceBlock(source, 'deno')
 
@@ -34,12 +32,21 @@ describe.each(composeFiles)('%s Worker security contract', (file) => {
   })
 
   it('uses deployment-appropriate host exposure', () => {
-    if (file.endsWith('docker-compose.yml') || file.endsWith('docker-compose.dev.yml')) {
-      expect(deno).toContain('127.0.0.1:${DENO_PORT:-7133}:7133')
-      return
-    }
     expect(deno).not.toContain('ports:')
     expect(deno).not.toContain(':7133:7133')
+  })
+})
+
+describe.each([
+  'docker/docker-compose.yml',
+  'docker/docker-compose.dev.yml',
+])('%s legacy host-API infrastructure contract', (file) => {
+  const source = readFileSync(file, 'utf8')
+
+  it('does not run untrusted Project Functions beside a host-published Hasura service', () => {
+    expect(source).not.toMatch(/^  deno:$/m)
+    expect(source).not.toContain('deno-cache:')
+    expect(source).toContain('127.0.0.1:${HASURA_PORT:-8080}:8080')
   })
 })
 

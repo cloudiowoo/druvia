@@ -7,6 +7,8 @@
 - `docker-compose.local.yml`: 本地源码开发依赖与服务
 - `docker-compose.prod.yml`: 传统生产构建/部署
 - `docker-compose.release.yml`: 版本镜像部署和 OTA
+- `docker-compose.yml` 与 `docker-compose.dev.yml`: 遗留 host-API 基础设施，仅运行 PostgreSQL、Redis 与 Hasura；
+  不提供 Project Functions，需运行 Functions 时迁移到 `docker-compose.local.yml`。
 - `registry/docker-compose.yml`: 独立 Registry 部署包，必须可在另一台服务器单独运行
 
 ## 工作规则
@@ -21,8 +23,13 @@
 - local/prod/release 的单库 PostGIS 部署只通过 `docker-compose.postgis.yml` 叠加到主 Compose；默认部署继续使用 `postgres:17-alpine`。本地若要将已有双库 PostGIS 数据以单库方式运行，再在最后叠加 `docker-compose.local.postgis.yml`，它只把逻辑 `postgres` 的数据目录改为 `postgres_postgis_data`。该本地 overlay 不得与 `docker-compose.local.dual-db.yml` 同时使用，也不得用于 prod/release。数据库镜像和扩展生命周期由运维人工管理，不纳入普通 OTA。PostGIS 仍启用或继续使用原数据目录期间，人工 `up`、恢复和数据库操作必须携带所需 override；只有按 playbook 完成无依赖卸载，或把启用前备份恢复到新的普通 PostgreSQL 17 数据目录后，才能停止使用 override。已存在 PostGIS 依赖对象时，不得将同一数据目录直接切回普通 PostgreSQL 镜像，也不得用 `DROP EXTENSION ... CASCADE` 伪装回退。
 - `docker-compose.local.dual-db.yml` 仅用于本地并行验证：普通 PostgreSQL 始终使用默认服务名 `postgres` 和 `postgres_data`，PostGIS 使用 `postgres-postgis` 和 `postgres_postgis_data`。两套目录是独立数据库，不自动同步，也不得直接复制运行中的物理数据目录；生产、release 和 OTA 仍保持单 PostgreSQL 实例。
 - API 与 Deno Worker 必须共享同一个至少 32 UTF-8 字节的 `DENO_WORKER_SECRET`；生产推荐与 `FUNCTIONS_INTERNAL_TOKEN_SECRET`、`JWT_SECRET` 分离。Worker 不能接收 Function token 签名密钥。
-- `local/prod/release` 不发布 Worker 的宿主端口；仅宿主机运行 API 的基础/dev compose 可绑定 `127.0.0.1:${DENO_PORT:-7133}:7133`。所有模式必须保留 Worker `/health` healthcheck。
+- `local/prod/release` 不发布 Worker 的宿主端口且必须保留 Worker `/health` healthcheck。遗留 host-API
+  Compose 不启动 Deno，避免项目 Function 经宿主 Hasura 发布端口绕过受管 actor 合同。
 - Function 子 Worker 必须保持 `env: false`；项目 Function secrets 只能通过每次调用独立的 `Deno.env` shim 提供，不能暴露容器环境。
+- `deno` 只可加入 `druvia-functions-network`，不得与 Hasura 共享网络；`api` 是唯一同时加入
+  `druvia-network` 与 `druvia-functions-network` 的桥接服务。项目 Function 的原始 `fetch` 只能通过 API 的
+  受管内部路径访问应用数据，不能解析或直连 `hasura`。functions-capable local 也不得发布 Hasura host port；浏览器
+  GraphQL/Realtime 必须经 `with-nginx` 的公开代理。local/prod/release 的 Compose 变更必须保持此隔离。
 - Worker 请求鉴权协议升级时，新 API 必须先健康再替换 Worker；自动与手动回滚都先恢复旧 Worker，再恢复完整服务集。
 
 ## Subagent Triggers

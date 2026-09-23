@@ -53,7 +53,7 @@ describe.each(composeFiles)('%s Realtime configuration', (file) => {
       expect(api).not.toContain('API_BASE_URL:-http://localhost:3001')
     } else {
       expect(api).toContain(
-        'HASURA_PUBLIC_URL: ${HASURA_PUBLIC_URL:-http://localhost:${HASURA_PORT:-8080}}'
+        'HASURA_PUBLIC_URL: ${HASURA_PUBLIC_URL:-http://localhost:${HTTP_PORT:-80}}'
       )
     }
   })

@@ -140,6 +140,11 @@ describe('Functions Internal GraphQL Route', () => {
         'x-hasura-user-id': 'pu_123',
         'x-hasura-project-id': 'proj_123',
         'x-hasura-actor-type': 'project_user',
+        'x-hasura-druvia-actor-contract-version': '1',
+        'x-hasura-druvia-actor-type': 'project_user',
+        'x-hasura-druvia-actor-source': 'project_session',
+        'x-hasura-druvia-project-id': 'proj_123',
+        'x-hasura-druvia-project-user-id': 'pu_123',
         'x-hasura-default-schema': 'dru_proj_123',
       })
       expect(JSON.parse(init!.body as string)).toEqual({
@@ -231,8 +236,13 @@ describe('Functions Internal GraphQL Route', () => {
         'x-hasura-role': resolveDataScopeRole({ projectId: 'proj_123', actor: 'anonymous' }),
         'x-hasura-project-id': 'proj_123',
         'x-hasura-actor-type': 'apikey',
+        'x-hasura-druvia-actor-contract-version': '1',
+        'x-hasura-druvia-actor-type': 'apikey',
+        'x-hasura-druvia-actor-source': 'project_api_key',
+        'x-hasura-druvia-project-id': 'proj_123',
       })
       expect(init!.headers).not.toHaveProperty('x-hasura-user-id')
+      expect(init!.headers).not.toHaveProperty('x-hasura-druvia-project-user-id')
     } finally {
       await app.close()
     }

@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, '../..')
 const composeFiles = [
   { path: 'docker/docker-compose.yml', hasApi: false },
   { path: 'docker/docker-compose.dev.yml', hasApi: false },
-  { path: 'docker/docker-compose.local.yml', hasApi: true, publicUrl: 'http://localhost:8080' },
+  { path: 'docker/docker-compose.local.yml', hasApi: true, publicUrl: 'http://localhost:80' },
   { path: 'docker/docker-compose.prod.yml', hasApi: true, publicUrl: 'https://verify.druvia.example' },
   { path: 'docker/docker-compose.release.yml', hasApi: true, publicUrl: 'https://verify.druvia.example' },
 ]
@@ -150,6 +150,24 @@ try {
     true
   )
   serviceBlock(localRelease.stdout, 'local-nginx')
+
+  const localWithNginx = render(
+    'docker/docker-compose.local.yml',
+    emptyEnvFile,
+    syntheticEnv(),
+    ['with-nginx']
+  )
+  if (localWithNginx.status !== 0) {
+    fail(`local with-nginx render exited ${localWithNginx.status}: ${localWithNginx.stderr.trim()}`)
+  }
+  verifyRendered(
+    'docker/docker-compose.local.yml (with-nginx)',
+    localWithNginx.stdout,
+    'hasura_realtime_secret_1234567890ab',
+    'http://localhost:80',
+    true
+  )
+  serviceBlock(localWithNginx.stdout, 'nginx')
 
   console.log('Realtime Compose configuration verified for base, dev, local, prod and release modes.')
 } finally {

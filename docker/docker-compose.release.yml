@@ -61,8 +61,6 @@ services:
       HASURA_GRAPHQL_CORS_DOMAIN: ${CORS_ORIGINS:-*}
       HASURA_GRAPHQL_ENABLE_TELEMETRY: "false"
       ACTION_BASE_URL: http://api:3001
-    ports:
-      - "${HASURA_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 30s
@@ -134,6 +132,7 @@ services:
       start_period: 10s
     networks:
       - druvia-network
+      - druvia-functions-network
 
   admin:
     image: ${DRUVIA_ADMIN_IMAGE}
@@ -186,7 +185,7 @@ services:
         reservations:
           memory: 128M
     networks:
-      - druvia-network
+      - druvia-functions-network
 
   updater:
     image: ${DRUVIA_UPDATER_IMAGE}
@@ -359,6 +358,8 @@ volumes:
 
 networks:
   druvia-network:
+    driver: bridge
+  druvia-functions-network:
     driver: bridge
 
 # All data stored in host directories or named volumes under ./docker/

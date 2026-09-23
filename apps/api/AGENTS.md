@@ -40,6 +40,8 @@
   - `platform_user` 必须返回 `PROJECT_ACTOR_REQUIRED`，不能恢复为 Hasura admin passthrough
   - 客户端 `x-hasura-*` 头和角色声明不能进入执行上下文
   - Hasura role/session variables 必须由服务端根据项目 `data_access_mode` 和已认证 actor 生成
+  - Project GraphQL Actor Contract v1 必须经 `resolveScopedProjectActor()` 生成 `x-hasura-druvia-actor-*`，包括固定 version、type/source、project ID，以及仅 Project User 才有的 project user ID；GraphQL trigger/`SECURITY DEFINER` 从 `current_setting('hasura.user', true)::jsonb` 读取，不能期待 API RPC 的 `druvia.actor` GUC
+  - Data Access verifier、Platform User 或客户端 Header 不得伪造 `project_session` source；公开 nginx GraphQL/WS 路径必须清除全部合同 Header
   - `compatibility` 仅保留旧 `user` role 行为；`explicit` 才使用项目 scoped role
 - Project Runtime Context 依赖 migration `029`：它为早期已应用 `028` 但缺少 runtime context fence 表的数据库补齐表结构并回填既有配置；无记录保持兼容行为。RPC 必须在业务 SQL 前以同一 client/transaction 的 `set_config(..., true)` 写入 `druvia.service_environment`，GraphQL、Functions internal GraphQL、Realtime token 与 Data Access verifier 只可使用服务端读取的 `x-hasura-druvia-service-environment`。客户端同名 Header、Project Session、API Key 与 Trusted Backend Key 均不得设置或覆盖；配置损坏或读取失败统一以脱敏 `503` 失败关闭。
 - Realtime token 路由 `/api/v1/projects/:projectId/realtime/token` 采用相同项目 actor 边界：

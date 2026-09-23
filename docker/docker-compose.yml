@@ -1,5 +1,6 @@
-# Production infrastructure services
-# API and Admin run via pm2, not Docker
+# Legacy host-API infrastructure services.
+# API and Admin run via pm2, not Docker. Project Functions require the isolated
+# local/prod/release Compose modes and are intentionally unavailable here.
 
 services:
   postgres:
@@ -57,7 +58,7 @@ services:
       HASURA_GRAPHQL_ENABLE_TELEMETRY: "false"
       ACTION_BASE_URL: ${ACTION_BASE_URL:-http://host.docker.internal:3001}
     ports:
-      - "${HASURA_PORT:-8080}:8080"
+      - "127.0.0.1:${HASURA_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 30s
@@ -68,42 +69,6 @@ services:
     networks:
       - druvia-network
 
-  deno:
-    image: denoland/deno:alpine-2.0.6
-    container_name: druvia-deno
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./deno-worker:/app:ro
-      - deno-cache:/deno-dir
-    environment:
-      DENO_DIR: /deno-dir
-      DRUVIA_API_URL: ${DRUVIA_API_URL:-http://host.docker.internal:3001}
-      DENO_WORKER_SECRET: ${DENO_WORKER_SECRET:-${FUNCTIONS_INTERNAL_TOKEN_SECRET:-${JWT_SECRET}}}
-    working_dir: /app
-    command: ["run", "--allow-net", "--allow-env", "--allow-read=/tmp,/app", "--allow-write=/tmp", "--unstable-worker-options", "main.ts"]
-    ports:
-      - "127.0.0.1:${DENO_PORT:-7133}:7133"
-    healthcheck:
-      test: ["CMD", "deno", "eval", "const r = await fetch('http://127.0.0.1:7133/health'); if (!r.ok) Deno.exit(1)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 5s
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 512M
-        reservations:
-          memory: 128M
-    networks:
-      - druvia-network
-  
   loki:
     image: grafana/loki:2.9.8
     container_name: druvia-loki
@@ -163,6 +128,3 @@ services:
 networks:
   druvia-network:
     driver: bridge
-
-volumes:
-  deno-cache:

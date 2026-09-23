@@ -6,7 +6,11 @@ import {
   resolveProjectDataExecutionContext,
 } from '../data-access/project-data-actor.js';
 import type { ApiKeyIdentity, ProjectJwtUser } from '../../middleware/auth.js';
-import type { ProjectActorContext } from '../../lib/project-actor.js';
+import {
+  resolveScopedProjectActor,
+  toProjectActorHasuraSessionVariables,
+  type ProjectActorContext,
+} from '../../lib/project-actor.js';
 import {
   ProjectRuntimeBlockedError,
   assertProjectRuntimeAvailable,
@@ -155,6 +159,9 @@ export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
       runtimeMode: projectResult.rows[0].data_access_mode as string | null,
       actor: projectActor,
     });
+    const actorSessionVariables = toProjectActorHasuraSessionVariables(
+      resolveScopedProjectActor(projectActor, tokenPayload.projectId),
+    );
     const forbiddenProjectSchemaResult = await pool.query(
       'SELECT schema_name FROM druvia_projects WHERE project_id <> $1',
       [tokenPayload.projectId]
@@ -194,6 +201,7 @@ export async function internalFunctionsGraphqlRoutes(app: FastifyInstance) {
           'x-hasura-default-schema': schemaName,
           'x-hasura-role': executionContext.role,
           ...executionContext.sessionVariables,
+          ...actorSessionVariables,
           ...runtimeSessionVariables,
         },
         body: JSON.stringify({ query, variables, operationName }),
