@@ -3,6 +3,7 @@ import {
   buildColumnCapabilityDrift,
   classifyManagedPolicyState,
   createPermissionSnapshot,
+  extendProjectionColumnGrants,
   isRecoverablePermissionSnapshot,
   isPolicyOperationRecoveryRequired,
   materializeReconcileGrants,
@@ -41,6 +42,44 @@ const permissions: MaterializedDataPermission[] = [{
 }]
 
 describe('managed data access policy state', () => {
+  it('extends only explicitly requested authenticated columns', () => {
+    const next = extendProjectionColumnGrants({
+      grants,
+      capabilities: {
+        readableColumns: [...capabilities.readableColumns, 'distance'],
+        insertableColumns: [...capabilities.insertableColumns, 'distance'],
+        updateableColumns: [...capabilities.updateableColumns, 'distance'],
+      },
+      modes: { select: 'owner', insert: 'owner', ownerColumn: 'owner_id' },
+      additions: { select: ['distance'], insert: ['distance'] },
+    })
+    expect(next).toEqual({
+      authenticated: {
+        select: ['id', 'owner_id', 'title', 'distance'],
+        insert: ['id', 'title', 'distance'],
+        update: [],
+      },
+      anonymous: { select: [] },
+    })
+    expect(grants.authenticated.select).not.toContain('distance')
+  })
+
+  it.each([
+    { additions: { select: [], insert: [] }, reason: 'at least one' },
+    { additions: { select: ['distance', 'distance'] }, reason: 'duplicate' },
+    { additions: { select: ['title'] }, reason: 'already granted' },
+    { additions: { insert: ['owner_id'] }, reason: 'owner preset' },
+    { additions: { insert: ['missing'] }, reason: 'not insertable' },
+    { additions: { select: null } as never, reason: 'Invalid select' },
+  ])('rejects invalid projection grant additions: $reason', ({ additions, reason }) => {
+    expect(() => extendProjectionColumnGrants({
+      grants,
+      capabilities,
+      modes: { select: 'owner', insert: 'owner', ownerColumn: 'owner_id' },
+      additions,
+    })).toThrow(reason)
+  })
+
   it('requires explicit adoption for supported permissions without provenance', () => {
     expect(classifyManagedPolicyState({
       inspectedState: 'managed',

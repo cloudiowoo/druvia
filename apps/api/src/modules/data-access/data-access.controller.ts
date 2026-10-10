@@ -43,9 +43,11 @@ import type { ProjectDataAccessMigrationReport } from './data-access-migration.t
 import {
   DataAccessPolicyOperationError,
   applyPolicyAdoption as applyPolicyAdoptionState,
+  applyPolicyGrantExtension as applyPolicyGrantExtensionState,
   applyPolicyReconcile as applyPolicyReconcileState,
   getActivePolicyOperation as getActivePolicyOperationState,
   previewPolicyAdoption as previewPolicyAdoptionState,
+  previewPolicyGrantExtension as previewPolicyGrantExtensionState,
   previewPolicyReconcile as previewPolicyReconcileState,
   recoverPolicyOperation as recoverPolicyOperationState,
 } from './data-access-policy-operation.service.js'
@@ -296,6 +298,50 @@ export async function applyPolicyReconcile(
   }
 }
 
+export async function previewPolicyGrantExtension(
+  request: FastifyRequest<{
+    Params: TableDataAccessParams
+    Body: { select?: string[]; insert?: string[] }
+  }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  if (!isGrantExtensionInput(request.body)) return sendInvalidPolicyOperationInput(reply)
+  try {
+    const data = await previewPolicyGrantExtensionState(
+      request.params.projectId, request.params.tableName,
+      platformUserId(request.user), request.body
+    )
+    return reply.send({ success: true, data })
+  } catch (error) {
+    return sendDataAccessError(error, reply, request)
+  }
+}
+
+export async function applyPolicyGrantExtension(
+  request: FastifyRequest<{
+    Params: TableDataAccessParams
+    Body: {
+      operationId: string; sourceDigest: string; targetDigest: string
+      baselineRevision: number; projectAlias: string
+    }
+  }>,
+  reply: FastifyReply
+) {
+  if (!(await verifyManagementAccess(request.user, request.params.projectId, reply))) return
+  if (!isGrantExtensionApplyInput(request.body)) return sendInvalidPolicyOperationInput(reply)
+  try {
+    const data = await applyPolicyGrantExtensionState(
+      request.params.projectId, request.params.tableName, request.body,
+      platformUserId(request.user),
+      () => getTableDataAccessState(request.params.projectId, request.params.tableName)
+    )
+    return reply.send({ success: true, data })
+  } catch (error) {
+    return sendDataAccessError(error, reply, request)
+  }
+}
+
 export async function getActivePolicyOperation(
   request: FastifyRequest<{ Params: ProjectDataAccessParams }>,
   reply: FastifyReply
@@ -531,6 +577,25 @@ function isColumnGrants(value: unknown): value is DataAccessColumnGrants {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function isGrantExtensionInput(value: unknown): value is { select?: string[]; insert?: string[] } {
+  return isRecord(value) && hasOnlyKeys(value, ['select', 'insert'])
+    && (value.select === undefined || isStringArray(value.select))
+    && (value.insert === undefined || isStringArray(value.insert))
+    && ((value.select as string[] | undefined)?.length ?? 0)
+      + ((value.insert as string[] | undefined)?.length ?? 0) > 0
+}
+
+function isGrantExtensionApplyInput(value: unknown): value is {
+  operationId: string; sourceDigest: string; targetDigest: string
+  baselineRevision: number; projectAlias: string
+} {
+  return isRecord(value) && hasOnlyKeys(value, [
+    'operationId', 'sourceDigest', 'targetDigest', 'baselineRevision', 'projectAlias',
+  ]) && typeof value.operationId === 'string' && isDigest(value.sourceDigest)
+    && isDigest(value.targetDigest) && Number.isSafeInteger(value.baselineRevision)
+    && typeof value.projectAlias === 'string' && value.projectAlias.length > 0
 }
 
 function isAuthorizationProjectionApplyInput(value: unknown): value is {

@@ -601,6 +601,27 @@ class ApiClient {
     );
   }
 
+  async previewTableDataAccessGrantExtension(
+    projectId: string,
+    tableName: string,
+    additions: { select?: string[]; insert?: string[] }
+  ) {
+    return this.request<import('./table-data-access').DataAccessPolicyPreview>(
+      'POST', `/api/v1/projects/${projectId}/data-access/tables/${tableName}/grant-extension/preview`,
+      additions
+    );
+  }
+
+  async applyTableDataAccessGrantExtension(projectId: string, tableName: string, input: {
+    operationId: string; sourceDigest: string; targetDigest: string;
+    baselineRevision: number; projectAlias: string;
+  }) {
+    return this.request<TableDataAccessState>(
+      'POST', `/api/v1/projects/${projectId}/data-access/tables/${tableName}/grant-extension/apply`,
+      input
+    );
+  }
+
   async recoverTableDataAccessOperation(projectId: string, operationId: string, input: {
     sourceDigest: string; projectAlias: string;
   }) {

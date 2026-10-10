@@ -78,7 +78,7 @@ export function TableDataAccessEditor({
   onGrantsChange,
 }: TableDataAccessEditorProps) {
   const validationError = getTableDataAccessValidationError(policy, state.columns);
-  const readOnly = state.managedState !== 'managed';
+  const readOnly = state.managedState !== 'managed' || policy.policyVersion === 2;
 
   const setOperationMode = (
     operation: AuthenticatedDataOperation,
@@ -343,7 +343,10 @@ export function TableDataAccessPanel({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<DataAccessPolicyPreview | null>(null);
   const [confirmAlias, setConfirmAlias] = useState('');
-  const [action, setAction] = useState<'adoption' | 'reconcile' | 'recovery' | null>(null);
+  const [action, setAction] = useState<'adoption' | 'reconcile' | 'recovery' | 'grant_extension' | null>(null);
+  const [extensionSelections, setExtensionSelections] = useState<{ select: string[]; insert: string[] }>({
+    select: [], insert: [],
+  });
   const pendingSave = useRef<{
     intentFingerprint: string;
     input: TablePolicySaveRequest;
@@ -407,11 +410,12 @@ export function TableDataAccessPanel({
     setSaving(false);
   };
 
-  const openManagedAction = async (nextAction: 'adoption' | 'reconcile' | 'recovery') => {
+  const openManagedAction = async (nextAction: 'adoption' | 'reconcile' | 'recovery' | 'grant_extension') => {
     setSaving(true);
     setConfirmAlias('');
-    if (nextAction === 'recovery') {
+    if (nextAction === 'recovery' || nextAction === 'grant_extension') {
       setPreview(null);
+      setExtensionSelections({ select: [], insert: [] });
       setAction(nextAction);
       setSaving(false);
       return;
@@ -430,6 +434,26 @@ export function TableDataAccessPanel({
       toast({ title: '操作失败', description: response.error?.message, variant: 'destructive' });
     }
     setSaving(false);
+  };
+
+  const previewGrantExtension = async () => {
+    setSaving(true);
+    const response = await api.previewTableDataAccessGrantExtension(
+      projectId, tableName, extensionSelections
+    );
+    if (response.success && response.data) setPreview(response.data);
+    else toast({ title: '预览失败', description: response.error?.message, variant: 'destructive' });
+    setSaving(false);
+  };
+
+  const toggleExtension = (operation: 'select' | 'insert', column: string, checked: boolean) => {
+    setPreview(null);
+    setExtensionSelections((current) => ({
+      ...current,
+      [operation]: checked
+        ? [...current[operation], column]
+        : current[operation].filter((value) => value !== column),
+    }));
   };
 
   const applyManagedAction = async () => {
@@ -467,6 +491,15 @@ export function TableDataAccessPanel({
           policy: refreshed.data.policy,
         });
       }
+    } else if (action === 'grant_extension' && preview?.operation.targetDigest
+      && preview.baselineRevision !== null) {
+      response = await api.applyTableDataAccessGrantExtension(projectId, tableName, {
+        operationId: preview.operation.operationId,
+        sourceDigest: preview.operation.sourceDigest,
+        targetDigest: preview.operation.targetDigest,
+        baselineRevision: preview.baselineRevision,
+        projectAlias: confirmAlias,
+      });
     } else if (action === 'recovery' && state.activeOperation) {
       response = await api.recoverTableDataAccessOperation(projectId, state.activeOperation.operationId, {
         sourceDigest: state.activeOperation.sourceDigest,
@@ -477,7 +510,9 @@ export function TableDataAccessPanel({
       || (!!response?.data && 'status' in response.data && response.data.status === 'failed');
     if (response?.success && recoveryCompleted) {
       setAction(null);
-      toast({ title: action === 'adoption' ? '访问规则已接管' : action === 'reconcile' ? '字段权限已刷新' : '恢复操作已完成' });
+      toast({ title: action === 'adoption' ? '访问规则已接管'
+        : action === 'reconcile' ? '字段权限已刷新'
+          : action === 'grant_extension' ? '字段授权已扩展' : '恢复操作已完成' });
     } else {
       toast({
         title: '操作失败',
@@ -541,6 +576,11 @@ export function TableDataAccessPanel({
           <RefreshCw className="mr-2 h-4 w-4" />刷新字段权限
         </Button>
       )}
+      {state.managedState === 'managed' && policy.policyVersion === 2 && (
+        <Button variant="outline" onClick={() => void openManagedAction('grant_extension')} disabled={saving}>
+          <ShieldCheck className="mr-2 h-4 w-4" />扩列授权
+        </Button>
+      )}
       {state.managedState === 'recovery_required' && state.activeOperation && (
         <Button variant="destructive" onClick={() => void openManagedAction('recovery')} disabled={saving}>
           <RotateCcw className="mr-2 h-4 w-4" />恢复访问规则
@@ -558,7 +598,9 @@ export function TableDataAccessPanel({
       <Dialog open={action !== null} onOpenChange={(open) => !open && closeManagedAction()}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{action === 'adoption' ? '确认接管访问规则' : action === 'reconcile' ? '确认刷新字段权限' : '确认恢复访问规则'}</DialogTitle>
+            <DialogTitle>{action === 'adoption' ? '确认接管访问规则'
+              : action === 'reconcile' ? '确认刷新字段权限'
+                : action === 'grant_extension' ? '扩列授权' : '确认恢复访问规则'}</DialogTitle>
             <DialogDescription>{tableName}</DialogDescription>
           </DialogHeader>
           {action === 'reconcile' && preview?.drift && (
@@ -589,6 +631,37 @@ export function TableDataAccessPanel({
               )}
             </div>
           )}
+          {action === 'grant_extension' && (
+            <div className="max-h-[50vh] space-y-4 overflow-y-auto border-y py-4 text-sm">
+              {(['select', 'insert'] as const).map((operation) => {
+                const available = operation === 'select'
+                  ? state.capabilities.readable : state.capabilities.insertable;
+                const columns = available.filter((column) =>
+                  !state.effective.authenticated[operation].includes(column)
+                  && !(operation === 'insert' && policy.authenticated.insert === 'owner'
+                    && column === policy.authenticated.ownerColumn));
+                if (policy.authenticated[operation] === 'none' || columns.length === 0) return null;
+                return <div key={operation} className="space-y-2">
+                  <p className="font-medium">{operation === 'select' ? '新增查询字段' : '新增写入字段'}</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {columns.map((column) => <label key={column} className="flex items-center gap-2 border px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`${operation === 'select' ? '查询' : '新增'} ${column}`}
+                        checked={extensionSelections[operation].includes(column)}
+                        onChange={(event) => toggleExtension(operation, column, event.target.checked)}
+                      />
+                      <span className="min-w-0 truncate font-mono">{column}</span>
+                    </label>)}
+                  </div>
+                </div>;
+              })}
+              <Button variant="outline" disabled={saving
+                || extensionSelections.select.length + extensionSelections.insert.length === 0}
+                onClick={() => void previewGrantExtension()}>预览扩列</Button>
+              {preview && <p>查询 +{extensionSelections.select.length}，新增 +{extensionSelections.insert.length}</p>}
+            </div>
+          )}
           <Input
             value={confirmAlias}
             onChange={(event) => setConfirmAlias(event.target.value)}
@@ -599,7 +672,8 @@ export function TableDataAccessPanel({
             <Button variant="outline" onClick={closeManagedAction}>取消</Button>
             <Button
               onClick={() => void applyManagedAction()}
-              disabled={!confirmAlias || saving || (action === 'reconcile'
+              disabled={!confirmAlias || saving || (action === 'grant_extension' && !preview)
+                || (action === 'reconcile'
                 && !!policy
                 && !!getReconcilePolicyValidationError(policy, preview?.capabilities))}
             >

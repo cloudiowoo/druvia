@@ -8,6 +8,8 @@ const apiMock = vi.hoisted(() => ({
   updateTableDataAccess: vi.fn(),
   previewTableDataAccessReconcile: vi.fn(),
   applyTableDataAccessReconcile: vi.fn(),
+  previewTableDataAccessGrantExtension: vi.fn(),
+  applyTableDataAccessGrantExtension: vi.fn(),
   recoverTableDataAccessOperation: vi.fn(),
 }))
 
@@ -202,6 +204,70 @@ describe('TableDataAccessEditor', () => {
 })
 
 describe('TableDataAccessPanel', () => {
+  it('previews and confirms v2 additions without using the ordinary policy save', async () => {
+    const value = state({
+      baselineRevision: 3,
+      columns: ['id', 'owner_id', 'distance'],
+      capabilities: {
+        readable: ['id', 'owner_id', 'distance'],
+        insertable: ['id', 'owner_id', 'distance'],
+        updateable: ['id', 'owner_id', 'distance'],
+      },
+      effective: {
+        authenticated: { select: ['id', 'owner_id'], insert: ['id'], update: [] },
+        anonymous: { select: [] },
+      },
+      policy: {
+        policyVersion: 2,
+        authenticated: {
+          select: 'owner', insert: 'owner', update: 'none', delete: 'none',
+          ownerColumn: 'owner_id',
+          selectConstraint: {
+            type: 'authorization_projection', relationshipPath: ['session_access_projection'],
+            actorColumn: 'owner_id', allowColumn: 'can_read_basic',
+          },
+        },
+        anonymous: { select: false },
+      },
+    })
+    apiMock.getTableDataAccess.mockResolvedValue({ success: true, data: value })
+    apiMock.previewTableDataAccessGrantExtension.mockResolvedValue({
+      success: true,
+      data: {
+        operation: {
+          operationId: 'grant_extension_1', kind: 'grant_extension', status: 'preview_ready',
+          sourceDigest: 'a'.repeat(64), targetDigest: 'b'.repeat(64),
+        },
+        baselineRevision: 3, policy: value.policy,
+        columnGrants: {
+          authenticated: { select: ['id', 'owner_id', 'distance'], insert: ['id', 'distance'], update: [] },
+          anonymous: { select: [] },
+        },
+      },
+    })
+    apiMock.applyTableDataAccessGrantExtension.mockResolvedValue({ success: true, data: value })
+    render(<TableDataAccessPanel projectId="proj_123" tableName="orders" />)
+
+    expect(await screen.findByRole('button', { name: '保存数据访问' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '扩列授权' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '查询 distance' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '新增 distance' }))
+    fireEvent.click(screen.getByRole('button', { name: '预览扩列' }))
+    await waitFor(() => expect(apiMock.previewTableDataAccessGrantExtension).toHaveBeenCalledWith(
+      'proj_123', 'orders', { select: ['distance'], insert: ['distance'] }
+    ))
+    fireEvent.change(screen.getByRole('textbox', { name: '项目别名确认' }), {
+      target: { value: 'pitchetch' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '确认' }))
+    await waitFor(() => expect(apiMock.applyTableDataAccessGrantExtension).toHaveBeenCalledWith(
+      'proj_123', 'orders', {
+        operationId: 'grant_extension_1', sourceDigest: 'a'.repeat(64),
+        targetDigest: 'b'.repeat(64), baselineRevision: 3, projectAlias: 'pitchetch',
+      }
+    ))
+    expect(apiMock.updateTableDataAccess).not.toHaveBeenCalled()
+  })
   it('omits projection-only fields when cloning a v1 policy', () => {
     const cloned = cloneTableDataAccessPolicy({
       policyVersion: 1,

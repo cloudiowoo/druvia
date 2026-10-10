@@ -227,6 +227,13 @@ async function bootstrap(): Promise<void> {
 
   // 纯数据迁移：通过查询数据行判断是否已应用
   const dataChecks: Record<number, string> = {
+    30: `SELECT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'druvia_data_access_policy_operations_kind_check'
+        AND conrelid = to_regclass('public.druvia_data_access_policy_operations')
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) LIKE '%grant_extension%'
+    ) as exists`,
     10: `SELECT EXISTS (SELECT 1 FROM druvia_tenants WHERE tenant_id = 'default') as exists`,
     14: `SELECT EXISTS (
       SELECT 1 FROM information_schema.columns

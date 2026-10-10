@@ -15,7 +15,9 @@ import {
   recoverAuthorizationProjection,
 } from '../../apps/api/src/modules/data-access/data-access-authorization-projection.service.js'
 import {
+  applyPolicyGrantExtension,
   applyPolicyReconcile,
+  previewPolicyGrantExtension,
   previewPolicyReconcile,
 } from '../../apps/api/src/modules/data-access/data-access-policy-operation.service.js'
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
@@ -416,6 +418,31 @@ describe.skipIf(!runIntegration)('authorization projection against PostgreSQL an
       baselineBefore.rows[0].dependency_digest
     )
     expect(baselineAfter.rows[0].column_grants.authenticated.select).not.toContain('new_column')
+
+    const extension = await previewPolicyGrantExtension(
+      projectId, 'projection_orders', platformUserId,
+      { select: ['new_column'], insert: ['new_column'] }
+    )
+    expect(extension.policy).toEqual(reconcile.policy)
+    await applyPolicyGrantExtension(projectId, 'projection_orders', {
+      operationId: extension.operation.operationId,
+      sourceDigest: extension.operation.sourceDigest,
+      targetDigest: extension.operation.targetDigest!,
+      baselineRevision: extension.baselineRevision!, projectAlias,
+    }, platformUserId, () => getTableDataAccess(projectId, 'projection_orders'))
+    const extended = await getTableDataAccess(projectId, 'projection_orders')
+    expect(extended.managedState).toBe('managed')
+    expect(extended.effective.authenticated.select).toContain('new_column')
+    expect(extended.effective.authenticated.insert).toContain('new_column')
+    expect(extended.policy.authenticated.selectConstraint).toEqual(reconcile.policy.authenticated.selectConstraint)
+    const visibleNewColumn = await graphql(
+      role, ownerA, `query { ${root}(where: { id: { _eq: "${allowedA}" } }) { new_column } }`
+    )
+    expect(visibleNewColumn).toEqual({ data: { [root]: [{ new_column: null }] } })
+    const deniedNewColumn = await graphql(
+      role, ownerB, `query { ${root}(where: { id: { _eq: "${allowedA}" } }) { new_column } }`
+    )
+    expect(deniedNewColumn).toEqual({ data: { [root]: [] } })
 
     const visibleA = await graphql(role, ownerA, `query { ${root}(order_by: { value: asc }) { value } }`)
     expect(visibleA).toEqual({ data: { [root]: [{ value: 'allowed-a' }] } })

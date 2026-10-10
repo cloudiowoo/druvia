@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const policyOperationMocks = vi.hoisted(() => ({
+  previewPolicyGrantExtension: vi.fn(),
+  applyPolicyGrantExtension: vi.fn(),
   previewPolicyReconcile: vi.fn(),
   applyPolicyReconcile: vi.fn(),
   recoverPolicyOperation: vi.fn(),
@@ -32,9 +34,11 @@ vi.mock('../../apps/api/src/modules/data-access/data-access-policy-operation.ser
     }
   },
   applyPolicyAdoption: vi.fn(),
+  applyPolicyGrantExtension: policyOperationMocks.applyPolicyGrantExtension,
   applyPolicyReconcile: policyOperationMocks.applyPolicyReconcile,
   getActivePolicyOperation: vi.fn(),
   previewPolicyAdoption: vi.fn(),
+  previewPolicyGrantExtension: policyOperationMocks.previewPolicyGrantExtension,
   previewPolicyReconcile: policyOperationMocks.previewPolicyReconcile,
   recoverPolicyOperation: policyOperationMocks.recoverPolicyOperation,
 }))
@@ -120,6 +124,35 @@ describe('data access controller', () => {
       managedState: 'managed',
       legacyRoles: [],
     })
+  })
+
+  it('validates explicit projection additions before preview', async () => {
+    const request = {
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 },
+      body: { select: ['distance'], insert: ['distance'], update: ['private'] },
+    }
+    const reply = createReply()
+    await controller.previewPolicyGrantExtension(request as never, reply as never)
+    expect(reply.statusCode).toBe(400)
+    expect(policyOperationMocks.previewPolicyGrantExtension).not.toHaveBeenCalled()
+  })
+
+  it('passes a confirmed projection grant extension to the operation service', async () => {
+    const body = {
+      operationId: 'dap_test_operation', sourceDigest: 'a'.repeat(64),
+      targetDigest: 'b'.repeat(64), baselineRevision: 3, projectAlias: 'pitchetch',
+    }
+    policyOperationMocks.applyPolicyGrantExtension.mockResolvedValue({ tableName: 'orders' })
+    const reply = createReply()
+    await controller.applyPolicyGrantExtension({
+      params: { projectId: 'proj_123', tableName: 'orders' },
+      user: { kind: 'platform_user', userId: 'usr_123', uid: 1 }, body,
+    } as never, reply as never)
+    expect(reply.payload).toMatchObject({ success: true, data: { tableName: 'orders' } })
+    expect(policyOperationMocks.applyPolicyGrantExtension).toHaveBeenCalledWith(
+      'proj_123', 'orders', body, 'usr_123', expect.any(Function)
+    )
   })
 
   it('allows a platform user with project access to read the project overview', async () => {

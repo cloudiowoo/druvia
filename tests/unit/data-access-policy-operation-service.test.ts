@@ -70,9 +70,11 @@ vi.mock('../../apps/api/src/modules/data-access/data-access-authorization-projec
 
 import { resolveDataScopeRole } from '../../apps/api/src/modules/data-access/data-scope-role.js'
 import {
+  applyPolicyGrantExtension,
   applyPolicyAdoption,
   applyPolicyReconcile,
   previewPolicyAdoption,
+  previewPolicyGrantExtension,
   previewPolicyReconcile,
   recoverPolicyOperation,
   updateManagedTablePolicy,
@@ -165,6 +167,77 @@ function operationFrom(input: Record<string, unknown>) {
   }
 }
 
+function setupManagedProjectionForGrantExtension() {
+  const columns = [...oldColumns, 'distance']
+  const constraint = {
+    type: 'authorization_projection' as const,
+    relationshipPath: ['session_access_projection'] as [string],
+    actorColumn: 'user_id', allowColumn: 'can_read_basic',
+  }
+  const policy = {
+    policyVersion: 2 as const,
+    authenticated: {
+      select: 'owner' as const, insert: 'owner' as const,
+      update: 'none' as const, delete: 'none' as const,
+      ownerColumn: 'user_id', selectConstraint: constraint,
+    },
+    anonymous: { select: false },
+  }
+  const filter = { _and: [
+    ownerFilter,
+    { session_access_projection: {
+      user_id: { _eq: 'X-Hasura-User-Id' }, can_read_basic: { _eq: true },
+    } },
+  ] }
+  const sourcePermissions = [
+    { role: roles.authenticated, operation: 'select' as const,
+      permission: { columns: oldColumns, filter, allow_aggregations: false } },
+    { role: roles.authenticated, operation: 'insert' as const,
+      permission: { columns: ['id', 'title'], check: ownerFilter,
+        set: { user_id: 'X-Hasura-User-Id' } } },
+  ]
+  const baseline = {
+    projectId, schemaName, tableName, policyVersion: 2, policy,
+    columnGrants: {
+      authenticated: { select: oldColumns, insert: ['id', 'title'], update: [] },
+      anonymous: { select: [] },
+    },
+    capabilitiesSnapshot: {
+      readableColumns: columns, insertableColumns: columns, updateableColumns: columns,
+    },
+    permissionsSnapshot: sourcePermissions,
+    metadataDigest: permissionSnapshotDigest(sourcePermissions),
+    dependencySnapshot: { schemaName, contract: projectionContract, relationships: [], digest: 'd'.repeat(64) },
+    dependencyDigest: 'd'.repeat(64),
+    revision: 3n,
+  }
+  mocks.getTableMetadata.mockResolvedValue({
+    schemaName, tableName,
+    columns: columns.map((name) => ({
+      name, type: 'text', nullable: false, defaultValue: null,
+      isPrimaryKey: name === 'id', isGenerated: false, isIdentity: false,
+      identityGeneration: null,
+    })),
+  })
+  const metadataFor = (target: boolean) => ({
+    resource_version: target ? 802 : 801,
+    metadata: { sources: [{ name: 'default', tables: [{
+      table: { schema: schemaName, name: tableName },
+      select_permissions: [{ role: roles.authenticated, permission: {
+        ...sourcePermissions[0].permission,
+        columns: target ? [...oldColumns, 'distance'] : oldColumns,
+      } }],
+      insert_permissions: [{ role: roles.authenticated, permission: {
+        ...sourcePermissions[1].permission,
+        columns: target ? ['id', 'title', 'distance'] : ['id', 'title'],
+      } }],
+    }] }] },
+  })
+  mocks.metadataRequest.mockImplementation(async () => metadataFor(mocks.applyCommands.mock.calls.length > 0))
+  mocks.getManagedPolicyWithClient.mockResolvedValue(baseline)
+  return { baseline, filter, metadataFor }
+}
+
 describe('data access policy operation service', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset())
@@ -215,6 +288,104 @@ describe('data access policy operation service', () => {
       code: 'DATA_ACCESS_PROJECTION_MANAGED',
     })
     expect(mocks.withMutationLock).not.toHaveBeenCalled()
+  })
+
+  it('previews and applies only explicit projection column additions', async () => {
+    const { baseline, filter } = setupManagedProjectionForGrantExtension()
+    const preview = await previewPolicyGrantExtension(projectId, tableName, 'usr_1', {
+      select: ['distance'], insert: ['distance'],
+    })
+    expect(preview.operation.kind).toBe('grant_extension')
+    expect(preview.policy).toEqual(baseline.policy)
+    expect(preview.columnGrants).toEqual({
+      authenticated: { select: [...oldColumns, 'distance'], insert: ['id', 'title', 'distance'], update: [] },
+      anonymous: { select: [] },
+    })
+    const operation = operationFrom(mocks.createPolicyOperation.mock.calls[0][1])
+    expect(operation.targetPermissions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: 'select', permission: expect.objectContaining({ filter }) }),
+      expect.objectContaining({ operation: 'insert', permission: expect.objectContaining({ check: ownerFilter }) }),
+    ]))
+    mocks.transitionPolicyOperation.mockImplementation(async (_client, _id, _statuses, patch) => ({
+      ...operation, ...patch,
+    }))
+    mocks.getPolicyOperationWithClient.mockImplementation(async () => {
+      const writerEpoch = mocks.transitionPolicyOperation.mock.calls.find(
+        (call) => call[3]?.status === 'applying'
+      )?.[3]?.writerEpoch
+      return { ...operation, status: writerEpoch ? 'applying' : 'preview_ready', writerEpoch }
+    })
+    await applyPolicyGrantExtension(projectId, tableName, {
+      operationId: preview.operation.operationId,
+      sourceDigest: preview.operation.sourceDigest,
+      targetDigest: preview.operation.targetDigest!,
+      baselineRevision: preview.baselineRevision!, projectAlias: 'pitchetch',
+    }, 'usr_1', async () => ({ projectId, tableName }) as never)
+    expect(mocks.applyCommands).toHaveBeenCalledOnce()
+    expect(mocks.saveManagedPolicy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      policy: baseline.policy, dependencyDigest: baseline.dependencyDigest,
+      columnGrants: preview.columnGrants,
+    }))
+  })
+
+  it('rejects projection grant extension before reconcile or when dependency drifts', async () => {
+    const { baseline } = setupManagedProjectionForGrantExtension()
+    mocks.getManagedPolicyWithClient.mockResolvedValueOnce({
+      ...baseline,
+      capabilitiesSnapshot: { ...baseline.capabilitiesSnapshot, readableColumns: oldColumns },
+    })
+    await expect(previewPolicyGrantExtension(projectId, tableName, 'usr_1', {
+      select: ['distance'],
+    })).rejects.toMatchObject({ code: 'DATA_ACCESS_REFRESH_REQUIRED' })
+    mocks.loadProjectionDependencies.mockResolvedValueOnce({
+      snapshot: { contract: projectionContract, digest: 'e'.repeat(64) },
+    })
+    await expect(previewPolicyGrantExtension(projectId, tableName, 'usr_1', {
+      select: ['distance'],
+    })).rejects.toMatchObject({ code: 'DATA_ACCESS_PROJECTION_DEPENDENCY_INVALID' })
+    expect(mocks.applyCommands).not.toHaveBeenCalled()
+  })
+
+  it('rejects existing grants and requires reconcile when a new column is generated', async () => {
+    setupManagedProjectionForGrantExtension()
+    await expect(previewPolicyGrantExtension(projectId, tableName, 'usr_1', {
+      select: ['title'],
+    })).rejects.toMatchObject({ code: 'INVALID_DATA_ACCESS_POLICY' })
+    mocks.getTableMetadata.mockResolvedValue({
+      schemaName, tableName,
+      columns: [...oldColumns.map((name) => ({
+        name, type: 'text', nullable: false, defaultValue: null,
+        isPrimaryKey: name === 'id', isGenerated: false, isIdentity: false,
+        identityGeneration: null,
+      })), {
+        name: 'distance', type: 'text', nullable: false, defaultValue: null,
+        isPrimaryKey: false, isGenerated: true, isIdentity: false, identityGeneration: null,
+      }],
+    })
+    await expect(previewPolicyGrantExtension(projectId, tableName, 'usr_1', {
+      insert: ['distance'],
+    })).rejects.toMatchObject({ code: 'DATA_ACCESS_REFRESH_REQUIRED' })
+    expect(mocks.createPolicyOperation).not.toHaveBeenCalled()
+    expect(mocks.applyCommands).not.toHaveBeenCalled()
+  })
+
+  it('rejects a grant extension apply after its baseline revision changes', async () => {
+    const { baseline } = setupManagedProjectionForGrantExtension()
+    const preview = await previewPolicyGrantExtension(projectId, tableName, 'usr_1', {
+      select: ['distance'],
+    })
+    const operation = operationFrom(mocks.createPolicyOperation.mock.calls[0][1])
+    mocks.getPolicyOperationWithClient.mockResolvedValue(operation)
+    mocks.getManagedPolicyWithClient.mockResolvedValue({ ...baseline, revision: 4n })
+    await expect(applyPolicyGrantExtension(projectId, tableName, {
+      operationId: preview.operation.operationId,
+      sourceDigest: preview.operation.sourceDigest,
+      targetDigest: preview.operation.targetDigest!,
+      baselineRevision: preview.baselineRevision!, projectAlias: 'pitchetch',
+    }, 'usr_1', async () => ({}) as never)).rejects.toMatchObject({
+      code: 'DATA_ACCESS_RECONCILE_STALE',
+    })
+    expect(mocks.applyCommands).not.toHaveBeenCalled()
   })
 
   it.each([

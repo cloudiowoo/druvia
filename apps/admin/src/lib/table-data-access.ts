@@ -54,7 +54,7 @@ export interface TableDataAccessColumnGrants {
 export interface DataAccessPolicyOperationState {
   operationId: string
   tableName: string
-  kind: 'adoption' | 'policy_update' | 'reconcile'
+  kind: 'adoption' | 'policy_update' | 'reconcile' | 'grant_extension'
   status: 'preview_ready' | 'applying' | 'recovering' | 'completed' | 'failed' | 'recovery_required' | 'superseded'
   phase: string
   sourceDigest: string

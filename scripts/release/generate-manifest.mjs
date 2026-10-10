@@ -10,7 +10,8 @@ const SEMVER_PATTERN = new RegExp(
 );
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const CHANNELS = new Set(['stable', 'beta', 'nightly']);
-const REQUIRED_MIGRATION_TARGET = 29;
+const REQUIRED_MIGRATION_TARGET = 30;
+const BOOTSTRAP_MIGRATION_LIMIT = 29;
 
 function required(env, key) {
   const value = env[key];
@@ -102,7 +103,7 @@ export function resolveUpdaterBootstrapMetadata(releaseValue, baseValue, migrati
   if (compareStableVersions(release.version, base.version) <= 0
     || !Number.isInteger(migrationVersion)
     || migrationVersion < 0
-    || migrationVersion >= REQUIRED_MIGRATION_TARGET) {
+    || migrationVersion >= BOOTSTRAP_MIGRATION_LIMIT) {
     throw new Error('UNSAFE_UPDATER_BOOTSTRAP_INPUT');
   }
 

@@ -20,6 +20,7 @@ import {
   capabilitiesEqual,
   classifyManagedPolicyState,
   createPermissionSnapshot,
+  extendProjectionColumnGrants,
   isRecoverablePermissionSnapshot,
   isPolicyOperationRecoveryRequired,
   materializeReconcileGrants,
@@ -28,6 +29,7 @@ import {
   validateReconcilePolicyTransition,
   permissionSnapshotDigest,
   stableDigest,
+  type ProjectionGrantAdditions,
 } from './data-access-managed-policy.js'
 import {
   createPolicyOperation,
@@ -119,6 +121,14 @@ export interface ReconcileApplyInput {
   projectAlias: string
   columnGrants: DataAccessColumnGrants
   policy: TableDataAccessInput
+}
+
+export interface GrantExtensionApplyInput {
+  operationId: string
+  sourceDigest: string
+  targetDigest: string
+  baselineRevision: number
+  projectAlias: string
 }
 
 export interface RecoverPolicyOperationInput {
@@ -454,6 +464,96 @@ export async function applyPolicyReconcile(
     ) !== operation.sourceDigest) {
       throw stale()
     }
+    await assertProjectionDependencyCurrent(client, context, baseline)
+    await applyPolicyOperation(client, context, operation, actorId)
+    return getState()
+  }, { purpose: 'policy_operation', operationId: input.operationId })
+}
+
+export async function previewPolicyGrantExtension(
+  projectId: string,
+  tableName: string,
+  actorId: string,
+  additions: ProjectionGrantAdditions
+): Promise<DataAccessPolicyPreview> {
+  const operationId = createOperationId()
+  return withProjectDataAccessMutationLock(projectId, async (client) => {
+    await supersedeDataAccessPreviews(client, projectId)
+    const context = await loadOperationContext(projectId, tableName)
+    const baseline = await getManagedPolicyWithClient(client, projectId, context.schemaName, tableName)
+    if (!baseline || baseline.policyVersion !== 2) {
+      throw conflict('DATA_ACCESS_PROJECTION_MANAGED', 'A managed authorization projection is required')
+    }
+    const state = classify(context, baseline, null)
+    if (state !== 'managed') {
+      throw conflict(
+        state === 'refresh_required' ? 'DATA_ACCESS_REFRESH_REQUIRED' : 'DATA_ACCESS_PROJECTION_MANAGED',
+        'Projection grants require a current managed baseline'
+      )
+    }
+    await assertProjectionDependencyCurrent(client, context, baseline)
+    let grants: DataAccessColumnGrants
+    try {
+      grants = extendProjectionColumnGrants({
+        grants: baseline.columnGrants,
+        capabilities: context.capabilities,
+        modes: baseline.policy.authenticated,
+        additions,
+      })
+    } catch (error) {
+      throw new DataAccessPolicyOperationError(
+        'INVALID_DATA_ACCESS_POLICY', error instanceof Error ? error.message : 'Invalid column grants'
+      )
+    }
+    const targetPermissions = createPermissionSnapshot(materializeTableDataAccessPolicy(
+      baseline.policy,
+      { roles: context.roles, capabilities: context.capabilities, columnGrants: grants }
+    ))
+    const sourcePermissions = snapshotManagedSource(context, baseline)
+    const sourceDigest = createSourceDigest(context, baseline, sourcePermissions)
+    const targetDigest = createTargetDigest(
+      baseline.policy, grants, context.capabilities, targetPermissions
+    )
+    const operation = await createPolicyOperation(client, {
+      operationId, projectId, schemaName: context.schemaName, tableName,
+      kind: 'grant_extension', baselineRevision: baseline.revision,
+      sourceCapabilities: context.capabilities, sourcePermissions, sourceDigest,
+      sourceResourceVersion: context.resourceVersion,
+      targetPolicy: baseline.policy, targetColumnGrants: grants,
+      targetCapabilities: context.capabilities, targetPermissions, targetDigest,
+      requestDigest: stableDigest({ projectId, tableName, additions, sourceDigest, targetDigest }),
+      createdBy: actorId,
+    })
+    return toPreview(context, operation, null)
+  }, { purpose: 'policy_operation', operationId })
+}
+
+export async function applyPolicyGrantExtension(
+  projectId: string,
+  tableName: string,
+  input: GrantExtensionApplyInput,
+  actorId: string,
+  getState: () => Promise<TableDataAccessState>
+): Promise<TableDataAccessState> {
+  return withProjectDataAccessMutationLock(projectId, async (client) => {
+    const operation = await requireOperation(client, projectId, input.operationId, 'grant_extension')
+    assertOperationConfirmation(operation, input.sourceDigest, input.targetDigest)
+    await assertOperationSchemaCurrent(operation)
+    if (operation.baselineRevision !== BigInt(input.baselineRevision)) throw stale()
+    const context = await loadOperationContext(projectId, tableName)
+    assertOperationContext(operation, context)
+    assertProjectAlias(context, input.projectAlias)
+    if (operation.tableName !== tableName) throw stale('Grant extension target changed')
+    const baseline = await getManagedPolicyWithClient(client, projectId, context.schemaName, tableName)
+    if (operation.status === 'completed') {
+      assertCompletedOperationCurrent(operation, baseline)
+      return getState()
+    }
+    if (operation.status !== 'preview_ready' || !baseline
+      || baseline.policyVersion !== 2 || baseline.revision !== operation.baselineRevision) throw stale()
+    if (classify(context, baseline, null) !== 'managed'
+      || createSourceDigest(context, baseline, snapshotManagedSource(context, baseline))
+        !== operation.sourceDigest) throw stale()
     await assertProjectionDependencyCurrent(client, context, baseline)
     await applyPolicyOperation(client, context, operation, actorId)
     return getState()

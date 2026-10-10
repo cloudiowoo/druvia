@@ -51,6 +51,14 @@ export async function dataAccessRoutes(app: FastifyInstance) {
     '/projects/:projectId/data-access/tables/:tableName/reconcile/apply',
     controller.applyPolicyReconcile as never
   )
+  app.post(
+    '/projects/:projectId/data-access/tables/:tableName/grant-extension/preview',
+    controller.previewPolicyGrantExtension as never
+  )
+  app.post(
+    '/projects/:projectId/data-access/tables/:tableName/grant-extension/apply',
+    controller.applyPolicyGrantExtension as never
+  )
   app.get(
     '/projects/:projectId/data-access/policy-operation',
     controller.getActivePolicyOperation as never

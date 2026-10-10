@@ -48,7 +48,7 @@ describe('migration 028 project runtime context contract', () => {
     expect(down).toContain("ERRCODE = '55006'")
   })
 
-  it('registers migration 029 as the API and release ceiling', () => {
+  it('registers migration 029 while keeping the API and release ceiling current', () => {
     const runner = readFileSync('apps/api/src/cli/migrate.ts', 'utf8')
     const compatibility = readFileSync('apps/api/src/db/migration-compatibility.ts', 'utf8')
     const workflow = readFileSync('.github/workflows/release.yml', 'utf8')
@@ -56,9 +56,9 @@ describe('migration 028 project runtime context contract', () => {
 
     expect(runner).toContain("28: 'druvia_project_runtime_contexts'")
     expect(runner).toContain("29: 'druvia_project_runtime_context_fences'")
-    expect(compatibility).toContain('API_SUPPORTED_MIGRATION_CEILING = 29')
-    expect(compatibility).toContain('API_REQUIRED_MIGRATION_FLOOR = 29')
-    expect(workflow.match(/DRUVIA_MIGRATION_TO: '29'/g)).toHaveLength(2)
-    expect(generator).toContain('const REQUIRED_MIGRATION_TARGET = 29')
+    expect(compatibility).toContain('API_SUPPORTED_MIGRATION_CEILING = 30')
+    expect(compatibility).toContain('API_REQUIRED_MIGRATION_FLOOR = 30')
+    expect(workflow.match(/DRUVIA_MIGRATION_TO: '30'/g)).toHaveLength(2)
+    expect(generator).toContain('const REQUIRED_MIGRATION_TARGET = 30')
   })
 })

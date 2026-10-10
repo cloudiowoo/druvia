@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type {
+  AuthenticatedAccessMode,
   DataAccessColumnCapabilities,
   DataAccessColumnDrift,
   DataAccessColumnGrants,
@@ -192,6 +193,60 @@ export function materializeReconcileGrants(
     anonymous: {
       select: intersection(baseline.anonymous.select, current.readableColumns),
     },
+  }
+}
+
+export interface ProjectionGrantAdditions {
+  select?: string[]
+  insert?: string[]
+}
+
+export function extendProjectionColumnGrants(input: {
+  grants: DataAccessColumnGrants
+  capabilities: DataAccessColumnCapabilities
+  modes: { select: AuthenticatedAccessMode; insert: AuthenticatedAccessMode; ownerColumn: string | null }
+  additions: ProjectionGrantAdditions
+}): DataAccessColumnGrants {
+  const { grants, capabilities, modes, additions } = input
+  if (Object.keys(additions).some((key) => key !== 'select' && key !== 'insert')) {
+    throw new Error('Only authenticated select and insert grants can be extended')
+  }
+  for (const operation of ['select', 'insert'] as const) {
+    const requested = additions[operation]
+    if (requested !== undefined && (!Array.isArray(requested)
+      || requested.some((column) => typeof column !== 'string'))) {
+      throw new Error(`Invalid ${operation} column grants`)
+    }
+  }
+  const select = additions.select ?? []
+  const insert = additions.insert ?? []
+  if (select.length + insert.length === 0) {
+    throw new Error('Specify at least one column grant')
+  }
+  for (const [operation, columns, available] of [
+    ['select', select, capabilities.readableColumns],
+    ['insert', insert, capabilities.insertableColumns],
+  ] as const) {
+    if (columns.length === 0) continue
+    if (modes[operation] === 'none') throw new Error(`${operation} access is closed`)
+    if (new Set(columns).size !== columns.length) throw new Error(`duplicate ${operation} column grant`)
+    if (columns.some((column) => grants.authenticated[operation].includes(column))) {
+      throw new Error(`${operation} column is already granted`)
+    }
+    if (columns.some((column) => !available.includes(column))) {
+      throw new Error(`${operation} column is not ${operation === 'select' ? 'readable' : 'insertable'}`)
+    }
+  }
+  if (modes.insert === 'owner' && insert.includes(modes.ownerColumn ?? '')) {
+    throw new Error('Cannot grant the owner preset column for insert')
+  }
+  return {
+    authenticated: {
+      select: [...grants.authenticated.select, ...select],
+      insert: [...grants.authenticated.insert, ...insert],
+      update: [...grants.authenticated.update],
+    },
+    anonymous: { select: [...grants.anonymous.select] },
   }
 }
 

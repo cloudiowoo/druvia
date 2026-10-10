@@ -114,7 +114,7 @@ export interface DataAccessColumnDrift {
   removedOrRestricted: string[]
 }
 
-export type DataAccessPolicyOperationKind = 'adoption' | 'policy_update' | 'reconcile'
+export type DataAccessPolicyOperationKind = 'adoption' | 'policy_update' | 'reconcile' | 'grant_extension'
 export type DataAccessPolicyOperationStatus =
   | 'preview_ready'
   | 'applying'
