@@ -60,6 +60,10 @@ export async function markProjectRestoreRecoveryRequired(
 export async function replayProjectAccountDeletionFences(
   projectId: string,
   operationId: string,
+  protection?: {
+    beforeReplay: (client: import('pg').PoolClient) => Promise<void>;
+    afterReplay: (client: import('pg').PoolClient) => Promise<void>;
+  },
 ): Promise<void> {
   const client = await pool.connect();
   try {
@@ -71,6 +75,7 @@ export async function replayProjectAccountDeletionFences(
       [projectId, operationId],
     );
     if (!gate.rows[0]) throw new Error('PROJECT_RESTORE_GATE_MISSING');
+    await protection?.beforeReplay(client);
     await setDeviceWipeRestoreTimeout(client);
     const operations = await client.query<{
       deletion_id: string;
@@ -111,6 +116,7 @@ export async function replayProjectAccountDeletionFences(
     }
     await setDeviceWipeRestoreTimeout(client);
     await replayProjectDeviceWipeReceipts(client, projectId);
+    await protection?.afterReplay(client);
     await client.query(
       `DELETE FROM druvia_project_runtime_gates
        WHERE project_id = $1 AND operation_id = $2 AND status = 'restoring'`,

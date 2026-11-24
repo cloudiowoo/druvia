@@ -22,6 +22,9 @@ import {
 } from '../project-auth/project-account-deletion-restore.service.js';
 import { withProjectAuthProjectLock } from '../project-auth/project-identity.repository.js';
 
+import { loadProjectBackupGuards, executeProjectBackupGuard, ProjectBackupGuardError, type ProjectBackupGuard } from './project-backup-guard.js';
+import { withManagedBackupLock, guardTransaction, deleteManagedBackupObject } from './project-backup-retention.js';
+
 const logger = createApiLogger({ module: 'backup' });
 
 // Backup row type
@@ -72,7 +75,8 @@ export interface BackupListItem {
 export function projectRestoreRecoveryReason(error: unknown): string {
   const code = (error as { code?: string }).code;
   if (
-    code === 'DEVICE_WIPE_BINDING_REPLAY_REQUIRED'
+    code === 'PROJECT_BACKUP_GUARD_REQUIRED'
+    || code === 'DEVICE_WIPE_BINDING_REPLAY_REQUIRED'
     || code === 'DEVICE_WIPE_RECEIPT_REPLAY_REQUIRED'
     || code === 'DEVICE_WIPE_RESTORE_TIMEOUT'
   ) return code;
@@ -146,8 +150,8 @@ async function runCommandForBuffer(
     });
 
     child.stdout.on('data', (chunk) => chunks.push(chunk));
-    child.stderr.on('data', (data) => {
-      logger.error(`${commandLabel} stderr`, { schemaName, command: spec.command }, String(data));
+    child.stderr.on('data', () => {
+      logger.error(`${commandLabel} diagnostic output omitted`, { schemaName, command: spec.command });
     });
 
     child.on('close', (code) => {
@@ -175,8 +179,8 @@ async function runCommandForRestore(
     child.stdin.write(data);
     child.stdin.end();
 
-    child.stderr.on('data', (stderr) => {
-      logger.error('pg_restore stderr', { schemaName, command: spec.command }, String(stderr));
+    child.stderr.on('data', () => {
+      logger.error('pg_restore diagnostic output omitted', { schemaName, command: spec.command });
     });
 
     child.on('close', (code) => {
@@ -188,12 +192,13 @@ async function runCommandForRestore(
   });
 }
 
-async function runPgDump(schemaName: string): Promise<Buffer> {
-  const directCommand = buildDirectPgDumpCommand(config.database, schemaName);
+async function runPgDump(schemaName: string, preserveProtection = false): Promise<Buffer> {
+  const directCommand = buildDirectPgDumpCommand(config.database, schemaName, preserveProtection);
   const dockerCommand = buildDockerPgDumpCommand(
     BACKUP_POSTGRES_CONTAINER,
     config.database,
-    schemaName
+    schemaName,
+    preserveProtection,
   );
 
   return runWithEnoentFallback(
@@ -202,12 +207,13 @@ async function runPgDump(schemaName: string): Promise<Buffer> {
   );
 }
 
-async function runPgRestore(schemaName: string, data: Buffer): Promise<void> {
-  const directCommand = buildDirectPgRestoreCommand(config.database, schemaName);
+async function runPgRestore(schemaName: string, data: Buffer, preserveProtection = false): Promise<void> {
+  const directCommand = buildDirectPgRestoreCommand(config.database, schemaName, preserveProtection);
   const dockerCommand = buildDockerPgRestoreCommand(
     BACKUP_POSTGRES_CONTAINER,
     config.database,
-    schemaName
+    schemaName,
+    preserveProtection,
   );
 
   return runWithEnoentFallback(
@@ -227,6 +233,43 @@ async function getSchemaTablesList(schemaName: string): Promise<string[]> {
   return rows.map(r => r.table_name);
 }
 
+async function guardForScope(projectId: string | null | undefined, schemaName: string): Promise<ProjectBackupGuard | undefined> {
+  const guards = await loadProjectBackupGuards();
+  const guard = guards.find(item => item.projectId === projectId || item.schemaName === schemaName);
+  if (guard && (guard.schemaName !== schemaName || (projectId && guard.projectId !== projectId))) throw new ProjectBackupGuardError();
+  return guard;
+}
+
+async function createProtectedBackup(guard: ProjectBackupGuard, tenantId: string, createdBy?: number): Promise<Backup> {
+  // Hold one cross-process lock from insertion through storage completion. A delete/restore
+  // cannot race an unfinished upload and leave an untracked object behind.
+  if (getDefaultStorageAdapter().name !== 'local') throw new ProjectBackupGuardError();
+  return new Promise<Backup>((resolve, reject) => {
+    void withManagedBackupLock(guard, async client => {
+      const backupId = generateBackupId();
+      const storageKey = `backups/${tenantId}/${backupId}.dump`;
+      const inserted = await client.query<BackupRow>(
+        `INSERT INTO druvia_backups (backup_id,tenant_id,project_id,schema_name,storage_key,status,created_by)
+         SELECT $1,$2,$3,$4,$5,'running',$6 WHERE EXISTS (
+           SELECT 1 FROM druvia_projects WHERE project_id=$3 AND schema_name=$4 AND tenant_id=$2)
+         RETURNING *`, [backupId, tenantId, guard.projectId, guard.schemaName, storageKey, createdBy ?? null]);
+      const row = inserted.rows[0];
+      if (!row) throw new ProjectBackupGuardError();
+      resolve(toBackup(row));
+      try {
+        const tables = await getSchemaTablesList(guard.schemaName);
+        const data = await runPgDump(guard.schemaName, true);
+        await getDefaultStorageAdapter().upload(data, storageKey, { contentType: 'application/octet-stream', acl: 'private' });
+        await client.query(`UPDATE druvia_backups SET status='completed',size_bytes=$2,tables_count=$3,tables_list=$4,completed_at=NOW() WHERE backup_id=$1`,
+          [backupId, data.length, tables.length, JSON.stringify(tables)]);
+      } catch {
+        await client.query(`UPDATE druvia_backups SET status='failed',error_message='Protected backup failed' WHERE backup_id=$1`, [backupId]);
+        logger.error('protected backup execution failed', { code: 'PROJECT_BACKUP_GUARD_REQUIRED' });
+      }
+    }).catch(reject);
+  });
+}
+
 // Create backup
 export async function createBackup(
   tenantId: string,
@@ -234,6 +277,8 @@ export async function createBackup(
   projectId?: string,
   createdBy?: number
 ): Promise<Backup> {
+  const guard = await guardForScope(projectId, schemaName);
+  if (guard) return createProtectedBackup(guard, tenantId, createdBy);
   const backupId = generateBackupId();
   const storage = getDefaultStorageAdapter();
   const storageKey = `backups/${tenantId}/${backupId}.dump`;
@@ -347,6 +392,14 @@ export async function listBackupsForProjects(
 export async function deleteBackup(backupId: string): Promise<boolean> {
   const backup = await getBackupById(backupId);
   if (!backup) return false;
+  const guard = await guardForScope(backup.projectId, backup.schemaName);
+  if (guard) return withManagedBackupLock(guard, async client => {
+    const current = await getBackupById(backupId);
+    if (!current) return false;
+    if (current.schemaName !== guard.schemaName || (current.projectId && current.projectId !== guard.projectId)) throw new ProjectBackupGuardError();
+    await deleteManagedBackupObject(client, { backup_id: current.backupId, tenant_id: current.tenantId, project_id: current.projectId, schema_name: current.schemaName, storage_key: current.storageKey });
+    return true;
+  });
 
   // Delete from storage
   const storage = getDefaultStorageAdapter();
@@ -388,14 +441,24 @@ export async function restoreBackup(backupId: string): Promise<void> {
   const projectId = backup.projectId ?? legacyScope?.project_id;
   if (!projectId) throw new Error('BACKUP_SCOPE_MISMATCH');
 
+  const guard = await guardForScope(projectId, backup.schemaName);
   const restore = async (lockClient: import('pg').PoolClient) => withProjectAuthProjectLock(
     lockClient,
     projectId,
     async () => {
+      const current = guard ? await getBackupById(backupId) : backup;
+      if (!current || current.status !== 'completed' || current.schemaName !== backup.schemaName
+        || current.tenantId !== backup.tenantId || current.storageKey !== backup.storageKey
+        || current.projectId !== backup.projectId) throw new ProjectBackupGuardError();
+      if (guard && current.createdAt.getTime() <= Date.now() - guard.retentionDays * 86400000) throw new ProjectBackupGuardError();
       await beginProjectRestoreGate(projectId, backup.backupId);
       try {
-        await restoreBackupUnlocked(backup);
-        await replayProjectAccountDeletionFences(projectId, backup.backupId);
+        if (guard) await guardTransaction(lockClient, () => executeProjectBackupGuard(lockClient, guard, 'prepare'));
+        await restoreBackupUnlocked(current, Boolean(guard));
+        await replayProjectAccountDeletionFences(projectId, backup.backupId, guard ? {
+          beforeReplay: async client => { await executeProjectBackupGuard(client, guard, 'beginReplay'); },
+          afterReplay: async client => { await executeProjectBackupGuard(client, guard, 'replay'); },
+        } : undefined);
       } catch (error) {
         await markProjectRestoreRecoveryRequired(
           projectId,
@@ -406,10 +469,13 @@ export async function restoreBackup(backupId: string): Promise<void> {
       }
     },
   );
-  await withProjectDataAccessMutationLock(projectId, restore, { globalMode: 'exclusive' });
+  await withProjectDataAccessMutationLock(projectId, async client => {
+    if (guard) return withManagedBackupLock(guard, () => restore(client));
+    return restore(client);
+  }, { globalMode: 'exclusive' });
 }
 
-export async function restoreBackupUnlocked(backup: Backup): Promise<void> {
+export async function restoreBackupUnlocked(backup: Backup, preserveProtection = false): Promise<void> {
   // Download from storage
   const storage = getDefaultStorageAdapter();
   let data: Buffer;
@@ -424,7 +490,7 @@ export async function restoreBackupUnlocked(backup: Backup): Promise<void> {
     data = Buffer.from(await response.arrayBuffer());
   }
 
-  await runPgRestore(backup.schemaName, data);
+  await runPgRestore(backup.schemaName, data, preserveProtection);
 }
 
 // Get download URL for backup
@@ -432,8 +498,11 @@ export async function getBackupDownloadUrl(backupId: string): Promise<string | n
   const backup = await getBackupById(backupId);
   if (!backup || backup.status !== 'completed') return null;
 
+  const guard = await guardForScope(backup.projectId, backup.schemaName);
+  const secondsRemaining = guard ? Math.floor((backup.createdAt.getTime() + guard.retentionDays * 86400000 - Date.now()) / 1000) : 3600;
+  if (secondsRemaining <= 0) return null;
   const storage = getDefaultStorageAdapter();
-  return storage.getSignedUrl(backup.storageKey, 3600);
+  return storage.getSignedUrl(backup.storageKey, Math.min(3600, secondsRemaining));
 }
 
 // List all backups (admin) with optional filters

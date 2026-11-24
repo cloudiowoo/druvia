@@ -23,7 +23,7 @@
 
 ## Recent Milestones
 
-- Data Access v2 显式扩列已加入 Druvia 代码：migration `030` 为受管 policy operation 增加 `grant_extension`；API/Admin 提供独立 authenticated select/insert 字段的 preview/apply，保留 owner AND 授权投影与既有权限，普通保存和仅收缩 reconcile 均未放宽。API 和完整 release manifest 的 migration floor/ceiling 升至 `30`。Local 活动 PostGIS 已执行 030，两张 PITCHETCH 表完成 reconcile 和合同所需扩列，官方只读 verifier 与 Hasura consistency 检查通过；双用户 GraphQL 探针仍待测试 Session，隔离 PostgreSQL/Hasura 集成测试仍待运行。GLOBAL 尚未迁移或授权。
+- Data Access v2 显式扩列已加入 Druvia 代码：migration `030` 为受管 policy operation 增加 `grant_extension`；API/Admin 提供独立 authenticated select/insert 字段的 preview/apply，保留 owner AND 授权投影与既有权限，普通保存和仅收缩 reconcile 均未放宽。API 和完整 release manifest 的 migration floor/ceiling 升至 `30`。Local 活动 PostGIS 已执行 030，两张 PITCHETCH 表完成 reconcile 和合同所需扩列，官方只读 verifier 与 Hasura consistency 检查通过。GLOBAL 活动库也已到 030；2026-10-11 只读核对确认两张表 baseline 与 Hasura metadata 的指定扩列及 owner AND 投影过滤均已生效，无待恢复 operation。GLOBAL 官方 verifier、Hasura consistency API 和双用户 GraphQL 探针仍待运行；隔离 PostgreSQL/Hasura 集成测试也未执行。
 - Project GraphQL Actor Contract v1 已完成本地实现：公开 Project GraphQL proxy 与已验证的 Functions internal
   GraphQL 在 Hasura request 中服务端生成 version、actor type/source、项目、Project User（仅 project user）和
   既有 service environment session variables。项目数据库 trigger/`SECURITY DEFINER` 可从

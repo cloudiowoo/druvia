@@ -67,6 +67,17 @@ describe('backup command helpers', () => {
     });
   });
 
+  it('preserves owner and ACL only for a registered recovery contract', () => {
+    const database = { host: 'postgres', port: 5432, user: 'postgres', password: 'fixture', database: 'druvia' };
+    const dump = buildDirectPgDumpCommand(database, 'dru_guarded', true);
+    const restore = buildDirectPgRestoreCommand(database, 'dru_guarded', true);
+    expect(dump.args).not.toContain('--no-owner');
+    expect(dump.args).not.toContain('--no-acl');
+    expect(restore.args).not.toContain('--no-owner');
+    expect(restore.args).toContain('--exit-on-error');
+    expect(restore.args).toContain('--single-transaction');
+  });
+
   it('falls back only when the primary command is missing', async () => {
     const fallback = vi.fn(async () => Buffer.from('dump'));
 

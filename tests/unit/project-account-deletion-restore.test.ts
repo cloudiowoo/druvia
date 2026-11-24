@@ -96,6 +96,19 @@ describe('project account deletion restore replay', () => {
     )
   })
 
+  it('runs configured protection within the gate transaction and retains the gate on failure', async () => {
+    const beforeReplay = vi.fn(async () => {});
+    const afterReplay = vi.fn(async () => { throw new Error('PROJECT_BACKUP_GUARD_REQUIRED'); });
+    await expect(replayProjectAccountDeletionFences('proj_1', 'backup_1', { beforeReplay, afterReplay }))
+      .rejects.toThrow('PROJECT_BACKUP_GUARD_REQUIRED');
+    expect(beforeReplay).toHaveBeenCalledWith(client);
+    expect(afterReplay).toHaveBeenCalledWith(client);
+    expect(beforeReplay.mock.invocationCallOrder[0]).toBeLessThan(executeContract.mock.invocationCallOrder[0]!);
+    expect(afterReplay.mock.invocationCallOrder[0]).toBeGreaterThan(replayDeviceWipeReceipts.mock.invocationCallOrder[0]!);
+    expect(client.query).not.toHaveBeenCalledWith(expect.stringContaining('DELETE FROM druvia_project_runtime_gates'), expect.anything());
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+  });
+
   it('does not clear the restore gate when device wipe receipt replay fails', async () => {
     replayDeviceWipeReceipts.mockRejectedValueOnce(new Error('DEVICE_WIPE_RECEIPT_REPLAY_REQUIRED'))
 

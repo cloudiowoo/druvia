@@ -27,8 +27,10 @@ export class LocalAdapter implements StorageAdapter {
 
   async upload(file: Buffer, filePath: string, options?: UploadOptions): Promise<UploadResult> {
     const fullPath = path.join(this.basePath, filePath);
-    await fs.mkdir(path.dirname(fullPath), { recursive: true });
-    await fs.writeFile(fullPath, file);
+    const privateFile = options?.acl === 'private';
+    await fs.mkdir(path.dirname(fullPath), { recursive: true, ...(privateFile ? { mode: 0o700 } : {}) });
+    await fs.writeFile(fullPath, file, privateFile ? { mode: 0o600 } : undefined);
+    if (privateFile) await fs.chmod(fullPath, 0o600);
 
     // Calculate ETag (MD5 hash)
     const etag = crypto.createHash('md5').update(file).digest('hex');

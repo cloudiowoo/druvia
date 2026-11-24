@@ -21,7 +21,8 @@ function buildPgEnv(password: string): NodeJS.ProcessEnv {
 
 export function buildDirectPgDumpCommand(
   database: DatabaseConnectionConfig,
-  schemaName: string
+  schemaName: string,
+  preserveProtection = false,
 ): CommandSpec {
   return {
     command: 'pg_dump',
@@ -32,8 +33,7 @@ export function buildDirectPgDumpCommand(
       '-d', database.database,
       '-n', schemaName,
       '-F', 'c',
-      '--no-owner',
-      '--no-acl',
+      ...(preserveProtection ? [] : ['--no-owner', '--no-acl']),
     ],
     env: buildPgEnv(database.password),
   };
@@ -41,7 +41,8 @@ export function buildDirectPgDumpCommand(
 
 export function buildDirectPgRestoreCommand(
   database: DatabaseConnectionConfig,
-  schemaName: string
+  schemaName: string,
+  preserveProtection = false,
 ): CommandSpec {
   return {
     command: 'pg_restore',
@@ -51,10 +52,10 @@ export function buildDirectPgRestoreCommand(
       '-U', database.user,
       '-d', database.database,
       '-n', schemaName,
-      '--no-owner',
-      '--no-acl',
+      ...(preserveProtection ? [] : ['--no-owner', '--no-acl']),
       '--clean',
       '--if-exists',
+      ...(preserveProtection ? ['--exit-on-error', '--single-transaction'] : []),
     ],
     env: buildPgEnv(database.password),
   };
@@ -63,7 +64,8 @@ export function buildDirectPgRestoreCommand(
 export function buildDockerPgDumpCommand(
   containerName: string,
   database: DatabaseConnectionConfig,
-  schemaName: string
+  schemaName: string,
+  preserveProtection = false,
 ): CommandSpec {
   return {
     command: 'docker',
@@ -75,8 +77,7 @@ export function buildDockerPgDumpCommand(
       '-d', database.database,
       '-n', schemaName,
       '-F', 'c',
-      '--no-owner',
-      '--no-acl',
+      ...(preserveProtection ? [] : ['--no-owner', '--no-acl']),
     ],
   };
 }
@@ -84,7 +85,8 @@ export function buildDockerPgDumpCommand(
 export function buildDockerPgRestoreCommand(
   containerName: string,
   database: DatabaseConnectionConfig,
-  schemaName: string
+  schemaName: string,
+  preserveProtection = false,
 ): CommandSpec {
   return {
     command: 'docker',
@@ -96,10 +98,10 @@ export function buildDockerPgRestoreCommand(
       '-U', database.user,
       '-d', database.database,
       '-n', schemaName,
-      '--no-owner',
-      '--no-acl',
+      ...(preserveProtection ? [] : ['--no-owner', '--no-acl']),
       '--clean',
       '--if-exists',
+      ...(preserveProtection ? ['--exit-on-error', '--single-transaction'] : []),
     ],
   };
 }

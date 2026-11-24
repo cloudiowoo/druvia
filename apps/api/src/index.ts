@@ -1,3 +1,5 @@
+import { loadProjectBackupGuards } from './modules/backup/project-backup-guard.js';
+import { startProjectBackupRetention } from './modules/backup/project-backup-retention.js';
 import Fastify from 'fastify';
 import type { FastifyCorsOptions } from '@fastify/cors';
 import cors from '@fastify/cors';
@@ -250,6 +252,9 @@ async function start() {
   const app = buildApp();
   try {
     await assertSupportedDatabaseMigrationVersion(pool);
+    await loadProjectBackupGuards();
+    const stopBackupRetention = startProjectBackupRetention();
+    app.addHook('onClose', stopBackupRetention);
     const tableDeletionRecovery = await recoverPendingTableDeletions();
     if (tableDeletionRecovery.failed > 0) {
       app.log.warn(tableDeletionRecovery, 'some pending table deletions still require recovery');
